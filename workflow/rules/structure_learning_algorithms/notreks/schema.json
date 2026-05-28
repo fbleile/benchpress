@@ -74,7 +74,33 @@
         "type": "integer"
       },
       "max_iter": {
-        "description": "Positive optimizer iteration limit.",
+        "description": "Positive optimizer iteration limit for the final central-path stage.",
+        "type": "integer",
+        "minimum": 1
+      },
+      "lr": {
+        "description": "Positive Adam learning rate for each optimizer stage.",
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "path_steps": {
+        "description": "Positive number of DAGMA-style central-path stages.",
+        "type": "integer",
+        "minimum": 1
+      },
+      "mu_init": {
+        "description": "Positive initial central-path multiplier for the score and ordinary regularizer.",
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "mu_factor": {
+        "description": "Central-path multiplier decay factor in (0, 1).",
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "exclusiveMaximum": 1
+      },
+      "warm_iter": {
+        "description": "Positive optimizer iteration limit for all non-final central-path stages.",
         "type": "integer",
         "minimum": 1
       },
@@ -108,6 +134,11 @@
       "independence_correction",
       "seed",
       "max_iter",
+      "lr",
+      "path_steps",
+      "mu_init",
+      "mu_factor",
+      "warm_iter",
       "tol",
       "threshold",
       "timeout"
@@ -129,7 +160,12 @@
         "independence_alpha": 0.05,
         "independence_correction": "benjamini-hochberg",
         "seed": 1,
-        "max_iter": 100,
+        "max_iter": 300,
+        "lr": 0.0003,
+        "path_steps": 3,
+        "mu_init": 1.0,
+        "mu_factor": 0.1,
+        "warm_iter": 100,
         "tol": 0.000001,
         "threshold": 0.1,
         "timeout": null

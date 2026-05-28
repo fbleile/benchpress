@@ -1,10 +1,21 @@
 from typing import Sequence, Tuple
 
 import numpy as np
-from scipy.linalg import expm
+from scipy.linalg import expm, solve
 
 
 Pair = Tuple[int, int]
+TREK_INV_EPS = 1e-8
+
+
+def _series_I_minus_log_I_minus_W(A: np.ndarray, K: int) -> np.ndarray:
+    d = A.shape[0]
+    F = np.eye(d, dtype=float)
+    power = A.copy()
+    for k in range(1, int(K) + 1):
+        F = F + power / float(k)
+        power = power @ A
+    return F
 
 
 def dag_penalty_value(W: np.ndarray, seq: str, dag_s: float) -> float:
@@ -37,21 +48,23 @@ def trek_penalty_value(W: np.ndarray, seq: str, pairs: Sequence[Pair]) -> float:
     if seq == "none" or len(pairs) == 0:
         return 0.0
 
-    A = np.abs(np.asarray(W, dtype=float))
+    A = np.asarray(W, dtype=float) ** 2
     d = A.shape[0]
     if seq == "exp":
-        M = expm(A)
+        F = expm(A)
     elif seq == "log":
-        M = -np.log(np.maximum(1.0 - A / max(d, 1), 1e-12))
+        F = _series_I_minus_log_I_minus_W(A, K=2 * d)
     elif seq == "inv":
         try:
-            M = np.linalg.inv(np.eye(d) - A / max(d, 1))
+            I = np.eye(d, dtype=float)
+            F = solve(I - A + TREK_INV_EPS * I, I)
         except np.linalg.LinAlgError:
             return float("inf")
     else:
         raise ValueError(f"Unsupported trek_seq: {seq}")
 
-    return float(sum(M[i, j] + M[j, i] for i, j in pairs))
+    H = F.T @ F
+    return float(sum(0.5 * (H[i, j] + H[j, i]) for i, j in pairs))
 
 
 def regularizer_value(W: np.ndarray, regularizer: str) -> float:

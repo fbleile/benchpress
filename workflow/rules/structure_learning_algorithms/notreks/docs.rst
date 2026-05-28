@@ -4,9 +4,9 @@ NOTREKS
 This is a local, minimal Benchpress structure-learning module for NOTREKS.  The
 implementation is intentionally small: it reads Benchpress CSV input, parses the
 NOTREKS configuration, optionally computes pairwise independence-candidate
-pairs, builds a weighted adjacency estimate from a linear baseline plus a first
-local optimizer path, thresholds that matrix, and writes the standard Benchpress
-adjacency matrix, runtime, and number-of-tests outputs.
+pairs, builds a weighted adjacency estimate from a linear baseline plus a
+DAGMA-style central-path optimizer, thresholds that matrix, and writes the
+standard Benchpress adjacency matrix, runtime, and number-of-tests outputs.
 
 Only ``function_class = "linear"`` is implemented.  Nonlinear function classes
 may be added later.
@@ -17,9 +17,8 @@ Score
 ``score = "least_squares"`` is intended for linear SEM-style additive-noise
 models and NOTEARS-like squared-loss comparisons.
 
-``score = "gaussian_likelihood"`` is intended for Gaussian linear-model or
-covariance-based scoring, but is not optimized yet and currently raises
-``NotImplementedError`` in the optimizer path.
+``score = "gaussian_likelihood"`` uses a minimal diagonal-noise Gaussian linear
+SEM score based on residual variances from ``X @ (I - W)``.
 
 Possible future score types include ``logistic``, ``poisson``,
 ``generalized_linear``, and ``nonlinear_mlp``.
@@ -38,11 +37,13 @@ DAG penalty
 ``dag_reg`` is the non-negative scaling factor for this penalty.  ``dag_s`` is
 kept in every config for simplicity and is relevant to ``dag_seq = "logdet"``.
 
-The current optimizer supports ``dag_seq = "none"`` and ``dag_seq = "logdet"``.
+The current optimizer supports ``dag_seq`` values ``none``, ``exp``, and
+``logdet``.
 The log-det case uses the DAGMA-style barrier
-``-logdet(dag_s * I - W * W) + d * log(dag_s)``.  The ``exp``, ``log``, and
-``inv`` variants remain documented placeholders and raise ``NotImplementedError``
-in the optimizer path.
+``-logdet(s * I - W * W) + d * log(s)`` at each central-path stage.  The
+``exp`` case uses the NOTEARS-style ``trace(expm(W * W)) - d`` penalty.  The
+``log`` and ``inv`` variants remain documented placeholders and raise
+``NotImplementedError`` in the optimizer path.
 
 Trek penalty
 ------------
@@ -54,11 +55,53 @@ Trek penalty
 
 ``trek_reg`` is the non-negative scaling factor.  The candidate marginal
 independencies used by the trek penalty are supplied by the optional pairwise
-tests.  The current optimizer wires ``trek_seq = "exp"`` as a simple smooth
-penalty that suppresses direct coefficients in both directions for accepted
-candidate-independence pairs.  The exact path/trek penalty is still future work.
-``trek_seq`` values ``log`` and ``inv`` raise ``NotImplementedError`` in the
-optimizer path.
+tests.
+
+The implemented trek penalty is matrix-function based.  Let ``A = W * W``.
+The sequence determines a matrix ``F(A)``:
+
+* ``exp`` uses ``F = expm(A)``.
+* ``inv`` uses ``F = (I - A + eps I)^(-1)`` with a small ridge.
+* ``log`` uses the truncated series
+  ``F = I + A + A^2 / 2 + ... + A^K / K`` with ``K = 2d``.
+
+Then ``H = F.T @ F``.  For each accepted marginal-independence pair ``(i, j)``,
+the optimizer penalizes ``0.5 * (H[i, j] + H[j, i])``.  This discourages shared
+trek/connectivity mass between variables that the pairwise tests accepted as
+candidate marginal independencies.  ``binom`` is a possible future sequence but
+is not exposed in the schema.
+
+Central-path optimizer
+----------------------
+
+For each central-path stage, the implemented objective is:
+
+``mu * [score(W; X) + regularizer_scale * R(W)] + dag_reg * h(W; s) + trek_reg * T(W; I)``
+
+Only the score and ordinary coefficient regularizer are multiplied by ``mu``.
+The DAGMA log-det barrier and the trek penalty are outside ``mu``.  Keeping the
+trek term outside ``mu`` lets it remain active as the score multiplier is reduced
+along the central path.
+
+``dag_reg`` is not ignored: for ``dag_seq = "logdet"`` it multiplies the
+log-det barrier.  ``dag_reg = 1`` gives the faithful DAGMA scaling.
+
+Optimizer controls:
+
+* ``mu_init`` is the first central-path multiplier.
+* ``mu_factor`` multiplies ``mu`` after each successful stage.
+* ``path_steps`` is the number of central-path stages.
+* ``warm_iter`` is the inner iteration limit for all non-final stages.
+* ``max_iter`` is the inner iteration limit for the final stage.
+* ``lr`` is the Adam learning rate, with backtracking if a step leaves the
+  log-det domain or increases the objective.
+* ``tol`` is the relative objective-improvement stopping tolerance inside a
+  stage.
+
+For ``dag_seq = "logdet"``, the optimizer checks the DAGMA M-matrix domain:
+``s * I - W * W`` must be invertible and its inverse must not have substantially
+negative entries.  Invalid trial steps are rejected and retried with a smaller
+learning rate.
 
 Regularizer
 -----------
@@ -104,16 +147,14 @@ Current optimizer support
 Implemented:
 
 * ``function_class = "linear"``
-* ``score = "least_squares"``
-* ``dag_seq`` in ``{"none", "logdet"}``
-* ``trek_seq`` in ``{"none", "exp"}``
+* ``score`` in ``{"least_squares", "gaussian_likelihood"}``
+* ``dag_seq`` in ``{"none", "exp", "logdet"}``
+* ``trek_seq`` in ``{"none", "exp", "log", "inv"}``
 * ``regularizer`` in ``{"none", "l1", "l2"}``
 
 Not yet implemented in the optimizer:
 
-* ``score = "gaussian_likelihood"``
-* ``dag_seq`` in ``{"exp", "log", "inv"}``
-* ``trek_seq`` in ``{"log", "inv"}``
+* ``dag_seq`` in ``{"log", "inv"}``
 
 Unsupported optimizer settings raise ``NotImplementedError`` rather than being
 silently mapped to another objective.

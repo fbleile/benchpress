@@ -24,6 +24,11 @@ class NotreksConfig:
     independence_correction: str
     seed: int
     max_iter: int
+    lr: float
+    path_steps: int
+    mu_init: float
+    mu_factor: float
+    warm_iter: int
     tol: float
     threshold: float
     timeout: Optional[float]
