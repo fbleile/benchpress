@@ -1,0 +1,140 @@
+{
+  "title": "NOTREKS",
+  "description": "Local Benchpress configuration for the NOTREKS structure-learning module.",
+  "type": "array",
+  "items": {
+    "title": "NOTREKS configuration",
+    "description": "Configuration for one local NOTREKS run.",
+    "type": "object",
+    "properties": {
+      "id": {
+        "description": "Algorithm identifier",
+        "type": "string"
+      },
+      "function_class": {
+        "description": "Function class. Only linear is implemented in this local module.",
+        "type": "string",
+        "enum": ["linear"]
+      },
+      "score": {
+        "description": "Score used by the linear estimator. The optimizer currently supports least_squares.",
+        "type": "string",
+        "enum": ["least_squares", "gaussian_likelihood"]
+      },
+      "dag_seq": {
+        "description": "DAG penalty sequence.",
+        "type": "string",
+        "enum": ["none", "exp", "log", "inv", "logdet"]
+      },
+      "dag_reg": {
+        "description": "Non-negative scaling factor for the DAG penalty.",
+        "$ref": "#/$defs/nonnegnum"
+      },
+      "dag_s": {
+        "description": "Positive log-det barrier parameter.",
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "trek_seq": {
+        "description": "Trek penalty sequence.",
+        "type": "string",
+        "enum": ["none", "exp", "log", "inv"]
+      },
+      "trek_reg": {
+        "description": "Non-negative scaling factor for the trek penalty.",
+        "$ref": "#/$defs/nonnegnum"
+      },
+      "regularizer": {
+        "description": "Coefficient regularizer.",
+        "type": "string",
+        "enum": ["none", "l1", "l2"]
+      },
+      "regularizer_scale": {
+        "description": "Non-negative regularizer scaling factor.",
+        "$ref": "#/$defs/nonnegnum"
+      },
+      "independence_test": {
+        "description": "Pairwise marginal-independence proxy.",
+        "type": "string",
+        "enum": ["none", "pearson", "spearman", "hsic", "dcor"]
+      },
+      "independence_alpha": {
+        "description": "Significance level for pairwise tests.",
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "exclusiveMaximum": 1
+      },
+      "independence_correction": {
+        "description": "Multiple-testing correction.",
+        "type": "string",
+        "enum": ["none", "bonferroni", "benjamini-hochberg"]
+      },
+      "seed": {
+        "description": "Random seed.",
+        "type": "integer"
+      },
+      "max_iter": {
+        "description": "Positive optimizer iteration limit.",
+        "type": "integer",
+        "minimum": 1
+      },
+      "tol": {
+        "description": "Positive numerical stopping tolerance.",
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "threshold": {
+        "description": "Non-negative threshold for binarizing the weighted adjacency matrix.",
+        "$ref": "#/$defs/nonnegnum"
+      },
+      "timeout": {
+        "description": "Timeout in seconds, or null.",
+        "$ref": "#/$defs/flexnonnegnumnull"
+      }
+    },
+    "required": [
+      "id",
+      "function_class",
+      "score",
+      "dag_seq",
+      "dag_reg",
+      "dag_s",
+      "trek_seq",
+      "trek_reg",
+      "regularizer",
+      "regularizer_scale",
+      "independence_test",
+      "independence_alpha",
+      "independence_correction",
+      "seed",
+      "max_iter",
+      "tol",
+      "threshold",
+      "timeout"
+    ],
+    "additionalProperties": false,
+    "examples": [
+      {
+        "id": "notreks-local",
+        "function_class": "linear",
+        "score": "least_squares",
+        "dag_seq": "none",
+        "dag_reg": 0,
+        "dag_s": 1,
+        "trek_seq": "none",
+        "trek_reg": 0,
+        "regularizer": "none",
+        "regularizer_scale": 0,
+        "independence_test": "pearson",
+        "independence_alpha": 0.05,
+        "independence_correction": "benjamini-hochberg",
+        "seed": 1,
+        "max_iter": 100,
+        "tol": 0.000001,
+        "threshold": 0.1,
+        "timeout": null
+      }
+    ]
+  },
+  "uniqueItems": true
+}

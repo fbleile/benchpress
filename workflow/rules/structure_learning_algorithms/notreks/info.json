@@ -1,0 +1,23 @@
+{
+  "title": "NOTREKS",
+  "title_full": "NOTREKS",
+  "version": "v0.0.1",
+  "package": {
+    "title": "Benchpress local module",
+    "url": ""
+  },
+  "docs_url": "",
+  "outputs": "adjmat",
+  "graph_types": [
+    "DAG"
+  ],
+  "meta_description": "Local minimal Benchpress module for NOTREKS.",
+  "data_types": [
+    "continuous"
+  ],
+  "data_missingness": [],
+  "intervention_types": [],
+  "mcmc": false,
+  "edge_constraints": false,
+  "language": "Python"
+}
