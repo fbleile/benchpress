@@ -12,7 +12,6 @@ from add_timeout import timeoutf
 from independence_tests import pairwise_independence_candidates
 from notreks_core import NotreksConfig, fit_linear_baseline, threshold_adjacency
 from optimizer import fit_notreks_optimizer
-from penalties import penalty_diagnostics
 
 
 def _wildcard(name, default=None):
@@ -66,7 +65,7 @@ def _timeout_is_none(value):
 
 
 def _read_config():
-    return NotreksConfig(
+    cfg = NotreksConfig(
         algorithm_id=str(_config_value("id", "notreks")),
         function_class=str(_config_value("function_class")),
         score=str(_config_value("score")),
@@ -90,11 +89,67 @@ def _read_config():
         tol=float(_config_value("tol")),
         threshold=float(_config_value("threshold")),
         timeout=None if _timeout_is_none(_config_value("timeout")) else float(_config_value("timeout")),
+        init=str(_config_value("init", "zero")),
+        checkpoint=int(_config_value("checkpoint", 1000)),
     )
+    if cfg.init not in {"zero", "linear_baseline"}:
+        raise ValueError("init must be one of {'zero', 'linear_baseline'}")
+    return cfg
+
+
+def _print_config_sanity(cfg: NotreksConfig) -> None:
+    print(
+        "NOTREKS run config: "
+        f"id={cfg.algorithm_id}, threshold={cfg.threshold}, init={cfg.init}, "
+        f"score={cfg.score}, dag_reg={cfg.dag_reg}, trek_seq={cfg.trek_seq}, trek_reg={cfg.trek_reg}"
+    )
+    name = cfg.algorithm_id.lower()
+    threshold_tags = {
+        "threshold008": 0.08,
+        "th008": 0.08,
+        "threshold030": 0.30,
+        "th030": 0.30,
+    }
+    for tag, expected in threshold_tags.items():
+        if tag in name and abs(cfg.threshold - expected) > 1e-12:
+            print(
+                "WARNING: NOTREKS algorithm id appears to encode "
+                f"{tag}, but configured threshold is {cfg.threshold}."
+            )
+
+
+def _write_diagnostics(path: Path, cfg: NotreksConfig, diagnostics) -> None:
+    records = []
+    for stage in diagnostics.stages:
+        base = {
+            "algorithm_id": cfg.algorithm_id,
+            "init": cfg.init,
+            "path_steps_completed": diagnostics.path_steps_completed,
+            "final_mu": diagnostics.final_mu,
+            "optimizer_converged": diagnostics.converged,
+        }
+        base.update(stage)
+        records.append(base)
+        for checkpoint in stage.get("checkpoints", []):
+            row = base.copy()
+            row.update(checkpoint)
+            row["row_type"] = "checkpoint"
+            records.append(row)
+    if not records:
+        records.append({
+            "algorithm_id": cfg.algorithm_id,
+            "init": cfg.init,
+            "path_steps_completed": diagnostics.path_steps_completed,
+            "final_mu": diagnostics.final_mu,
+            "optimizer_converged": diagnostics.converged,
+            "objective": diagnostics.objective,
+        })
+    pd.DataFrame.from_records(records).to_csv(path, index=False)
 
 
 def wrapper():
     cfg = _read_config()
+    _print_config_sanity(cfg)
     if cfg.function_class != "linear":
         raise NotImplementedError("Only function_class='linear' is implemented in the local notreks module")
     rng = np.random.default_rng(cfg.seed)
@@ -110,16 +165,18 @@ def wrapper():
         columns=list(df.columns),
     )
 
-    W_init = fit_linear_baseline(
-        X,
-        score=cfg.score,
-        regularizer=cfg.regularizer,
-        regularizer_scale=cfg.regularizer_scale,
-        independence_pairs=independence.pairs,
-        rng=rng,
-    )
-    W_est, _ = fit_notreks_optimizer(X, cfg, independence.pairs, W_init=W_init)
-    _ = penalty_diagnostics(W_est, cfg, independence.pairs)
+    if cfg.init == "linear_baseline":
+        W_init = fit_linear_baseline(
+            X,
+            score=cfg.score,
+            regularizer=cfg.regularizer,
+            regularizer_scale=cfg.regularizer_scale,
+            independence_pairs=independence.pairs,
+            rng=rng,
+        )
+    else:
+        W_init = None
+    W_est, diagnostics = fit_notreks_optimizer(X, cfg, independence.pairs, W_init=W_init)
 
     adjmat = threshold_adjacency(W_est, cfg.threshold)
     adjmat_df = pd.DataFrame(adjmat, columns=df.columns)
@@ -131,6 +188,9 @@ def wrapper():
 
     with open(snakemake.output["ntests"], "w") as text_file:
         text_file.write(str(independence.number_of_tests))
+
+    diagnostics_path = Path(snakemake.output["adjmat"]).with_name("diagnostics.csv")
+    _write_diagnostics(diagnostics_path, cfg, diagnostics)
 
 
 start = time.perf_counter()

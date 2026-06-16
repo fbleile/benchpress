@@ -116,6 +116,16 @@
       "timeout": {
         "description": "Timeout in seconds, or null.",
         "$ref": "#/$defs/flexnonnegnumnull"
+      },
+      "init": {
+        "description": "Optimizer initialization. Use zero for DAGMA-equivalence experiments; linear_baseline is an ablation.",
+        "type": "string",
+        "enum": ["zero", "linear_baseline"]
+      },
+      "checkpoint": {
+        "description": "Optimizer diagnostic checkpoint interval in inner iterations.",
+        "type": "integer",
+        "minimum": 1
       }
     },
     "required": [
@@ -168,7 +178,9 @@
         "warm_iter": 100,
         "tol": 0.000001,
         "threshold": 0.1,
-        "timeout": null
+        "timeout": null,
+        "init": "zero",
+        "checkpoint": 100
       }
     ]
   },

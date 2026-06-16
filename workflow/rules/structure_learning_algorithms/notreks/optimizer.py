@@ -19,9 +19,9 @@ except Exception:
 
 
 Pair = Tuple[int, int]
-L1_SMOOTH_EPS = 1e-8
 DOMAIN_TOL = 1e-12
 TREK_INV_EPS = 1e-8
+W_STAT_THRESHOLDS = (0.02, 0.05, 0.08, 0.1, 0.2, 0.3, 0.5)
 
 
 @dataclass(frozen=True)
@@ -35,11 +35,25 @@ class OptimizerDiagnostics:
     dag_penalty: float
     trek_penalty: float
     regularizer: float
+    raw_score: float
+    raw_dag_penalty: float
+    raw_trek_penalty: float
+    raw_regularizer: float
+    scaled_score: float
+    scaled_dag_penalty: float
+    scaled_trek_penalty: float
+    scaled_regularizer: float
+    grad_norm: float
+    grad_score_norm: float
+    grad_dag_norm: float
+    grad_trek_norm: float
+    grad_regularizer_norm: float
     backend: str
     stages: List[Dict[str, float]] = field(default_factory=list)
 
 
 def _least_squares_value_grad(X: np.ndarray, W: np.ndarray) -> Tuple[float, np.ndarray]:
+    X = X - np.mean(X, axis=0, keepdims=True)
     n = X.shape[0]
     residual = X @ W - X
     value = 0.5 * float(np.sum(residual * residual)) / float(n)
@@ -138,6 +152,10 @@ def _trek_value_grad_jax(W: np.ndarray, seq: str, pairs: Sequence[Pair]) -> Tupl
         return 0.0, np.zeros_like(W)
     if pairs_np.ndim != 2 or pairs_np.shape[1] != 2:
         raise ValueError("independence_pairs must have shape (m, 2)")
+    if np.any(pairs_np < 0) or np.any(pairs_np >= W.shape[0]):
+        raise ValueError(f"independence_pairs contain indices outside [0, {W.shape[0] - 1}]")
+    if np.any(pairs_np[:, 0] == pairs_np[:, 1]):
+        raise ValueError("independence_pairs must not contain diagonal/self pairs")
 
     K_log = 2 * W.shape[0]
     W_jax = jnp.asarray(W, dtype=jnp.float64)
@@ -162,8 +180,17 @@ def _trek_value_grad_jax(W: np.ndarray, seq: str, pairs: Sequence[Pair]) -> Tupl
 
 
 def _trek_value_grad(W: np.ndarray, seq: str, pairs: Sequence[Pair]) -> Tuple[float, np.ndarray]:
-    if seq == "none" or len(pairs) == 0:
+    if seq == "none":
         return 0.0, np.zeros_like(W)
+    pairs_np = np.asarray(pairs, dtype=np.int64)
+    if pairs_np.size == 0:
+        return 0.0, np.zeros_like(W)
+    if pairs_np.ndim != 2 or pairs_np.shape[1] != 2:
+        raise ValueError("independence_pairs must have shape (m, 2)")
+    if np.any(pairs_np < 0) or np.any(pairs_np >= W.shape[0]):
+        raise ValueError(f"independence_pairs contain indices outside [0, {W.shape[0] - 1}]")
+    if np.any(pairs_np[:, 0] == pairs_np[:, 1]):
+        raise ValueError("independence_pairs must not contain diagonal/self pairs")
     if seq not in {"exp", "inv", "log"}:
         raise NotImplementedError(f"trek_seq='{seq}' is not implemented in the optimizer")
     if not JAX_AVAILABLE:
@@ -171,15 +198,26 @@ def _trek_value_grad(W: np.ndarray, seq: str, pairs: Sequence[Pair]) -> Tuple[fl
             f"trek_seq='{seq}' requires JAX for matrix-function gradients. "
             "Install with: pip install jax jaxlib"
         )
-    return _trek_value_grad_jax(W, seq, pairs)
+    return _trek_value_grad_jax(W, seq, pairs_np)
+
+
+def _w_stats(W: np.ndarray) -> Dict[str, float]:
+    vals = np.abs(W[~np.eye(W.shape[0], dtype=bool)])
+    nonzero = vals[vals > 0.0]
+    stats = {
+        "max_abs_w": float(np.max(vals)) if vals.size else 0.0,
+        "median_nonzero_abs_w": float(np.median(nonzero)) if nonzero.size else 0.0,
+    }
+    for threshold in W_STAT_THRESHOLDS:
+        stats[f"n_abs_w_gt_{threshold:g}"] = int(np.sum(vals > threshold))
+    return stats
 
 
 def _regularizer_value_grad(W: np.ndarray, regularizer: str) -> Tuple[float, np.ndarray]:
     if regularizer == "none":
         return 0.0, np.zeros_like(W)
     if regularizer == "l1":
-        smooth_abs = np.sqrt(W * W + L1_SMOOTH_EPS)
-        return float(np.sum(smooth_abs)), W / smooth_abs
+        return float(np.sum(np.abs(W))), np.sign(W)
     if regularizer == "l2":
         return float(np.sum(W * W)), 2.0 * W
     raise NotImplementedError(f"regularizer='{regularizer}' is not supported by the optimizer")
@@ -208,18 +246,14 @@ def _stage_objective_value_grad(
         return float("inf"), np.full_like(W, np.nan), score_value, dag_value, trek_value, reg_value
 
     grad = (
-        float(mu) * (
-            score_grad 
-            + cfg.regularizer_scale * reg_grad
-            + cfg.trek_reg * trek_grad)
+        float(mu) * (score_grad + cfg.regularizer_scale * reg_grad + cfg.trek_reg * trek_grad)
         + cfg.dag_reg * dag_grad
     )
     np.fill_diagonal(grad, 0.0)
 
     objective = (
-        float(mu) * (score_value + cfg.regularizer_scale * reg_value)
+        float(mu) * (score_value + cfg.regularizer_scale * reg_value + cfg.trek_reg * trek_value)
         + cfg.dag_reg * dag_value
-        + cfg.trek_reg * trek_value
     )
     return float(objective), grad, score_value, dag_value, trek_value, reg_value
 
@@ -227,7 +261,53 @@ def _stage_objective_value_grad(
 def _choose_s(stage: int, cfg) -> float:
     if cfg.dag_seq != "logdet":
         return float(cfg.dag_s)
-    return max(float(cfg.dag_s) - 0.1 * float(stage), 0.5)
+    s_path = getattr(cfg, "s_path", None)
+    if s_path is not None:
+        if len(s_path) == 0:
+            raise ValueError("cfg.s_path must not be empty")
+        return float(s_path[min(stage, len(s_path) - 1)])
+    return max(float(cfg.dag_s) - 0.1 * float(stage), 0.6)
+
+
+def _stage_diagnostics(
+    W: np.ndarray,
+    X: np.ndarray,
+    cfg,
+    independence_pairs: Sequence[Pair],
+    *,
+    mu: float,
+    s: float,
+) -> Dict[str, float]:
+    score_value, score_grad = _score_value_grad(X, W, cfg.score)
+    reg_value, reg_grad = _regularizer_value_grad(W, cfg.regularizer)
+    dag_value, dag_grad = _dag_value_grad(W, cfg.dag_seq, s)
+    trek_value, trek_grad = _trek_value_grad(W, cfg.trek_seq, independence_pairs)
+    total_grad = (
+        float(mu)
+        * (score_grad + cfg.regularizer_scale * reg_grad + cfg.trek_reg * trek_grad)
+        + cfg.dag_reg * dag_grad
+    )
+    np.fill_diagonal(total_grad, 0.0)
+    return {
+        "score": float(score_value),
+        "dag_penalty": float(cfg.dag_reg * dag_value),
+        "trek_penalty": float(float(mu) * cfg.trek_reg * trek_value),
+        "regularizer": float(float(mu) * cfg.regularizer_scale * reg_value),
+        "raw_score": float(score_value),
+        "raw_dag_penalty": float(dag_value),
+        "raw_trek_penalty": float(trek_value),
+        "raw_regularizer": float(reg_value),
+        "scaled_score": float(float(mu) * score_value),
+        "scaled_dag_penalty": float(cfg.dag_reg * dag_value),
+        "scaled_trek_penalty": float(float(mu) * cfg.trek_reg * trek_value),
+        "scaled_regularizer": float(float(mu) * cfg.regularizer_scale * reg_value),
+        "grad_norm": float(np.linalg.norm(total_grad)),
+        "grad_score_norm": float(np.linalg.norm(float(mu) * score_grad)),
+        "grad_dag_norm": float(np.linalg.norm(cfg.dag_reg * dag_grad)),
+        "grad_trek_norm": float(np.linalg.norm(float(mu) * cfg.trek_reg * trek_grad)),
+        "grad_regularizer_norm": float(np.linalg.norm(float(mu) * cfg.regularizer_scale * reg_grad)),
+        **_w_stats(W),
+    }
 
 
 def minimize_stage(
@@ -249,14 +329,18 @@ def minimize_stage(
         if not ok:
             current = np.zeros_like(current)
 
-    beta1 = 0.9
-    beta2 = 0.999
+    beta1 = float(getattr(cfg, "beta1", 0.99))
+    beta2 = float(getattr(cfg, "beta2", 0.999))
     m = np.zeros_like(current)
     v = np.zeros_like(current)
     previous = None
     converged = False
     objective = float("inf")
     parts = (float("inf"), float("inf"), float("inf"), float("inf"))
+    checkpoint_every = max(int(getattr(cfg, "checkpoint", 1000)), 1)
+    checkpoints: List[Dict[str, float]] = []
+    line_search_rejections_total = 0
+    final_accepted_step_size = 0.0
 
     for iteration in range(1, int(max_iter) + 1):
         objective, grad, score, dag_value, trek_value, reg_value = _stage_objective_value_grad(
@@ -284,6 +368,8 @@ def minimize_stage(
 
         step_size = float(lr)
         accepted = False
+        rejected_this_iter = 0
+        accepted_step_size = 0.0
         for _ in range(25):
             candidate = current - step_size * step
             np.fill_diagonal(candidate, 0.0)
@@ -293,8 +379,12 @@ def minimize_stage(
             if np.isfinite(cand_obj) and cand_obj <= objective + 1e-10:
                 current = candidate
                 accepted = True
+                accepted_step_size = float(step_size)
                 break
+            rejected_this_iter += 1
             step_size *= 0.5
+        line_search_rejections_total += rejected_this_iter
+        final_accepted_step_size = accepted_step_size
 
         if not accepted:
             return current, False, {
@@ -302,19 +392,45 @@ def minimize_stage(
                 "objective": float(objective),
                 "success": False,
                 "converged": converged,
+                "line_search_rejections": int(line_search_rejections_total),
+                "final_accepted_step_size": float(final_accepted_step_size),
+                "checkpoints": checkpoints,
             }
 
-    score, dag_value, trek_value, reg_value = parts
+        if iteration % checkpoint_every == 0 or iteration == int(max_iter):
+            checkpoint = {
+                "iteration": int(iteration),
+                "checkpoint": int(checkpoint_every),
+                "objective": float(objective),
+                "line_search_rejections": int(line_search_rejections_total),
+                "final_accepted_step_size": float(final_accepted_step_size),
+            }
+            checkpoint.update(_stage_diagnostics(current, X, cfg, independence_pairs, mu=mu, s=s))
+            checkpoints.append(checkpoint)
+
+    diagnostics = _stage_diagnostics(
+        current, X, cfg, independence_pairs, mu=mu, s=s
+    )
+    if not checkpoints or int(checkpoints[-1].get("iteration", -1)) != int(iteration):
+        checkpoint = {
+            "iteration": int(iteration),
+            "checkpoint": int(checkpoint_every),
+            "objective": float(objective),
+            "line_search_rejections": int(line_search_rejections_total),
+            "final_accepted_step_size": float(final_accepted_step_size),
+        }
+        checkpoint.update(diagnostics)
+        checkpoints.append(checkpoint)
     stage_diag = {
         "iterations": int(iteration),
         "objective": float(objective),
-        "score": float(score),
-        "dag_penalty": float(cfg.dag_reg * dag_value),
-        "trek_penalty": float(cfg.trek_reg * trek_value),
-        "regularizer": float(cfg.regularizer_scale * reg_value),
         "success": True,
         "converged": bool(converged),
+        "line_search_rejections": int(line_search_rejections_total),
+        "final_accepted_step_size": float(final_accepted_step_size),
+        "checkpoints": checkpoints,
     }
+    stage_diag.update(diagnostics)
     return current, True, stage_diag
 
 
@@ -326,6 +442,8 @@ def fit_notreks_optimizer(
     W_init: Optional[np.ndarray] = None,
 ) -> Tuple[np.ndarray, OptimizerDiagnostics]:
     X = np.asarray(X, dtype=float)
+    if cfg.score == "least_squares":
+        X = X - np.mean(X, axis=0, keepdims=True)
     d = X.shape[1]
     W = np.zeros((d, d), dtype=float) if W_init is None else np.asarray(W_init, dtype=float).copy()
     np.fill_diagonal(W, 0.0)
@@ -336,6 +454,7 @@ def fit_notreks_optimizer(
     iterations_total = 0
     path_steps_completed = 0
     converged = False
+    last_mu_used = float(mu)
 
     for stage in range(int(cfg.path_steps)):
         s_stage = _choose_s(stage, cfg)
@@ -364,6 +483,16 @@ def fit_notreks_optimizer(
                 stage_s += 0.1
             stage_diag["retry"] = retry + 1
 
+        for checkpoint in stage_diag.get("checkpoints", []):
+            checkpoint.update({
+                "stage": int(stage),
+                "mu": float(mu),
+                "s": float(stage_s),
+                "lr": float(stage_lr),
+                "success": bool(success),
+                "initialization": getattr(cfg, "init", "zero"),
+            })
+
         iterations_total += int(stage_diag.get("iterations", 0))
         stage_diag.update({
             "stage": int(stage),
@@ -371,6 +500,7 @@ def fit_notreks_optimizer(
             "s": float(stage_s),
             "lr": float(stage_lr),
             "success": bool(success),
+            "initialization": getattr(cfg, "init", "zero"),
         })
         stages.append(stage_diag)
 
@@ -378,24 +508,41 @@ def fit_notreks_optimizer(
             break
 
         path_steps_completed += 1
+        last_mu_used = float(mu)
         converged = bool(stage_diag.get("converged", False))
         mu *= float(cfg.mu_factor)
 
     final_s = _choose_s(max(path_steps_completed - 1, 0), cfg)
     objective, _, score, dag_value, trek_value, reg_value = _stage_objective_value_grad(
-        W, X, cfg, independence_pairs, mu=max(mu, 1e-300), s=final_s
+        W, X, cfg, independence_pairs, mu=max(last_mu_used, 1e-300), s=final_s
+    )
+    final_diag = _stage_diagnostics(
+        W, X, cfg, independence_pairs, mu=max(last_mu_used, 1e-300), s=final_s
     )
 
     diagnostics = OptimizerDiagnostics(
         converged=bool(converged and path_steps_completed == int(cfg.path_steps)),
         iterations_total=int(iterations_total),
         path_steps_completed=int(path_steps_completed),
-        final_mu=float(mu),
+        final_mu=float(last_mu_used),
         objective=float(objective),
         score=float(score),
-        dag_penalty=float(cfg.dag_reg * dag_value),
-        trek_penalty=float(cfg.trek_reg * trek_value),
-        regularizer=float(cfg.regularizer_scale * reg_value),
+        dag_penalty=float(final_diag["scaled_dag_penalty"]),
+        trek_penalty=float(final_diag["scaled_trek_penalty"]),
+        regularizer=float(final_diag["scaled_regularizer"]),
+        raw_score=float(final_diag["raw_score"]),
+        raw_dag_penalty=float(final_diag["raw_dag_penalty"]),
+        raw_trek_penalty=float(final_diag["raw_trek_penalty"]),
+        raw_regularizer=float(final_diag["raw_regularizer"]),
+        scaled_score=float(final_diag["scaled_score"]),
+        scaled_dag_penalty=float(final_diag["scaled_dag_penalty"]),
+        scaled_trek_penalty=float(final_diag["scaled_trek_penalty"]),
+        scaled_regularizer=float(final_diag["scaled_regularizer"]),
+        grad_norm=float(final_diag["grad_norm"]),
+        grad_score_norm=float(final_diag["grad_score_norm"]),
+        grad_dag_norm=float(final_diag["grad_dag_norm"]),
+        grad_trek_norm=float(final_diag["grad_trek_norm"]),
+        grad_regularizer_norm=float(final_diag["grad_regularizer_norm"]),
         backend="numpy/scipy+jax-available" if JAX_AVAILABLE else "numpy/scipy",
         stages=stages,
     )

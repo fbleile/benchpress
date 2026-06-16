@@ -32,6 +32,8 @@ class NotreksConfig:
     tol: float
     threshold: float
     timeout: Optional[float]
+    init: str = "zero"
+    checkpoint: int = 1000
 
 
 def _soft_threshold(values: np.ndarray, scale: float) -> np.ndarray:
