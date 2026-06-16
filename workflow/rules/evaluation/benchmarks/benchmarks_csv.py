@@ -20,9 +20,14 @@ python workflow/rules/evaluation/benchmarks/add_column.py --filename {res} --col
 python workflow/rules/evaluation/benchmarks/add_column.py --filename {res} --colname parameters      --colval {bn} 
 python workflow/rules/evaluation/benchmarks/add_column.py --filename {res} --colname data            --colval {data} 
 python workflow/rules/evaluation/benchmarks/add_column.py --filename {res} --colname time            --colval `cat {time}`
-python workflow/rules/evaluation/benchmarks/add_column.py --filename {res} --colname ntests          --colval None 
+python workflow/rules/evaluation/benchmarks/add_column.py --filename {res} --colname ntests          --colval `cat {ntests}` 
 """
-cmd += dict_to_summary(config["resources"]["structure_learning_algorithms"][algorithm][0])
+metadata_conf = {
+    key: value
+    for key, value in config["resources"]["structure_learning_algorithms"][algorithm][0].items()
+    if hasattr(snakemake.wildcards, key) and key != "seed"
+}
+cmd += dict_to_summary(metadata_conf)
  
 command = cmd.format(**snakemake.input, **snakemake.params, **snakemake.output, **snakemake.wildcards)
 

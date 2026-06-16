@@ -129,7 +129,7 @@ def _trek_value_jax(W, pairs, seq: str, K_log: int, eps_inv: float):
     H = F.T @ F
     rows = pairs[:, 0]
     cols = pairs[:, 1]
-    return jnp.sum(0.5 * (H[rows, cols] + H[cols, rows]))
+    return jnp.sum(H[rows, cols])
 
 
 def _trek_value_grad_jax(W: np.ndarray, seq: str, pairs: Sequence[Pair]) -> Tuple[float, np.ndarray]:
@@ -208,9 +208,11 @@ def _stage_objective_value_grad(
         return float("inf"), np.full_like(W, np.nan), score_value, dag_value, trek_value, reg_value
 
     grad = (
-        float(mu) * (score_grad + cfg.regularizer_scale * reg_grad)
+        float(mu) * (
+            score_grad 
+            + cfg.regularizer_scale * reg_grad
+            + cfg.trek_reg * trek_grad)
         + cfg.dag_reg * dag_grad
-        + cfg.trek_reg * trek_grad
     )
     np.fill_diagonal(grad, 0.0)
 

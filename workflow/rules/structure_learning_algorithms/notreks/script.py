@@ -42,7 +42,7 @@ def _algorithm_config():
     for alg in algs:
         ok = True
         for key, value in alg.items():
-            if key in {"id", "threshold"}:
+            if key in {"id", "threshold", "seed"}:
                 continue
             if hasattr(snakemake.wildcards, key) and not _same_config_value(value, getattr(snakemake.wildcards, key)):
                 ok = False

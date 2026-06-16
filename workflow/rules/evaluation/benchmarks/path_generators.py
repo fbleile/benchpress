@@ -17,7 +17,7 @@ def join_string_sampled_model(algorithm, bmark_setup, mode="result"):
             + mode + ".csv",
             output_dir="results",
             alg_string=json_string[alg_conf["id"]],
-            **alg_conf,
+            **{key: value for key, value in alg_conf.items() if key != "seed"},
             seed=seed,
             adjmat_string=gen_adjmat_string_from_conf(sim_setup["graph_id"], seed),
             param_string=gen_parameter_string_from_conf(sim_setup["parameters_id"], seed),
@@ -89,4 +89,3 @@ def result_path_mcmc(algorithm):
             "seed={seed}/"
             "id={id}/"
             "result.csv")
-

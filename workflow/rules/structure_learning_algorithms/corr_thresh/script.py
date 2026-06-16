@@ -27,7 +27,7 @@ def wrapper():
     adjmat = None
     if snakemake.wildcards["method"] == "corr":
 
-        corr = df.corr().values
+        corr = df.corr().values.copy()
         prec = inv(corr)
 
         np.fill_diagonal(prec, 0)
@@ -116,4 +116,3 @@ else:
                   snakemake.output["ntests"],
                   start):
         wrapper()
-

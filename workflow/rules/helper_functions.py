@@ -126,6 +126,8 @@ def dict_to_path(d):
         c.pop("burnin_frac")
     if "threshold" in c:      
         c.pop("threshold")
+    if "seed" in c:
+        c.pop("seed")
     if "mcmc_estimator" in c:      
         c.pop("mcmc_estimator")
     if "active" in c:
@@ -276,12 +278,22 @@ def get_mcmc_modules(alg_module_path="workflow/rules/structure_learning_algorith
 
 
 def check_system_requirements():
+    import os
     import subprocess
     from snakemake.utils import min_version
     # To update Snakemake using Mamba run
     # mamba update -c conda-forge -c bioconda snakemake
 
     min_version("7.30.1")
+
+    if os.environ.get("BENCHPRESS_SKIP_CONTAINER_CHECK") == "1":
+        print(
+            "WARNING: Skipping Benchpress Singularity/Apptainer check because "
+            "BENCHPRESS_SKIP_CONTAINER_CHECK=1. This is intended only for local "
+            "development with container: None modules. Do not use this for final "
+            "containerized benchmark runs."
+        )
+        return
 
     # Check that Apptainer or Singularity >=3.2 is installed.
     (apptainer_ecode, apptainer_outp) = subprocess.getstatusoutput(
@@ -303,5 +315,3 @@ def check_system_requirements():
             raise Exception(
                 "You have " + outp + ". Benchpress requires Singularity >= 3.2."
             )
-
-
