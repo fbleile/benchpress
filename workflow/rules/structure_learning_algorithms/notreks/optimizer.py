@@ -48,6 +48,9 @@ class OptimizerDiagnostics:
     grad_dag_norm: float
     grad_trek_norm: float
     grad_regularizer_norm: float
+    n_samples: int
+    n_variables: int
+    num_independence_pairs: int
     backend: str
     stages: List[Dict[str, float]] = field(default_factory=list)
 
@@ -57,7 +60,7 @@ def _least_squares_value_grad(X: np.ndarray, W: np.ndarray) -> Tuple[float, np.n
     n = X.shape[0]
     residual = X @ W - X
     value = 0.5 * float(np.sum(residual * residual)) / float(n)
-    grad = X.T @ residual / float(n)
+    grad = (X.T @ residual) / float(n)
     return value, grad
 
 
@@ -278,6 +281,7 @@ def _stage_diagnostics(
     mu: float,
     s: float,
 ) -> Dict[str, float]:
+    n, d = X.shape
     score_value, score_grad = _score_value_grad(X, W, cfg.score)
     reg_value, reg_grad = _regularizer_value_grad(W, cfg.regularizer)
     dag_value, dag_grad = _dag_value_grad(W, cfg.dag_seq, s)
@@ -306,6 +310,16 @@ def _stage_diagnostics(
         "grad_dag_norm": float(np.linalg.norm(cfg.dag_reg * dag_grad)),
         "grad_trek_norm": float(np.linalg.norm(float(mu) * cfg.trek_reg * trek_grad)),
         "grad_regularizer_norm": float(np.linalg.norm(float(mu) * cfg.regularizer_scale * reg_grad)),
+        "n_samples": int(n),
+        "n_variables": int(d),
+        "num_independence_pairs": int(len(independence_pairs)),
+        "least_squares": float(score_value) if cfg.score == "least_squares" else float("nan"),
+        "gaussian_likelihood": float(score_value) if cfg.score == "gaussian_likelihood" else float("nan"),
+        "l1": float(reg_value) if cfg.regularizer == "l1" else 0.0,
+        "l2": float(reg_value) if cfg.regularizer == "l2" else 0.0,
+        "regularizer_contribution": float(cfg.regularizer_scale * reg_value),
+        "dag_contribution": float(cfg.dag_reg * dag_value),
+        "trek_contribution": float(cfg.trek_reg * trek_value),
         **_w_stats(W),
     }
 
@@ -543,6 +557,9 @@ def fit_notreks_optimizer(
         grad_dag_norm=float(final_diag["grad_dag_norm"]),
         grad_trek_norm=float(final_diag["grad_trek_norm"]),
         grad_regularizer_norm=float(final_diag["grad_regularizer_norm"]),
+        n_samples=int(final_diag["n_samples"]),
+        n_variables=int(final_diag["n_variables"]),
+        num_independence_pairs=int(final_diag["num_independence_pairs"]),
         backend="numpy/scipy+jax-available" if JAX_AVAILABLE else "numpy/scipy",
         stages=stages,
     )

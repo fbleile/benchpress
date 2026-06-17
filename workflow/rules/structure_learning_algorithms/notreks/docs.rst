@@ -66,22 +66,23 @@ The sequence determines a matrix ``F(A)``:
   ``F = I + A + A^2 / 2 + ... + A^K / K`` with ``K = 2d``.
 
 Then ``H = F.T @ F``.  For each accepted marginal-independence pair ``(i, j)``,
-the optimizer penalizes ``0.5 * (H[i, j] + H[j, i])``.  This discourages shared
-trek/connectivity mass between variables that the pairwise tests accepted as
-candidate marginal independencies.  ``binom`` is a possible future sequence but
-is not exposed in the schema.
+the optimizer penalizes ``H[i, j]``.  Since ``H`` is symmetric and pairs are
+stored once as undirected pairs, this is equivalent to using the symmetric
+entry.  The current trek penalty is the sum over accepted pairs.  The penalty
+discourages shared trek/connectivity mass between variables that the pairwise
+tests accepted as candidate marginal independencies.  ``binom`` is a possible
+future sequence but is not exposed in the schema.
 
 Central-path optimizer
 ----------------------
 
 For each central-path stage, the implemented objective is:
 
-``mu * [score(W; X) + regularizer_scale * R(W)] + dag_reg * h(W; s) + trek_reg * T(W; I)``
+``mu * [score(W; X) + regularizer_scale * R(W) + trek_reg * T(W; I)] + dag_reg * h(W; s)``
 
-Only the score and ordinary coefficient regularizer are multiplied by ``mu``.
-The DAGMA log-det barrier and the trek penalty are outside ``mu``.  Keeping the
-trek term outside ``mu`` lets it remain active as the score multiplier is reduced
-along the central path.
+The score, ordinary coefficient regularizer, and current NOTREKS trek
+regularizer are multiplied by ``mu``.  The DAGMA log-det barrier is outside
+``mu``.
 
 ``dag_reg`` is not ignored: for ``dag_seq = "logdet"`` it multiplies the
 log-det barrier.  ``dag_reg = 1`` gives the faithful DAGMA scaling.
@@ -108,8 +109,32 @@ Regularizer
 
 ``regularizer`` is one of ``none``, ``l1``, or ``l2``.  The baseline initializer
 uses ridge-style fitting for ``l2`` and simple coefficient soft-thresholding for
-``l1``.  The optimizer uses a smooth approximation for ``l1`` and a squared
-penalty for ``l2``.
+``l1``.  The optimizer uses raw ``sum(abs(W))`` for ``l1`` with the
+corresponding ``sign(W)`` subgradient and raw ``sum(W * W)`` for ``l2`` with
+gradient ``2W``.  To run without ordinary coefficient regularization, use
+``regularizer = "none"`` and ``regularizer_scale = 0``.
+
+Scaling conventions
+-------------------
+
+The objective follows the earlier local DAGMA-like scaling used for the
+NOTREKS experiments:
+
+* ``least_squares`` is centered and uses
+  ``0.5 * ||XW - X||_F^2 / n``.
+* ``gaussian_likelihood`` is ``0.5 * sum_j log(sigma_j^2)``.
+* ``l1`` is ``sum(abs(W))``.
+* ``l2`` is ``sum(W * W)``.
+* ``dag_seq = "exp"`` is ``trace(expm(W * W)) - d``.
+* ``dag_seq = "logdet"`` is
+  ``-logdet(sI - W * W) + d log(s)``.
+* ``trek_seq`` penalties use
+  ``T(W; I) = sum_{(i,j) in I} H[i,j]``.
+
+The DAG terms are raw constraint violations.  The current regularizer and trek
+terms are intentionally unnormalized, matching the earlier local runs where the
+module performed best under the tested hyperparameters.  If no independence
+pairs are accepted, the trek value and gradient are exactly zero.
 
 Independence tests
 ------------------
