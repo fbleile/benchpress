@@ -85,12 +85,12 @@ def _read_config():
         path_steps=int(_config_value("path_steps")),
         mu_init=float(_config_value("mu_init")),
         mu_factor=float(_config_value("mu_factor")),
-        warm_iter=int(_config_value("warm_iter")),
         tol=float(_config_value("tol")),
         threshold=float(_config_value("threshold")),
         timeout=None if _timeout_is_none(_config_value("timeout")) else float(_config_value("timeout")),
         init=str(_config_value("init", "zero")),
         checkpoint=int(_config_value("checkpoint", 1000)),
+        warm_iter=int(_config_value("warm_iter", _config_value("max_iter"))),
     )
     if cfg.init not in {"zero", "linear_baseline"}:
         raise ValueError("init must be one of {'zero', 'linear_baseline'}")
@@ -101,7 +101,8 @@ def _print_config_sanity(cfg: NotreksConfig) -> None:
     print(
         "NOTREKS run config: "
         f"id={cfg.algorithm_id}, threshold={cfg.threshold}, init={cfg.init}, "
-        f"score={cfg.score}, dag_reg={cfg.dag_reg}, trek_seq={cfg.trek_seq}, trek_reg={cfg.trek_reg}"
+        f"score={cfg.score}, dag_reg={cfg.dag_reg}, trek_seq={cfg.trek_seq}, trek_reg={cfg.trek_reg}, "
+        f"stage_iter_policy=max_every_stage, stage_iteration_budget={cfg.max_iter}"
     )
     name = cfg.algorithm_id.lower()
     threshold_tags = {

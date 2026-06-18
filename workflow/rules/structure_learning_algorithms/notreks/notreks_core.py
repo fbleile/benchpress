@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Iterable, Optional, Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -28,12 +28,13 @@ class NotreksConfig:
     path_steps: int
     mu_init: float
     mu_factor: float
-    warm_iter: int
     tol: float
     threshold: float
     timeout: Optional[float]
     init: str = "zero"
     checkpoint: int = 1000
+    # Compatibility field. The current optimizer uses max_iter for every stage.
+    warm_iter: Optional[int] = None
 
 
 def _soft_threshold(values: np.ndarray, scale: float) -> np.ndarray:

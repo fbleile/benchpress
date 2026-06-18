@@ -92,12 +92,20 @@ Optimizer controls:
 * ``mu_init`` is the first central-path multiplier.
 * ``mu_factor`` multiplies ``mu`` after each successful stage.
 * ``path_steps`` is the number of central-path stages.
-* ``warm_iter`` is the inner iteration limit for all non-final stages.
-* ``max_iter`` is the inner iteration limit for the final stage.
+* ``max_iter`` is the inner iteration limit for every stage under the current
+  ``max_every_stage`` policy.
+* ``warm_iter`` remains accepted for compatibility with older configs, but the
+  current optimizer does not consume it.
 * ``lr`` is the Adam learning rate, with backtracking if a step leaves the
   log-det domain or increases the objective.
 * ``tol`` is the relative objective-improvement stopping tolerance inside a
   stage.
+
+The optimizer records the stage index, ``mu``, iteration budget, actual
+iterations, objective terms, and convergence status. Using fewer iterations in
+early continuation stages can be faster, but may pass an under-solved point to
+later stages. The current implementation avoids that tradeoff by applying
+``max_iter`` to every stage.
 
 For ``dag_seq = "logdet"``, the optimizer checks the DAGMA M-matrix domain:
 ``s * I - W * W`` must be invertible and its inverse must not have substantially

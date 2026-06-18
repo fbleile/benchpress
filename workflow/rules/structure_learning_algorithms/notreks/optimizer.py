@@ -472,7 +472,7 @@ def fit_notreks_optimizer(
 
     for stage in range(int(cfg.path_steps)):
         s_stage = _choose_s(stage, cfg)
-        inner_iter = int(cfg.max_iter) if stage == int(cfg.path_steps) - 1 else int(cfg.warm_iter)
+        inner_iter = int(cfg.max_iter)
         stage_lr = lr
         stage_s = s_stage
         success = False

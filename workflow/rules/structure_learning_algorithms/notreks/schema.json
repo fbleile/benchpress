@@ -74,7 +74,7 @@
         "type": "integer"
       },
       "max_iter": {
-        "description": "Positive optimizer iteration limit for the final central-path stage.",
+        "description": "Positive optimizer iteration limit used for every central-path stage by the current max_every_stage policy.",
         "type": "integer",
         "minimum": 1
       },
@@ -100,7 +100,7 @@
         "exclusiveMaximum": 1
       },
       "warm_iter": {
-        "description": "Positive optimizer iteration limit for all non-final central-path stages.",
+        "description": "Compatibility field retained for existing configs. The current optimizer uses max_iter for every stage and does not consume warm_iter.",
         "type": "integer",
         "minimum": 1
       },
