@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH -o slurm_logs/jobfarm.%N.%j.out
 #SBATCH -J NotreksJobFarm
+#SBATCH --mail-user=f.bleile@tum.de
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --get-user-env
 #SBATCH --export=ALL

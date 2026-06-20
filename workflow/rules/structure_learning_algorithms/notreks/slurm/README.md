@@ -19,6 +19,9 @@ FRESH=1 \
 sbatch workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_jobfarm.sh
 ```
 
+The default SLURM notification email in the script header is
+`f.bleile@tum.de`. Change the `#SBATCH --mail-user=...` line if needed.
+
 Set these variables as needed:
 
 ```bash
