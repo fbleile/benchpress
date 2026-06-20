@@ -15,6 +15,7 @@ Smoke submission example:
 ```bash
 RUN_DIR=results/notreks_experiments/slurm_smoke \
 CONFIG=results/notreks_experiments/slurm_smoke/configs/validation_hparam_config.json \
+CMD_FILE=results/notreks_experiments/slurm_smoke/cmd.txt \
 FRESH=1 \
 sbatch workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_jobfarm.sh
 ```
@@ -30,6 +31,7 @@ CONDA_ENV=benchpress-notreks
 CONDA_SH=$HOME/miniconda3/etc/profile.d/conda.sh
 RUN_DIR=results/notreks_experiments/slurm_smoke
 CONFIG=results/notreks_experiments/slurm_smoke/configs/validation_hparam_config.json
+CMD_FILE=results/notreks_experiments/slurm_smoke/cmd.txt
 FRESH=0
 ```
 

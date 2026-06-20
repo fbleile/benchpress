@@ -19,7 +19,7 @@ REPO_DIR="${REPO_DIR:-/dss/dsshome1/0C/ge86xim2/benchpress}"
 CONDA_ENV="${CONDA_ENV:-benchpress-notreks}"
 RUN_DIR="${RUN_DIR:-results/notreks_experiments/slurm_smoke}"
 CONFIG="${CONFIG:-}"
-CMD_FILE="${CMD_FILE:-}"
+CMD_FILE="${CMD_FILE:-${RUN_DIR}/cmd.txt}"
 TASKDB="${TASKDB:-$RUN_DIR/logs/slurm/cmd}"
 FRESH="${FRESH:-0}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -33,25 +33,6 @@ if [[ ! -d "$REPO_DIR" ]]; then
 fi
 cd "$REPO_DIR"
 
-mkdir -p "$RUN_DIR/logs/slurm"
-RUN_LOG="$RUN_DIR/logs/slurm/jobfarm.${SLURM_JOB_ID:-local}.out"
-exec > >(tee -a "$RUN_LOG") 2>&1
-
-if [[ -z "$CMD_FILE" ]]; then
-  if [[ -z "$CONFIG" ]]; then
-    echo "ERROR: set either CMD_FILE or CONFIG" >&2
-    exit 2
-  fi
-  CMD_FILE="$RUN_DIR/logs/slurm/cmd.txt"
-  dry_arg=""
-  if [[ "$DRY_RUN" == "1" ]]; then
-    dry_arg="-n"
-  fi
-  cat > "$CMD_FILE" <<EOF
-snakemake $dry_arg --cores "$SNAKEMAKE_CORES" $SNAKEMAKE_CONTAINER_ARG --snakefile workflow/Snakefile --configfile "$CONFIG"
-EOF
-fi
-
 if [[ ! -s "$CMD_FILE" ]]; then
   echo "ERROR: CMD_FILE is missing or empty: $CMD_FILE" >&2
   exit 2
@@ -60,6 +41,10 @@ if [[ ! -f "$CONDA_SH" ]]; then
   echo "ERROR: conda initialization script not found: $CONDA_SH" >&2
   exit 2
 fi
+
+mkdir -p "$RUN_DIR/logs/slurm"
+RUN_LOG="$RUN_DIR/logs/slurm/jobfarm.${SLURM_JOB_ID:-local}.out"
+exec > >(tee -a "$RUN_LOG") 2>&1
 
 module load slurm_setup
 module load jobfarm

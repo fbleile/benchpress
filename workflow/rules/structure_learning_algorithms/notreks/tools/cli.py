@@ -17,6 +17,7 @@ sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(MODULE_DIR))
 
 from grid import prepare_hparam_run  # noqa: E402
+from independence_tests import pairwise_independence_candidates  # noqa: E402
 from jobfarm import (  # noqa: E402
     make_manifest,
     read_manifest,
@@ -24,7 +25,6 @@ from jobfarm import (  # noqa: E402
     write_command_file,
 )
 from selection import inject_best, select_best  # noqa: E402
-from independence_tests import pairwise_independence_candidates  # noqa: E402
 from validation import (  # noqa: E402
     prepare_validation_run,
     select_best_by_method_family,
@@ -38,6 +38,29 @@ def _resolve(path: Path) -> Path:
 
 def _resolve_run_path(run_dir: Path, path: Path) -> Path:
     return path if path.is_absolute() else run_dir / path
+
+
+def _repo_relative(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
+def _write_validation_cmd(run_dir: Path, validation_config: Path, *, cores: str = "1") -> Path:
+    cmd_path = run_dir / "cmd.txt"
+    config_arg = _repo_relative(validation_config)
+    command = (
+        f'cd "{REPO_ROOT}" && '
+        'export PYTHONPATH="$PWD:${PYTHONPATH:-}" && '
+        "snakemake "
+        f"--cores {cores} "
+        "--use-apptainer "
+        "--snakefile workflow/Snakefile "
+        f"--configfile {config_arg}\n"
+    )
+    cmd_path.write_text(command)
+    return cmd_path
 
 
 def _smoke_meta(preset: str, run_name: str, dag_seq: str) -> dict:
@@ -187,15 +210,25 @@ def run_config_command(args: argparse.Namespace) -> None:
         run_dir,
         _resolve_run_path(run_dir, args.config),
         args.job_id,
-        _resolve_run_path(run_dir, args.status) if args.status else run_dir / "jobs" / f"{args.job_id:03d}" / "status.json",
-        _resolve_run_path(run_dir, args.stdout) if args.stdout else run_dir / "jobs" / f"{args.job_id:03d}" / "stdout.log",
-        _resolve_run_path(run_dir, args.stderr) if args.stderr else run_dir / "jobs" / f"{args.job_id:03d}" / "stderr.log",
+        _resolve_run_path(run_dir, args.status)
+        if args.status
+        else run_dir / "jobs" / f"{args.job_id:03d}" / "status.json",
+        _resolve_run_path(run_dir, args.stdout)
+        if args.stdout
+        else run_dir / "jobs" / f"{args.job_id:03d}" / "stdout.log",
+        _resolve_run_path(run_dir, args.stderr)
+        if args.stderr
+        else run_dir / "jobs" / f"{args.job_id:03d}" / "stderr.log",
         cores=args.cores,
     )
 
 
 def select_command(args: argparse.Namespace) -> None:
-    out_path = _resolve(args.out) if args.out is not None else _resolve(args.hparam_run) / "summaries/selected_best.json"
+    out_path = (
+        _resolve(args.out)
+        if args.out is not None
+        else _resolve(args.hparam_run) / "summaries/selected_best.json"
+    )
     selected = select_best(
         _resolve(args.hparam_run),
         args.primary_metric,
@@ -243,6 +276,7 @@ def prepare_validation_command(args: argparse.Namespace) -> None:
     run_dir = _resolve(args.out)
     run_dir.mkdir(parents=True, exist_ok=True)
     prepared = prepare_validation_run(REPO_ROOT, run_dir, args.preset)
+    cmd_path = _write_validation_cmd(run_dir, prepared.validation_config_path)
     config = json.loads(prepared.validation_config_path.read_text())
     counts = {
         name: len(entries)
@@ -252,6 +286,7 @@ def prepare_validation_command(args: argparse.Namespace) -> None:
     print(f"Validation config: {prepared.validation_config_path}")
     print(f"Validation manifest CSV: {prepared.validation_manifest_csv}")
     print(f"Validation manifest JSON: {prepared.validation_manifest_json}")
+    print(f"Command file: {cmd_path}")
     print(f"Expected Benchpress joint benchmark: {prepared.validation_joint_benchmarks_path}")
     print(f"Algorithm variant counts: {counts}")
     print(f"Total algorithm variants: {total_variants}")
@@ -261,6 +296,15 @@ def prepare_validation_command(args: argparse.Namespace) -> None:
         "BENCHPRESS_SKIP_CONTAINER_CHECK=1 snakemake -n --cores all "
         f"--snakefile workflow/Snakefile --configfile {prepared.validation_config_path}"
     )
+
+
+def prepare_experiment_command(args: argparse.Namespace) -> None:
+    grid_path = _resolve(args.grid)
+    grid = json.loads(grid_path.read_text())
+    preset = grid.get("preset")
+    if not preset:
+        raise ValueError(f"Grid config must include a 'preset' field: {grid_path}")
+    prepare_validation_command(argparse.Namespace(out=args.out, preset=preset))
 
 
 def select_validation_command(args: argparse.Namespace) -> None:
@@ -338,7 +382,15 @@ def build_parser() -> argparse.ArgumentParser:
     precompute.add_argument("--cache-dir", type=Path, required=True)
     precompute.add_argument(
         "--method",
-        choices=["pearson", "spearman", "hsic", "dcor"],
+        choices=[
+            "pearson",
+            "spearman",
+            "hsic",
+            "dcor",
+            "gcastle_fisherz",
+            "gcastle_g2",
+            "gcastle_chi2",
+        ],
         required=True,
     )
     precompute.add_argument("--alpha", type=float, required=True)
@@ -350,9 +402,18 @@ def build_parser() -> argparse.ArgumentParser:
     precompute.set_defaults(func=precompute_independencies_command)
 
     prepare_validation = subparsers.add_parser("prepare-validation")
-    prepare_validation.add_argument("--preset", choices=["tiny", "local10", "local10_sensible", "local10_quick"], default="tiny")
+    prepare_validation.add_argument(
+        "--preset",
+        choices=["tiny", "local10", "local10_sensible", "local10_quick"],
+        default="tiny",
+    )
     prepare_validation.add_argument("--out", type=Path, required=True)
     prepare_validation.set_defaults(func=prepare_validation_command)
+
+    prepare_experiment = subparsers.add_parser("prepare-experiment")
+    prepare_experiment.add_argument("--grid", type=Path, required=True)
+    prepare_experiment.add_argument("--out", type=Path, required=True)
+    prepare_experiment.set_defaults(func=prepare_experiment_command)
 
     select_validation = subparsers.add_parser("select-validation-best")
     select_validation.add_argument("--run-dir", type=Path, required=True)

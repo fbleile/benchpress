@@ -52,7 +52,11 @@ def main() -> None:
         jobfarm_tests.test_manifest_and_command_file_are_unique_and_nonempty(
             path / "jobfarm"
         )
+        jobfarm_tests.test_validation_command_file_references_generated_config(
+            path / "validation-cmd"
+        )
         jobfarm_tests.test_slurm_script_rejects_missing_command_file(path / "slurm")
+        jobfarm_tests.test_slurm_script_defaults_to_run_dir_command_file()
         path_tests.test_run_folder_uses_relative_paths_and_clean_metadata(path / "paths")
         path_tests.test_docs_reference_dag_constraints_and_literature()
         for name in ("selection", "selection-missing", "selection-tie", "selection-move", "inject"):
