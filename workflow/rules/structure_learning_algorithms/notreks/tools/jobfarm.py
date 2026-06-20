@@ -20,14 +20,18 @@ from grid import ExpandedTemplate
 MANIFEST_FIELDS = [
     "job_id",
     "template_id",
-    "config_path",
+    "relative_config_path",
     "algorithm_ids",
     "benchmark_title",
     "filename_prefix",
-    "joint_benchmarks_path",
-    "status_path",
-    "stdout_path",
-    "stderr_path",
+    "relative_job_dir",
+    "relative_status_path",
+    "relative_stdout_path",
+    "relative_stderr_path",
+    "relative_joint_benchmarks_path",
+    "relative_roc_data_path",
+    "benchpress_joint_benchmarks_path",
+    "benchpress_roc_data_path",
 ]
 
 
@@ -47,21 +51,23 @@ def _write_json(path: Path, value: dict) -> None:
 def make_manifest(run_dir: Path, records: list[ExpandedTemplate]) -> Path:
     rows = []
     for job_id, record in enumerate(records):
-        status_dir = run_dir / "status"
-        log_dir = run_dir / "logs"
-        filename = _safe_filename(record.template_id)
+        job_dir = Path(record.relative_job_dir)
         rows.append(
             {
                 "job_id": job_id,
                 "template_id": record.template_id,
-                "config_path": str(record.config_path),
+                "relative_config_path": record.relative_config_path,
                 "algorithm_ids": ";".join(record.algorithm_ids),
                 "benchmark_title": record.benchmark_title,
                 "filename_prefix": record.filename_prefix,
-                "joint_benchmarks_path": str(record.joint_benchmarks_path),
-                "status_path": str(status_dir / f"{filename}.json"),
-                "stdout_path": str(log_dir / f"{filename}.out"),
-                "stderr_path": str(log_dir / f"{filename}.err"),
+                "relative_job_dir": str(job_dir),
+                "relative_status_path": str(job_dir / "status.json"),
+                "relative_stdout_path": str(job_dir / "stdout.log"),
+                "relative_stderr_path": str(job_dir / "stderr.log"),
+                "relative_joint_benchmarks_path": record.relative_joint_benchmarks_path,
+                "relative_roc_data_path": record.relative_roc_data_path,
+                "benchpress_joint_benchmarks_path": record.benchpress_joint_benchmarks_path,
+                "benchpress_roc_data_path": record.benchpress_roc_data_path,
             }
         )
     validate_manifest(rows)
@@ -73,7 +79,7 @@ def make_manifest(run_dir: Path, records: list[ExpandedTemplate]) -> Path:
         writer.writerows(rows)
     for row in rows:
         _write_json(
-            Path(row["status_path"]),
+            run_dir / row["relative_status_path"],
             {
                 "status": "pending",
                 "job_id": row["job_id"],
@@ -96,14 +102,17 @@ def read_manifest(path: Path) -> list[dict[str, str]]:
 
 def validate_manifest(rows: list[dict]) -> None:
     job_ids = [int(row["job_id"]) for row in rows]
-    config_paths = [str(row["config_path"]) for row in rows]
-    status_paths = [str(row["status_path"]) for row in rows]
+    config_paths = [str(row["relative_config_path"]) for row in rows]
+    status_paths = [str(row["relative_status_path"]) for row in rows]
+    job_dirs = [str(row["relative_job_dir"]) for row in rows]
     if len(job_ids) != len(set(job_ids)):
         raise ValueError("Manifest job_id values must be unique")
     if len(config_paths) != len(set(config_paths)):
         raise ValueError("Manifest config paths must be unique")
     if len(status_paths) != len(set(status_paths)):
         raise ValueError("Manifest status paths must be unique")
+    if len(job_dirs) != len(set(job_dirs)):
+        raise ValueError("Manifest job output paths must be unique")
 
 
 def write_command_file(repo_root: Path, run_dir: Path, manifest_path: Path) -> Path:
@@ -116,14 +125,18 @@ def write_command_file(repo_root: Path, run_dir: Path, manifest_path: Path) -> P
                     "python",
                     shlex.quote(str(cli.relative_to(repo_root))),
                     "run-config",
+                    "--run-dir",
+                    shlex.quote(str(run_dir)),
                     "--config",
-                    shlex.quote(row["config_path"]),
+                    shlex.quote(row["relative_config_path"]),
+                    "--job-id",
+                    str(row["job_id"]),
                     "--status",
-                    shlex.quote(row["status_path"]),
+                    shlex.quote(row["relative_status_path"]),
                     "--stdout",
-                    shlex.quote(row["stdout_path"]),
+                    shlex.quote(row["relative_stdout_path"]),
                     "--stderr",
-                    shlex.quote(row["stderr_path"]),
+                    shlex.quote(row["relative_stderr_path"]),
                 ]
             )
         )
@@ -151,7 +164,9 @@ def _snakemake_binary() -> str:
 
 def run_benchpress_config(
     repo_root: Path,
+    run_dir: Path,
     config_path: Path,
+    job_id: int,
     status_path: Path,
     stdout_path: Path,
     stderr_path: Path,
@@ -160,6 +175,7 @@ def run_benchpress_config(
     status = {
         "status": "running",
         "config_path": str(config_path),
+        "job_id": int(job_id),
         "start_time": _now(),
         "end_time": None,
         "runtime": None,
@@ -192,6 +208,7 @@ def run_benchpress_config(
                 check=True,
                 text=True,
             )
+        _copy_benchpress_outputs(repo_root, run_dir, config_path, job_id)
     except Exception as exc:
         status.update(
             {
@@ -211,3 +228,23 @@ def run_benchpress_config(
         }
     )
     _write_json(status_path, status)
+
+
+def _copy_benchpress_outputs(repo_root: Path, run_dir: Path, config_path: Path, job_id: int) -> None:
+    rows = read_manifest(run_dir / "manifest.csv")
+    matches = [row for row in rows if int(row["job_id"]) == int(job_id)]
+    if len(matches) != 1:
+        raise ValueError(f"Expected one manifest row for job_id={job_id}, found {len(matches)}")
+    row = matches[0]
+    for source_key, dest_key in [
+        ("benchpress_joint_benchmarks_path", "relative_joint_benchmarks_path"),
+        ("benchpress_roc_data_path", "relative_roc_data_path"),
+    ]:
+        source = repo_root / row[source_key]
+        dest = run_dir / row[dest_key]
+        if not source.is_file():
+            raise FileNotFoundError(
+                f"Expected Benchpress output is missing for {config_path}: {source}"
+            )
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)

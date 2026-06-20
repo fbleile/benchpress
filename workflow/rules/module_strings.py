@@ -112,8 +112,9 @@ def gen_data_string_from_conf(data_id, seed, seed_in_path=True):
         
         data_string = ("fixed" + 
                 "/filename="+data_id + 
-                "/n="+str(num_lines) +
-                "/seed="+str(seed))
+                "/n="+str(num_lines))
+        if seed_in_path:
+            data_string += "/seed="+str(seed)
 
         return data_string
 
@@ -121,10 +122,15 @@ def gen_data_string_from_conf(data_id, seed, seed_in_path=True):
         paths = Path("resources/data/mydatasets/").glob(data_id+'/*.csv')
         files = [x.name for x in paths if x.is_file()]
 
-        return ["fixed" +
-                "/filename="+data_id + "/" + f +
-                "/n="+str(None) +
-                "/seed="+str(seed) for f in files]
+        data_strings = [
+            "fixed" +
+            "/filename="+data_id + "/" + f +
+            "/n="+str(None)
+            for f in files
+        ]
+        if seed_in_path:
+            data_strings = [value + "/seed="+str(seed) for value in data_strings]
+        return data_strings
     else:
         for module in config["resources"]["data"]:
             if data_id in [c["id"] for c in config["resources"]["data"][module]]:
@@ -223,6 +229,5 @@ def gen_json_strings(config, pattern_strings, mcmc_modules):
 
 
     return json_string, json_string_mcmc_noest
-
 
 

@@ -122,6 +122,8 @@ def dict_to_path(d):
 
     c = d[0].copy() # take the first element in the list. BUG
     c.pop("id") # remove id from the string as only the parameters should identify the computation.
+    if "params_manifest" in c:
+        c.pop("params_manifest")
     if "burnin_frac" in c: 
         c.pop("burnin_frac")
     if "threshold" in c:      

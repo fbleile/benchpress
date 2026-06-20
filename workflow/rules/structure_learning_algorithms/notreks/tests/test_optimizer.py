@@ -1,6 +1,7 @@
 from dataclasses import replace
 from pathlib import Path
 import sys
+import time
 
 import numpy as np
 import scipy.linalg as sla
@@ -45,6 +46,8 @@ def _cfg(**overrides):
         timeout=None,
         init="zero",
         checkpoint=5,
+        power_iter_steps=5,
+        scc_threshold=1e-8,
     )
     return replace(base, **overrides)
 
@@ -179,6 +182,95 @@ def test_dag_gradient_logdet():
     _assert_dag_grad_matches_finite_difference("logdet", s=1.0)
 
 
+def test_dag_scc_power_iteration_small_for_acyclic_matrix():
+    W = np.zeros((4, 4), dtype=float)
+    W[0, 1] = 0.8
+    W[1, 2] = 0.7
+    W[2, 3] = 0.6
+    value, grad = _dag_value_grad(W, "scc_power_iteration", s=1.0)
+    assert np.isfinite(value)
+    assert value < 1e-8
+    assert np.all(np.isfinite(grad))
+
+
+def test_dag_scc_power_iteration_positive_for_cycle():
+    W = np.zeros((3, 3), dtype=float)
+    W[0, 1] = 0.8
+    W[1, 2] = 0.7
+    W[2, 0] = 0.6
+    value, grad = _dag_value_grad(W, "scc_power_iteration", s=1.0)
+    assert np.isfinite(value)
+    assert value > 0.0
+    assert np.all(np.isfinite(grad))
+
+
+def test_dag_scc_power_iteration_diagonal_does_not_contribute():
+    W = np.zeros((4, 4), dtype=float)
+    np.fill_diagonal(W, 10.0)
+    value, grad = _dag_value_grad(W, "scc_power_iteration", s=1.0)
+    assert value == 0.0
+    assert np.array_equal(grad, np.zeros_like(W))
+
+
+def test_dag_scc_power_iteration_penalizes_disjoint_cycles():
+    W_one = np.zeros((4, 4), dtype=float)
+    W_one[0, 1] = 0.7
+    W_one[1, 0] = 0.6
+    W_two = W_one.copy()
+    W_two[2, 3] = 0.5
+    W_two[3, 2] = 0.4
+    one_value, _ = _dag_value_grad(W_one, "scc_power_iteration", s=1.0)
+    two_value, _ = _dag_value_grad(W_two, "scc_power_iteration", s=1.0)
+    assert two_value > one_value
+
+
+def test_dag_scc_power_iteration_uses_squared_adjacency_not_abs():
+    W = np.zeros((3, 3), dtype=float)
+    W[0, 1] = -0.5
+    W[1, 2] = 0.5
+    W[2, 0] = -0.5
+    new_value, grad = _dag_value_grad(W, "scc_power_iteration", s=1.0)
+    abs_proxy_radius = max(abs(np.linalg.eigvals(np.abs(W))))
+    assert new_value > 0.0
+    assert new_value < abs_proxy_radius
+    assert np.all(np.sign(grad[W != 0]) == np.sign(W[W != 0]))
+
+
+def test_dag_scc_power_iteration_old_aliases_are_rejected():
+    W = np.zeros((3, 3), dtype=float)
+    W[0, 1] = 0.8
+    W[1, 2] = 0.7
+    W[2, 0] = 0.6
+    for old_name in ("power_iteration", "spectral_radius"):
+        try:
+            _dag_value_grad(W, old_name, s=1.0)
+        except NotImplementedError as exc:
+            assert "Use dag_seq='scc_power_iteration'" in str(exc)
+        else:
+            raise AssertionError(f"expected {old_name} to be rejected")
+
+
+def test_dag_scc_power_iteration_runtime_small_matrices():
+    rng = np.random.default_rng(22)
+    for d in (10, 20):
+        W = rng.normal(scale=0.05, size=(d, d))
+        np.fill_diagonal(W, 0.0)
+        W[0, 1] = 0.4
+        W[1, 2] = 0.35
+        W[2, 0] = 0.3
+        _dag_value_grad(W, "scc_power_iteration", s=1.0)
+        start = time.perf_counter()
+        logdet_value, _ = _dag_value_grad(W, "logdet", s=1.0)
+        logdet_time = time.perf_counter() - start
+        start = time.perf_counter()
+        scc_value, scc_grad = _dag_value_grad(W, "scc_power_iteration", s=1.0)
+        scc_time = time.perf_counter() - start
+        assert np.isfinite(logdet_value)
+        assert np.isfinite(scc_value)
+        assert np.all(np.isfinite(scc_grad))
+        assert scc_time < max(1.0, 200.0 * logdet_time)
+
+
 def test_regularizer_values_and_gradients():
     W = _fixed_W()
 
@@ -298,6 +390,13 @@ if __name__ == "__main__":
     test_score_gradient_gaussian_likelihood()
     test_dag_gradient_exp()
     test_dag_gradient_logdet()
+    test_dag_scc_power_iteration_small_for_acyclic_matrix()
+    test_dag_scc_power_iteration_positive_for_cycle()
+    test_dag_scc_power_iteration_diagonal_does_not_contribute()
+    test_dag_scc_power_iteration_penalizes_disjoint_cycles()
+    test_dag_scc_power_iteration_uses_squared_adjacency_not_abs()
+    test_dag_scc_power_iteration_old_aliases_are_rejected()
+    test_dag_scc_power_iteration_runtime_small_matrices()
     test_regularizer_values_and_gradients()
     test_empty_trek_pairs_zero_value_and_gradient()
     test_trek_penalty_sums_over_pairs()

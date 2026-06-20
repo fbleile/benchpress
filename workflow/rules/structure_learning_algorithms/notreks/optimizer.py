@@ -4,6 +4,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import numpy.linalg as la
 import scipy.linalg as sla
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 
 
 try:
@@ -22,6 +24,9 @@ Pair = Tuple[int, int]
 DOMAIN_TOL = 1e-12
 TREK_INV_EPS = 1e-8
 W_STAT_THRESHOLDS = (0.02, 0.05, 0.08, 0.1, 0.2, 0.3, 0.5)
+POWER_ITERATION_STEPS = 5
+POWER_ITERATION_EPS = 1e-12
+SCC_THRESHOLD = 1e-8
 
 
 @dataclass(frozen=True)
@@ -98,7 +103,14 @@ def _logdet_domain_inverse(W: np.ndarray, s: float) -> Tuple[bool, Optional[np.n
     return True, Minv, float(logdet)
 
 
-def _dag_value_grad(W: np.ndarray, seq: str, s: float) -> Tuple[float, np.ndarray]:
+def _dag_value_grad(
+    W: np.ndarray,
+    seq: str,
+    s: float,
+    *,
+    power_iter_steps: int = POWER_ITERATION_STEPS,
+    scc_threshold: float = SCC_THRESHOLD,
+) -> Tuple[float, np.ndarray]:
     d = W.shape[0]
     if seq == "none":
         return 0.0, np.zeros_like(W)
@@ -115,9 +127,104 @@ def _dag_value_grad(W: np.ndarray, seq: str, s: float) -> Tuple[float, np.ndarra
         value = float(np.trace(E) - d)
         grad = 2.0 * W * E.T
         return value, grad
+    if seq == "scc_power_iteration":
+        return _scc_power_iteration_value_grad(
+            W,
+            power_iter_steps=power_iter_steps,
+            scc_threshold=scc_threshold,
+        )
+    if seq in {"power_iteration", "spectral_radius"}:
+        raise NotImplementedError(
+            f"Unknown dag_seq='{seq}'. Use dag_seq='scc_power_iteration'."
+        )
     if seq in {"log", "inv"}:
         raise NotImplementedError(f"dag_seq='{seq}' is not implemented in the optimizer")
     raise NotImplementedError(f"dag_seq='{seq}' is not supported by the optimizer")
+
+
+def _normalize_numpy_vector(vector: np.ndarray) -> np.ndarray:
+    return vector / float(np.sqrt(np.sum(vector * vector) + POWER_ITERATION_EPS))
+
+
+def _scc_power_iteration_gradient_proxy(
+    W: np.ndarray,
+    *,
+    power_iter_steps: int,
+    scc_threshold: float,
+) -> np.ndarray:
+    """Return a detached Perron-gradient proxy, blockwise on nontrivial SCCs."""
+
+    if power_iter_steps < 1:
+        raise ValueError("power_iter_steps must be positive")
+    if scc_threshold < 0:
+        raise ValueError("scc_threshold must be non-negative")
+
+    d = W.shape[0]
+    A = W * W
+    A = A.copy()
+    np.fill_diagonal(A, 0.0)
+    support = A > float(scc_threshold)
+    n_components, labels = connected_components(
+        csr_matrix(support),
+        directed=True,
+        connection="strong",
+        return_labels=True,
+    )
+    G = np.zeros_like(W, dtype=float)
+    for component in range(int(n_components)):
+        indices = np.flatnonzero(labels == component)
+        if indices.size <= 1:
+            continue
+        block = A[np.ix_(indices, indices)]
+        size = block.shape[0]
+        u = np.ones(size, dtype=float) / np.sqrt(float(size))
+        v = np.ones(size, dtype=float) / np.sqrt(float(size))
+        for _ in range(int(power_iter_steps)):
+            u = _normalize_numpy_vector(block.T @ u + POWER_ITERATION_EPS)
+            v = _normalize_numpy_vector(block @ v + POWER_ITERATION_EPS)
+        denom = float(np.dot(u, v) + POWER_ITERATION_EPS)
+        G_block = np.outer(u, v) / denom
+        G[np.ix_(indices, indices)] = G_block
+    np.fill_diagonal(G, 0.0)
+    return G
+
+
+def _scc_power_iteration_surrogate_jax(W, G):
+    d = W.shape[0]
+    offdiag = 1.0 - jnp.eye(d, dtype=W.dtype)
+    A = W * W * offdiag
+    return jnp.sum(jax.lax.stop_gradient(G) * A)
+
+
+def _scc_power_iteration_value_grad(
+    W: np.ndarray,
+    *,
+    power_iter_steps: int = POWER_ITERATION_STEPS,
+    scc_threshold: float = SCC_THRESHOLD,
+) -> Tuple[float, np.ndarray]:
+    if not JAX_AVAILABLE:
+        raise ImportError(
+            "dag_seq='scc_power_iteration' requires JAX for power-iteration gradients. "
+            "Install with: pip install jax jaxlib"
+        )
+    W_jax = jnp.asarray(W, dtype=jnp.float64)
+    G = _scc_power_iteration_gradient_proxy(
+        np.asarray(W, dtype=float),
+        power_iter_steps=int(power_iter_steps),
+        scc_threshold=float(scc_threshold),
+    )
+    if not np.any(G):
+        return 0.0, np.zeros_like(W)
+    G_jax = jnp.asarray(G, dtype=jnp.float64)
+    try:
+        value, grad = jax.value_and_grad(_scc_power_iteration_surrogate_jax)(W_jax, G_jax)
+    except Exception:
+        return float("inf"), np.full_like(W, np.nan)
+    value_np = float(np.asarray(value))
+    grad_np = np.asarray(grad, dtype=float)
+    if not np.isfinite(value_np) or not np.all(np.isfinite(grad_np)):
+        return float("inf"), np.full_like(W, np.nan)
+    return value_np, grad_np
 
 
 def _series_I_minus_log_I_minus_W_jax(A, K: int):
@@ -235,9 +342,17 @@ def _stage_objective_value_grad(
     mu: float,
     s: float,
 ):
+    power_iter_steps = int(getattr(cfg, "power_iter_steps", POWER_ITERATION_STEPS))
+    scc_threshold = float(getattr(cfg, "scc_threshold", SCC_THRESHOLD))
     score_value, score_grad = _score_value_grad(X, W, cfg.score)
     reg_value, reg_grad = _regularizer_value_grad(W, cfg.regularizer)
-    dag_value, dag_grad = _dag_value_grad(W, cfg.dag_seq, s)
+    dag_value, dag_grad = _dag_value_grad(
+        W,
+        cfg.dag_seq,
+        s,
+        power_iter_steps=power_iter_steps,
+        scc_threshold=scc_threshold,
+    )
     trek_value, trek_grad = _trek_value_grad(W, cfg.trek_seq, independence_pairs)
 
     if (
@@ -282,9 +397,17 @@ def _stage_diagnostics(
     s: float,
 ) -> Dict[str, float]:
     n, d = X.shape
+    power_iter_steps = int(getattr(cfg, "power_iter_steps", POWER_ITERATION_STEPS))
+    scc_threshold = float(getattr(cfg, "scc_threshold", SCC_THRESHOLD))
     score_value, score_grad = _score_value_grad(X, W, cfg.score)
     reg_value, reg_grad = _regularizer_value_grad(W, cfg.regularizer)
-    dag_value, dag_grad = _dag_value_grad(W, cfg.dag_seq, s)
+    dag_value, dag_grad = _dag_value_grad(
+        W,
+        cfg.dag_seq,
+        s,
+        power_iter_steps=power_iter_steps,
+        scc_threshold=scc_threshold,
+    )
     trek_value, trek_grad = _trek_value_grad(W, cfg.trek_seq, independence_pairs)
     total_grad = (
         float(mu)

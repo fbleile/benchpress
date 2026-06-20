@@ -33,6 +33,9 @@ class NotreksConfig:
     timeout: Optional[float]
     init: str = "zero"
     checkpoint: int = 1000
+    power_iter_steps: int = 5
+    scc_threshold: float = 1e-8
+    independence_cache_dir: Optional[str] = None
     # Compatibility field. The current optimizer uses max_iter for every stage.
     warm_iter: Optional[int] = None
 

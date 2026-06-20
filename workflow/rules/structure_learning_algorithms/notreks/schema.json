@@ -11,6 +11,14 @@
         "description": "Algorithm identifier",
         "type": "string"
       },
+      "alg_id": {
+        "description": "Short path-forming algorithm identifier used by generated hyperparameter configs.",
+        "type": "string"
+      },
+      "params_manifest": {
+        "description": "Optional manifest JSON path for resolving full hyperparameters from alg_id.",
+        "type": "string"
+      },
       "function_class": {
         "description": "Function class. Only linear is implemented in this local module.",
         "type": "string",
@@ -24,7 +32,7 @@
       "dag_seq": {
         "description": "DAG penalty sequence.",
         "type": "string",
-        "enum": ["none", "exp", "log", "inv", "logdet"]
+        "enum": ["none", "exp", "log", "inv", "logdet", "scc_power_iteration"]
       },
       "dag_reg": {
         "description": "Non-negative scaling factor for the DAG penalty.",
@@ -126,32 +134,56 @@
         "description": "Optimizer diagnostic checkpoint interval in inner iterations.",
         "type": "integer",
         "minimum": 1
+      },
+      "power_iter_steps": {
+        "description": "Power-iteration steps for experimental SCC power-iteration DAG penalties.",
+        "type": "integer",
+        "minimum": 1
+      },
+      "scc_threshold": {
+        "description": "Non-negative support threshold for SCC detection in scc_power_iteration.",
+        "$ref": "#/$defs/nonnegnum"
+      },
+      "independence_cache_dir": {
+        "description": "Optional directory for parameter-specific cached pairwise independence-test results.",
+        "type": ["string", "null"]
       }
     },
-    "required": [
-      "id",
-      "function_class",
-      "score",
-      "dag_seq",
-      "dag_reg",
-      "dag_s",
-      "trek_seq",
-      "trek_reg",
-      "regularizer",
-      "regularizer_scale",
-      "independence_test",
-      "independence_alpha",
-      "independence_correction",
-      "seed",
-      "max_iter",
-      "lr",
-      "path_steps",
-      "mu_init",
-      "mu_factor",
-      "warm_iter",
-      "tol",
-      "threshold",
-      "timeout"
+    "anyOf": [
+      {
+        "required": [
+          "id",
+          "function_class",
+          "score",
+          "dag_seq",
+          "dag_reg",
+          "dag_s",
+          "trek_seq",
+          "trek_reg",
+          "regularizer",
+          "regularizer_scale",
+          "independence_test",
+          "independence_alpha",
+          "independence_correction",
+          "seed",
+          "max_iter",
+          "lr",
+          "path_steps",
+          "mu_init",
+          "mu_factor",
+          "warm_iter",
+          "tol",
+          "threshold",
+          "timeout"
+        ]
+      },
+      {
+        "required": [
+          "id",
+          "alg_id",
+          "params_manifest"
+        ]
+      }
     ],
     "additionalProperties": false,
     "examples": [
@@ -180,7 +212,10 @@
         "threshold": 0.1,
         "timeout": null,
         "init": "zero",
-        "checkpoint": 100
+        "checkpoint": 100,
+        "power_iter_steps": 5,
+        "scc_threshold": 1e-8,
+        "independence_cache_dir": null
       }
     ]
   },

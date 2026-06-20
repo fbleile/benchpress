@@ -91,12 +91,15 @@ def test_prepare_writes_one_config_per_template_and_shared_fixed_data(tmp_path: 
     assert optimizer.read_bytes() == before
 
     assert len(records) == 2
-    assert len({record.config_path for record in records}) == 2
-    assert fixed.data_id == "notreks_hparam/grid-test"
+    assert len({record.relative_config_path for record in records}) == 2
+    assert fixed.data_id == "grid-test"
+    assert (run_dir / "run_info.json").is_file()
+    assert not (run_dir / "grid_meta.json").exists()
     data_ids = set()
     graph_ids = set()
     for record in records:
-        expanded_config = json.loads(record.config_path.read_text())
+        config_path = run_dir / record.relative_config_path
+        expanded_config = json.loads(config_path.read_text())
         setup = expanded_config["benchmark_setup"][0]["data"][0]
         data_ids.add(setup["data_id"])
         graph_ids.add(setup["graph_id"])

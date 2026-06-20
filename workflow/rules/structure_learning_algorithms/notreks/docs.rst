@@ -33,17 +33,44 @@ DAG penalty
 * ``log`` denotes a logarithmic sequence variant.
 * ``inv`` denotes an inverse/resolvent-style sequence variant.
 * ``logdet`` denotes a DAGMA-style log-det barrier with parameter ``dag_s``.
+* ``scc_power_iteration`` denotes an experimental SCC-blockwise SDCD-style
+  power-iteration surrogate on ``W * W``.
 
 ``dag_reg`` is the non-negative scaling factor for this penalty.  ``dag_s`` is
 kept in every config for simplicity and is relevant to ``dag_seq = "logdet"``.
 
-The current optimizer supports ``dag_seq`` values ``none``, ``exp``, and
-``logdet``.
+The current optimizer supports ``dag_seq`` values ``none``, ``exp``,
+``logdet``, and ``scc_power_iteration``.
 The log-det case uses the DAGMA-style barrier
 ``-logdet(s * I - W * W) + d * log(s)`` at each central-path stage.  The
 ``exp`` case uses the NOTEARS-style ``trace(expm(W * W)) - d`` penalty.  The
+``scc_power_iteration`` case follows an SCC-blockwise SDCD detached-gradient
+surrogate.  For signed NOTREKS weights it constructs the NOTEARS-style
+nonnegative proxy ``A = W * W`` with a zero diagonal, detects nontrivial
+strongly connected components from ``A > scc_threshold``, approximates
+left/right Perron vectors inside each SCC by fixed-step power iteration, forms
+``G_scc = outer(u, v) / (dot(u, v) + eps)``, and optimizes
+``sum(stop_gradient(G) * A)`` with JAX.  SCC detection is structural and is not
+differentiated through.  The default ``power_iter_steps`` is 5 to keep the
+value/gradient call closer to logdet cost in small-matrix timing checks.  This
+branch is experimental and should be benchmarked before large use.  The old
+names ``power_iteration`` and ``spectral_radius`` are rejected; use
+``scc_power_iteration``.  The
 ``log`` and ``inv`` variants remain documented placeholders and raise
 ``NotImplementedError`` in the optimizer path.
+
+References for the implemented DAG constraints:
+
+* ``dag_seq = "exp"`` follows NOTEARS: Zheng, Aragam, Ravikumar, and Xing,
+  "DAGs with NO TEARS: Continuous Optimization for Structure Learning", NeurIPS
+  2018. Code reference: https://github.com/xunzheng/notears
+* ``dag_seq = "logdet"`` follows DAGMA: Bello, Aragam, and Ravikumar, "DAGMA:
+  Learning DAGs via M-matrices and a Log-Determinant Acyclicity
+  Characterization", NeurIPS 2022. Code reference:
+  https://github.com/kevinsbello/dagma
+* ``dag_seq = "scc_power_iteration"`` is inspired by SDCD: Nazaret, Hong,
+  Azizi, and Blei, "Stable differentiable causal discovery", arXiv 2023. Code
+  reference: https://github.com/azizilab/sdcd/tree/master
 
 Trek penalty
 ------------
@@ -136,6 +163,8 @@ NOTREKS experiments:
 * ``dag_seq = "exp"`` is ``trace(expm(W * W)) - d``.
 * ``dag_seq = "logdet"`` is
   ``-logdet(sI - W * W) + d log(s)``.
+* ``dag_seq = "scc_power_iteration"`` uses an SCC-blockwise SDCD-style
+  surrogate on ``W * W`` with a zero diagonal.
 * ``trek_seq`` penalties use
   ``T(W; I) = sum_{(i,j) in I} H[i,j]``.
 
@@ -166,6 +195,32 @@ is used as a secondary fallback when available.
 ``independence_correction`` can be ``none``, ``bonferroni``, or
 ``benjamini-hochberg``.
 
+Independence-test caching
+-------------------------
+
+Hyperparameter searches often reuse the same dataset and independence-test
+parameters.  Generated NOTREKS hyperparameter configs therefore include an
+optional ``independence_cache_dir``.  When present, the module checks that
+directory before computing tests.  Cache keys include a hash of the numeric
+dataset, dataset path and file hash when available, ``n``, ``d``, column names,
+test name, alpha, multiple-testing correction, extra test parameters, and the
+cache implementation version.
+
+Each cache entry stores ``metadata.json``, ``all_test_results.csv``, and
+``accepted_pairs.csv``.  The current cache is parameter-specific: the same
+dataset plus the same test settings produces a hit, while changing alpha,
+correction, test type, dimensions, data seed, or data contents produces a
+different entry.  Raw test statistics and p-values are written, but decisions
+are not currently recomputed across different alpha/correction settings.
+
+When a ground-truth graph is available to the helper functions, accepted
+independence pairs can be compared with graph-implied no-trek marginal
+independencies.  This diagnostic reports true-positive no-trek pairs,
+false-positive accepted pairs, false-negative no-trek pairs, precision, recall,
+and F1.  It should be read as a graph-implied no-trek diagnostic, not as a
+complete list of all true statistical marginal independencies in nonlinear or
+non-Gaussian settings.
+
 Tolerance
 ---------
 
@@ -181,7 +236,8 @@ Implemented:
 
 * ``function_class = "linear"``
 * ``score`` in ``{"least_squares", "gaussian_likelihood"}``
-* ``dag_seq`` in ``{"none", "exp", "logdet"}``
+* ``dag_seq`` in
+  ``{"none", "exp", "logdet", "scc_power_iteration"}``
 * ``trek_seq`` in ``{"none", "exp", "log", "inv"}``
 * ``regularizer`` in ``{"none", "l1", "l2"}``
 

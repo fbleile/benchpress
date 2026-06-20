@@ -15,11 +15,15 @@ from fixed_data import FixedDataReference, FixedDataSpec, prepare_fixed_data, sa
 @dataclass(frozen=True)
 class ExpandedTemplate:
     template_id: str
-    config_path: Path
+    relative_config_path: str
     algorithm_ids: tuple[str, ...]
     benchmark_title: str
     filename_prefix: str
-    joint_benchmarks_path: Path
+    relative_job_dir: str
+    relative_joint_benchmarks_path: str
+    relative_roc_data_path: str
+    benchpress_joint_benchmarks_path: str
+    benchpress_roc_data_path: str
 
 
 def load_json(path: Path) -> dict:
@@ -28,6 +32,13 @@ def load_json(path: Path) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"Expected a JSON object in {path}")
     return value
+
+
+def _display_path(path: Path, base: Path) -> str:
+    try:
+        return str(path.relative_to(base))
+    except ValueError:
+        return str(path)
 
 
 def extract_notreks_templates(meta_config: dict) -> list[dict[str, Any]]:
@@ -127,11 +138,16 @@ def make_benchpress_config(
     template_id: str,
     run_name: str,
     fixed_data: FixedDataReference,
+    independence_cache_dir: str | None = None,
 ) -> tuple[dict, str, str]:
     slug = safe_name(template_id)
     benchmark_title = safe_name(f"{run_name}__{slug}")
     prefix = f"{safe_name(run_name)}/{slug}/"
-    ids = [entry["id"] for entry in expanded]
+    expanded_entries = copy.deepcopy(expanded)
+    if independence_cache_dir:
+        for entry in expanded_entries:
+            entry.setdefault("independence_cache_dir", independence_cache_dir)
+    ids = [entry["id"] for entry in expanded_entries]
     config = {
         "benchmark_setup": [
             {
@@ -151,7 +167,7 @@ def make_benchpress_config(
             "data": {},
             "graph": {},
             "parameters": {},
-            "structure_learning_algorithms": {"notreks": expanded},
+            "structure_learning_algorithms": {"notreks": expanded_entries},
         },
     }
     return config, benchmark_title, prefix
@@ -168,6 +184,10 @@ def prepare_hparam_run(
     default_name = safe_name(run_dir.name)
     fixed_spec: FixedDataSpec = spec_from_meta(meta, default_name)
     fixed_reference = prepare_fixed_data(repo_root, run_dir, fixed_spec)
+    try:
+        cache_dir_text = str((run_dir / "independence_cache").relative_to(repo_root))
+    except ValueError:
+        cache_dir_text = str(run_dir / "independence_cache")
     templates = extract_notreks_templates(meta_config)
 
     expanded_dir = run_dir / "expanded_configs"
@@ -182,24 +202,23 @@ def prepare_hparam_run(
             template_id,
             fixed_spec.run_name,
             fixed_reference,
+            cache_dir_text,
         )
         config_path = expanded_dir / f"{safe_name(template_id)}.json"
         config_path.write_text(json.dumps(config, indent=2) + "\n")
-        joint = (
-            repo_root
-            / "results/output"
-            / title
-            / "benchmarks"
-            / prefix
-            / "joint_benchmarks.csv"
-        )
+        job_dir = Path("jobs") / f"{len(records):03d}_{safe_name(template_id)}"
+        benchpress_dir = Path("results/output") / title / "benchmarks" / prefix
         record = ExpandedTemplate(
             template_id=template_id,
-            config_path=config_path,
+            relative_config_path=str(config_path.relative_to(run_dir)),
             algorithm_ids=tuple(item["id"] for item in expanded),
             benchmark_title=title,
             filename_prefix=prefix,
-            joint_benchmarks_path=joint,
+            relative_job_dir=str(job_dir),
+            relative_joint_benchmarks_path=str(job_dir / "joint_benchmarks.csv"),
+            relative_roc_data_path=str(job_dir / "ROC_data.csv"),
+            benchpress_joint_benchmarks_path=str(benchpress_dir / "joint_benchmarks.csv"),
+            benchpress_roc_data_path=str(benchpress_dir / "ROC_data.csv"),
         )
         records.append(record)
         for entry in expanded:
@@ -207,19 +226,25 @@ def prepare_hparam_run(
                 {
                     "template_id": template_id,
                     "algorithm_id": entry["id"],
-                    "config_path": str(config_path),
+                    "relative_config_path": str(config_path.relative_to(run_dir)),
                     "config": entry,
                 }
             )
 
     (run_dir / "grid_index.json").write_text(json.dumps(index_rows, indent=2) + "\n")
-    (run_dir / "grid_meta.json").write_text(
+    legacy_meta = run_dir / "grid_meta.json"
+    if legacy_meta.exists():
+        legacy_meta.unlink()
+    summaries_dir = run_dir / "summaries"
+    summaries_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run_info.json").write_text(
         json.dumps(
             {
-                "grid_config": str(grid_config_path),
+                "grid_config": _display_path(grid_config_path, repo_root),
                 "grid_mode": grid_mode,
                 "fixed_data": fixed_reference.__dict__,
                 "templates": [record.template_id for record in records],
+                "path_convention": "manifest paths prefixed with relative_ are resolved relative to this run directory",
             },
             indent=2,
         )

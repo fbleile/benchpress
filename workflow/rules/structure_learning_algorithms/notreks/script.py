@@ -1,5 +1,6 @@
 import sys
 import time
+import json
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +38,27 @@ def _algorithm_config():
         .get("structure_learning_algorithms", {})
         .get("notreks", [])
     )
+    alg_id = getattr(snakemake.wildcards, "alg_id", None)
+    if alg_id is not None:
+        for alg in algs:
+            if str(alg.get("alg_id", alg.get("id"))) != str(alg_id):
+                continue
+            manifest_path = alg.get("params_manifest")
+            if not manifest_path:
+                return alg
+            path = Path(manifest_path)
+            if not path.is_absolute():
+                path = Path.cwd() / path
+            with path.open() as handle:
+                rows = json.load(handle)
+            for row in rows:
+                if str(row.get("path_id", row.get("algorithm_id"))) == str(alg_id):
+                    if "hyperparameters" in row:
+                        return row["hyperparameters"]
+                    if "hyperparameters_json" in row:
+                        return json.loads(row["hyperparameters_json"])
+            raise KeyError(f"Could not resolve NOTREKS alg_id={alg_id!r} in params manifest {path}")
+
     matches = []
     for alg in algs:
         ok = True
@@ -62,6 +84,13 @@ def _config_value(name, default=None):
 
 def _timeout_is_none(value):
     return str(value) in {"None", "none", "null", ""}
+
+
+def _optional_config_value(name, default=None):
+    try:
+        return _config_value(name, default)
+    except KeyError:
+        return default
 
 
 def _read_config():
@@ -90,6 +119,11 @@ def _read_config():
         timeout=None if _timeout_is_none(_config_value("timeout")) else float(_config_value("timeout")),
         init=str(_config_value("init", "zero")),
         checkpoint=int(_config_value("checkpoint", 1000)),
+        power_iter_steps=int(_config_value("power_iter_steps", 5)),
+        scc_threshold=float(_config_value("scc_threshold", 1e-8)),
+        independence_cache_dir=None
+        if _optional_config_value("independence_cache_dir", None) in {None, "", "None", "none", "null"}
+        else str(_optional_config_value("independence_cache_dir")),
         warm_iter=int(_config_value("warm_iter", _config_value("max_iter"))),
     )
     if cfg.init not in {"zero", "linear_baseline"}:
@@ -102,7 +136,9 @@ def _print_config_sanity(cfg: NotreksConfig) -> None:
         "NOTREKS run config: "
         f"id={cfg.algorithm_id}, threshold={cfg.threshold}, init={cfg.init}, "
         f"score={cfg.score}, dag_reg={cfg.dag_reg}, trek_seq={cfg.trek_seq}, trek_reg={cfg.trek_reg}, "
-        f"stage_iter_policy=max_every_stage, stage_iteration_budget={cfg.max_iter}"
+        f"stage_iter_policy=max_every_stage, stage_iteration_budget={cfg.max_iter}, "
+        f"power_iter_steps={cfg.power_iter_steps}, scc_threshold={cfg.scc_threshold}, "
+        f"independence_cache_dir={cfg.independence_cache_dir}"
     )
     name = cfg.algorithm_id.lower()
     threshold_tags = {
@@ -164,6 +200,14 @@ def wrapper():
         alpha=cfg.independence_alpha,
         correction=cfg.independence_correction,
         columns=list(df.columns),
+        cache_dir=Path(cfg.independence_cache_dir) if cfg.independence_cache_dir else None,
+        dataset_path=Path(snakemake.input["data"]),
+    )
+    print(
+        "NOTREKS independence tests: "
+        f"method={independence.method}, cache={independence.cache_status}, "
+        f"cache_key={independence.cache_key}, accepted={len(independence.pairs)}, "
+        f"tested={independence.number_of_tests}"
     )
 
     if cfg.init == "linear_baseline":
@@ -196,7 +240,7 @@ def wrapper():
 
 start = time.perf_counter()
 
-timeout_value = _wildcard("timeout")
+timeout_value = _optional_config_value("timeout", None)
 if _timeout_is_none(timeout_value):
     wrapper()
 else:

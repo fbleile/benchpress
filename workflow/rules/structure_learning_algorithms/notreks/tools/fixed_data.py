@@ -110,8 +110,8 @@ def prepare_fixed_data(
     """Write one fixed DAG and shared datasets in Benchpress resource folders."""
 
     run_name = safe_name(spec.run_name)
-    data_id = f"notreks_hparam/{run_name}"
-    graph_id = f"notreks_hparam_{run_name}.csv"
+    data_id = run_name
+    graph_id = f"g{run_name}.csv"
     data_dir = repo_root / "resources/data/mydatasets" / data_id
     graph_path = repo_root / "resources/adjmat/myadjmats" / graph_id
     metadata_path = run_dir / "fixed_data/metadata.json"
@@ -132,7 +132,7 @@ def prepare_fixed_data(
             data = _sample_linear_gaussian(weights, n, seed)
             if spec.standardized:
                 data = _standardize(data)
-            filename = f"linear_gaussian_d{spec.d}_n{n}_seed{seed}.csv"
+            filename = f"n{n}s{seed}.csv" if len(spec.n_values) > 1 else f"s{seed}.csv"
             path = data_dir / filename
             pd.DataFrame(data, columns=columns).to_csv(path, index=False)
             files.append(str(path.relative_to(repo_root)))
@@ -151,5 +151,5 @@ def prepare_fixed_data(
         graph_id=graph_id,
         data_dir=str(data_dir.relative_to(repo_root)),
         graph_path=str(graph_path.relative_to(repo_root)),
-        metadata_path=str(metadata_path),
+        metadata_path=str(metadata_path.relative_to(run_dir)),
     )

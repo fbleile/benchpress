@@ -1,6 +1,6 @@
 # NOTREKS Local and SLURM Workflow
 
-Run all commands from the Benchpress repository root.
+Run commands from the Benchpress repository root unless noted otherwise.
 
 ## 1. Environment setup
 
@@ -10,17 +10,17 @@ Local:
 conda activate benchpress-notreks
 ```
 
-The environment needs Benchpress/Snakemake plus the NOTREKS Python
-dependencies. `hyppo` is needed for HSIC and dCor independence tests.
+The environment needs Benchpress, Snakemake, NumPy, pandas, SciPy, and JAX for
+the current matrix-function trek gradients. `hyppo` is optional and only needed
+for HSIC and dCor independence tests.
 
-Create a compatible environment independently on the Linux cluster. Do not
-copy a macOS conda environment directory to Linux. If a project environment
-file is available, create the cluster environment from that file; otherwise
-install the same packages into a cluster-created `benchpress-notreks`
-environment.
+Create a compatible environment independently on the Linux cluster. Do not copy
+a macOS conda environment directory to Linux. If an environment file is
+available, create the cluster environment from that file; otherwise install the
+same packages into a cluster-created `benchpress-notreks` environment.
 
-Benchpress itself must be available on the cluster checkout because graph/data
-handling and evaluation use the normal Benchpress workflow.
+Benchpress must be available on the cluster checkout because data generation
+and evaluation use the normal Benchpress workflow.
 
 ## 2. Local smoke test
 
@@ -38,14 +38,121 @@ python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
   smoke --preset small
 ```
 
+Experimental SCC power-iteration DAG penalty smoke:
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  smoke --preset tiny --dag-seq scc_power_iteration
+```
+
 The default output is `results/notreks_smoke/`. On macOS the CLI enables the
-existing local container-check bypass. On Linux it leaves the normal
-Apptainer/Singularity check enabled.
+local container-check bypass for `container: None` development. On Linux it
+leaves the normal Apptainer/Singularity check enabled.
 
 ## 3. Prepare a hyperparameter run
 
-A usable example is included at
-`config/notreks_hparam_grid.json`:
+For the current validation/final workflow, prefer a single validation config
+containing all validation datasets and all method/hyperparameter variants:
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  prepare-validation \
+  --preset tiny \
+  --out results/notreks_validation_tiny
+```
+
+The `tiny` preset creates two validation fixed datasets with `d=10, n=500` and
+two final fixed datasets with `d=20, n=500`. It includes a very small method
+grid for gCastle PC, gCastle DirectLiNGAM, and NOTREKS, and is intended only to
+verify config generation, Benchpress dry runs, selection, and final-config
+writing.
+
+The `local10` preset creates ten validation fixed datasets with `d=10, n=500`
+and ten final fixed datasets with `d=20, n=500`, using different seeds. It
+generates one validation config:
+
+```text
+results/<run_name>/configs/validation_hparam_config.json
+```
+
+and method-family manifests:
+
+```text
+results/<run_name>/configs/validation_hparam_manifest.csv
+results/<run_name>/configs/validation_hparam_manifest.json
+```
+
+The validation config contains:
+
+- all validation fixed-data references;
+- `gcastle_pc__grid...` entries for gCastle PC alpha variants;
+- `gcastle_lingam__grid...` entries for gCastle DirectLiNGAM variants;
+- `notreks__grid...` entries for NOTREKS variants.
+
+NOTREKS `power_iter_steps` is only expanded for
+`dag_seq="scc_power_iteration"`, so logdet configs are not duplicated by an
+irrelevant power-iteration setting.
+
+Dry-run the one-config validation benchmark locally:
+
+```bash
+BENCHPRESS_SKIP_CONTAINER_CHECK=1 snakemake -n \
+  --cores all \
+  --snakefile workflow/Snakefile \
+  --configfile results/notreks_validation_tiny/configs/validation_hparam_config.json
+```
+
+On Linux with containers available, use the normal Benchpress container path:
+
+```bash
+snakemake -n \
+  --cores all \
+  --use-apptainer \
+  --snakefile workflow/Snakefile \
+  --configfile results/notreks_validation_tiny/configs/validation_hparam_config.json
+```
+
+The dry run should show separate planned jobs for method/data/hyperparameter
+combinations; Snakemake can parallelize those jobs from this one config file.
+
+After the validation benchmark has produced `joint_benchmarks.csv`, select one
+best setting per method family:
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  select-validation-best \
+  --run-dir results/notreks_validation_tiny \
+  --primary-metric SHD_cpdag
+```
+
+This writes:
+
+```text
+results/<run_name>/selection/best_by_method_family.json
+results/<run_name>/selection/validation_summary.csv
+```
+
+Then generate the final benchmark config with exactly one selected setting for
+each method family:
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  write-final-config \
+  --run-dir results/notreks_validation_tiny
+```
+
+The final config is written to:
+
+```text
+results/<run_name>/configs/final_benchmark_config.json
+```
+
+It contains the final fixed datasets and exactly one selected gCastle PC,
+gCastle DirectLiNGAM, and NOTREKS configuration.
+
+### Legacy per-template hparam command
+
+A small example meta-config is included at `config/notreks_hparam_grid.json`:
 
 ```bash
 python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
@@ -55,83 +162,143 @@ python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
   --grid-mode cartesian
 ```
 
-Use `--grid-mode zip` to zip list-valued fields. Zip mode requires every list
-to have the same length.
+Use `--grid-mode zip` to zip list-valued fields. Zip mode requires every
+list-valued field in a method template to have the same length.
 
-The input is a NOTREKS meta-config, not a direct Snakemake config. It can use a
-short form:
+The input is a NOTREKS meta-config, not a direct Snakemake config. List-valued
+fields are expanded into scalar Benchpress algorithm entries, and each original
+method template gets one expanded Benchpress config. Expanded IDs are traceable
+as `template-id__grid000`, `template-id__grid001`, and so on.
 
-```json
-{
-  "notreks_hparam": {
-    "run_name": "notreks_basic_validation",
-    "fixed_data": {
-      "d": 10,
-      "n_values": [500],
-      "seeds": [101, 102, 103],
-      "expected_degree": 2,
-      "standardized": true
-    }
-  },
-  "structure_learning_algorithms": {
-    "notreks": [
-      {
-        "id": "notreks-exp-spearman",
-        "function_class": "linear",
-        "score": "least_squares",
-        "dag_seq": "exp",
-        "dag_reg": 1.0,
-        "dag_s": 1.0,
-        "trek_seq": "exp",
-        "trek_reg": [0.1, 1.0, 10.0],
-        "regularizer": "l1",
-        "regularizer_scale": [0.001, 0.01],
-        "independence_test": "spearman",
-        "independence_alpha": [0.01, 0.05],
-        "independence_correction": "benjamini-hochberg",
-        "seed": 1,
-        "max_iter": [30000, 60000],
-        "lr": 0.0003,
-        "path_steps": 5,
-        "mu_init": 1.0,
-        "mu_factor": 0.1,
-        "warm_iter": 30000,
-        "tol": 0.000001,
-        "threshold": 0.1,
-        "timeout": null
-      }
-    ]
-  }
-}
-```
-
-Preparation creates:
+The run directory is intentionally self-describing:
 
 ```text
 results/notreks_hparam_run/
+  run_info.json
+  fixed_data/
+    metadata.json
   expanded_configs/
-  fixed_data/metadata.json
-  grid_index.json
+    <template_id>.json
   manifest.csv
   cmd.txt
-  status/
-  logs/
+  grid_index.json
+  independence_cache/
+    <cache_key>/
+      metadata.json
+      all_test_results.csv
+      accepted_pairs.csv
+  jobs/
+    000_<template_id>/
+      status.json
+      stdout.log
+      stderr.log
+      joint_benchmarks.csv
+      ROC_data.csv
+  summaries/
 ```
 
-Each original template gets one scalar Benchpress config containing all its
-expanded settings. IDs are traceable as `template-id__grid000`, etc.
+`manifest.csv` stores run-relative paths for configs, status, logs, and copied
+Benchpress result files. It also stores the native Benchpress output locations
+as repository-relative paths so a job can copy results back into the movable
+run folder after Snakemake finishes.
 
-Shared data are stored using Benchpress conventions:
+## 4. Fixed data
+
+The preparation step creates shared fixed data using Benchpress conventions:
 
 ```text
 resources/data/mydatasets/notreks_hparam/<run_name>/
 resources/adjmat/myadjmats/notreks_hparam_<run_name>.csv
 ```
 
-Every expanded config references those same files. Re-preparing the same run
-name replaces only that run's generated fixed-data folder.
+Every expanded config in the same run references those exact fixed-data
+resources. The data are generated once for the run, not once per hyperparameter
+setting. Re-preparing the same run name replaces only that run's generated
+NOTREKS fixed-data folder.
 
-## 4. Run hyperparameter jobs locally
+## 5. Independence-test caching
+
+Pairwise independence tests can dominate hyperparameter searches because many
+NOTREKS settings reuse the same dataset and the same independence-test
+parameters. Generated hyperparameter configs therefore include an
+`independence_cache_dir` pointing at:
+
+```text
+results/<run_name>/independence_cache/
+```
+
+Each cache key includes:
+
+- a SHA-256 hash of the numeric dataset values;
+- dataset path and file hash when available;
+- `n`, `d`, and column names;
+- independence test name;
+- alpha;
+- multiple-testing correction;
+- extra test parameters when supplied;
+- the NOTREKS cache implementation version.
+
+Each cache entry stores:
+
+```text
+metadata.json
+all_test_results.csv
+accepted_pairs.csv
+```
+
+`all_test_results.csv` contains one row per tested pair with `i`, `j`,
+statistic, p-value, alpha used after correction, and the final
+`accepted_independence` decision. The first run for a dataset/test setting is a
+cache miss and writes the entry. Later runs with the exact same setting are
+cache hits. A different alpha, correction, test type, data seed, dimension,
+sample size, or data hash creates a different entry. This first implementation
+is parameter-specific rather than reusing raw p-values across alpha/correction
+settings; that is safer for the first SLURM pass.
+
+You can precompute one cache entry directly:
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  precompute-independencies \
+  --data-csv path/to/data.csv \
+  --cache-dir results/notreks_hparam_run/independence_cache \
+  --method spearman \
+  --alpha 0.05 \
+  --correction benjamini-hochberg
+```
+
+Delete a specific `independence_cache/<cache_key>/` directory to invalidate one
+entry, or delete the whole `independence_cache/` directory to force all tests to
+recompute.
+
+## 6. Ground-truth no-trek diagnostic
+
+When a ground-truth graph is available to the helper functions, accepted
+independence pairs can be compared with graph-implied no-trek marginal
+independencies. A pair `(i, j)` is graph-implied no-trek independent when the
+ground-truth graph contains no trek connecting the variables. The diagnostic
+reports:
+
+```text
+num_true_no_trek_pairs
+num_tested_pairs
+num_accepted_pairs
+true_positive_no_trek_pairs
+false_positive_pairs
+false_negative_no_trek_pairs
+precision
+recall
+f1
+```
+
+Interpret this as graph-implied no-trek marginal independence, not all true
+statistical marginal independencies. In linear Gaussian SEMs with independent
+errors, no-trek is the relevant structural criterion for generic covariance
+independence. In nonlinear or non-Gaussian data, and under special parameter
+cancellations, it is a structural diagnostic rather than a complete statistical
+truth label.
+
+## 7. Run hyperparameter jobs locally
 
 The generated command file is ordinary shell:
 
@@ -139,14 +306,12 @@ The generated command file is ordinary shell:
 bash results/notreks_hparam_run/cmd.txt
 ```
 
-Each command runs one template config through normal Benchpress/Snakemake and
-writes status plus stdout/stderr logs.
+Each command runs one expanded template config through normal Benchpress and
+writes per-job status and logs under `jobs/<job_id>_<template_id>/`.
 
-## 5. Run hyperparameter jobs with SLURM JobFarm
+## 8. Run hyperparameter jobs with SLURM JobFarm
 
 ```bash
-mkdir -p slurm_logs
-
 FRESH=1 \
 REPO_DIR=/dss/dsshome1/0C/ge86xim2/benchpress \
 CONDA_ENV=benchpress-notreks \
@@ -154,47 +319,68 @@ CMD_FILE=results/notreks_hparam_run/cmd.txt \
 sbatch workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_jobfarm.sh
 ```
 
-The SLURM script contains no benchmark logic. It executes the same `cmd.txt`
-used locally. Set `CONDA_SH` if conda is installed somewhere other than
-`$HOME/miniconda3`.
+The SLURM script contains no benchmark logic. It only executes the same
+`cmd.txt` used locally. Set `CONDA_SH` if conda is installed somewhere other
+than `$HOME/miniconda3`.
 
 Use `FRESH=0` (the default) to preserve JobFarm's resumable database and result
-state. Use `FRESH=1` only to intentionally start fresh.
+state. Use `FRESH=1` only when intentionally starting a fresh JobFarm database.
 
-## 6. Select best hyperparameters
+## 9. Select best hyperparameters
 
-After all jobs have produced Benchpress `joint_benchmarks.csv` files:
+Default selection minimizes CPDAG SHD when available and uses a secondary
+skeleton-F1-like metric if available:
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  select-best \
+  --hparam-run results/notreks_hparam_run
+```
+
+The default output is
+`results/notreks_hparam_run/summaries/selected_best.json`, with a matching
+`selected_best.csv`.
+
+Custom primary and secondary metrics:
 
 ```bash
 python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
   select-best \
   --hparam-run results/notreks_hparam_run \
-  --metric shd_cpdag \
-  --out results/notreks_hparam_run/selected_best.json
+  --primary-metric SHD_pattern_mean \
+  --primary-direction min \
+  --secondary-metric TPR_skel_mean \
+  --secondary-direction max \
+  --out results/notreks_hparam_run/summaries/selected_best.json
 ```
 
-Selection minimizes mean `SHD_cpdag` independently for every original method
-template. It also writes `selected_best.csv`. If no CPDAG-SHD-like column is
-present, the command fails and lists all available columns. It does not fall
-back to directed adjacency Hamming distance.
+Selection reads the copied per-job `joint_benchmarks.csv` files inside the run
+folder. If a requested metric is unavailable, the command fails and prints the
+available metric columns. It does not silently fall back to local directed
+adjacency Hamming distance.
 
-## 7. Inject selected settings into a final benchmark
+Benchpress `ROC_data.csv` summary columns are produced by
+`workflow/rules/evaluation/benchmarks/combine_ROC_data.R`. In that file, `q1`
+and `q3` are the 5% and 95% empirical quantiles, not the 25% and 75%
+quartiles.
+
+## 10. Inject selected settings into a final benchmark
 
 ```bash
 python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
   inject-best \
   --benchmark-config config/your_final_benchmark_template.json \
-  --selected results/notreks_hparam_run/selected_best.json \
+  --selected results/notreks_hparam_run/summaries/selected_best.json \
   --out config/final_benchmark_with_best_notreks.json
 ```
 
 Only `resources.structure_learning_algorithms.notreks` and matching NOTREKS IDs
-in evaluation lists are replaced. Non-NOTREKS algorithms are preserved.
-The final benchmark template is intentionally not generated automatically:
-its broader data regimes, seeds, and external baselines are an experimental
-design choice rather than a NOTREKS tooling default.
+in evaluation lists are replaced. Non-NOTREKS algorithms are preserved. The
+final benchmark template is intentionally not generated automatically: its
+broader data regimes, seeds, and external baselines are an experimental design
+choice rather than a NOTREKS tooling default.
 
-## 8. Run the final benchmark
+## 11. Run the final benchmark
 
 For a small final benchmark, use normal Benchpress:
 
@@ -208,19 +394,140 @@ BENCHPRESS_SKIP_CONTAINER_CHECK=1 snakemake \
 The bypass is only for local macOS development. Linux/SLURM benchmark runs
 should use the normal Apptainer/Singularity setup.
 
-For a large final benchmark, generate an appropriate command list calling
-normal Benchpress configs and submit it through the same JobFarm wrapper.
+For large final benchmarks, generate command lists that call the same normal
+Benchpress configs and submit them through the same JobFarm wrapper.
 
-## 9. Tune/test separation
+## 12. Tune/test separation
 
-Use a small, basic validation setting in the hyperparameter meta-config.
-Choose one setting per method template there, then inject those settings into a
+Use a small, basic validation setting in the hyperparameter meta-config. Choose
+one setting per method template there, then inject those settings into a
 broader final benchmark with different seeds and, where appropriate, different
 dimensions, sample sizes, graph families, or data-generating regimes.
 
-Do not select hyperparameters on the final benchmark results.
+Do not select hyperparameters on final benchmark results.
 
-## 10. Troubleshooting
+## 13. DAG constraints and references
+
+NOTREKS currently exposes these DAG constraints:
+
+### `dag_seq="exp"`
+
+This is the NOTEARS exponential-trace acyclicity constraint:
+
+```text
+h_exp(W) = trace(expm(W * W)) - d
+```
+
+Reference:
+
+```bibtex
+@article{zheng2018dags,
+  title={Dags with no tears: Continuous optimization for structure learning},
+  author={Zheng, Xun and Aragam, Bryon and Ravikumar, Pradeep K and Xing, Eric P},
+  journal={Advances in neural information processing systems},
+  volume={31},
+  year={2018}
+}
+```
+
+Code reference: <https://github.com/xunzheng/notears>
+
+### `dag_seq="logdet"`
+
+This is the DAGMA M-matrix/log-det acyclicity barrier:
+
+```text
+h_logdet(W; s) = -logdet(s * I - W * W) + d * log(s)
+```
+
+Reference:
+
+```bibtex
+@article{bello2022dagma,
+  title={Dagma: Learning dags via m-matrices and a log-determinant acyclicity characterization},
+  author={Bello, Kevin and Aragam, Bryon and Ravikumar, Pradeep},
+  journal={Advances in Neural Information Processing Systems},
+  volume={35},
+  pages={8226--8239},
+  year={2022}
+}
+```
+
+Code reference: <https://github.com/kevinsbello/dagma>
+
+### `dag_seq="scc_power_iteration"`
+
+`dag_seq = "scc_power_iteration"` adds an optional experimental SDCD-style
+acyclicity surrogate. SDCD already uses a nonnegative adjacency proxy; for
+signed linear NOTREKS weights the analogue is:
+
+```text
+A = W * W
+A = A * offdiag_mask
+```
+
+The implementation detects nontrivial strongly connected components from
+`A > scc_threshold`, then approximates left/right Perron vectors within each
+SCC block with fixed-step power iteration:
+
+```text
+v <- normalize(A_scc @ v + eps)
+u <- normalize(A_scc.T @ u + eps)
+G_scc = outer(u, v) / (dot(u, v) + eps)
+h(W) = sum(stop_gradient(G) * A)
+```
+
+SCC detection is graph-structural and is not differentiated through. The
+default `power_iter_steps` is 5, chosen to keep the value/gradient call
+reasonably close to logdet in small timing checks. The old experimental names
+`power_iteration` and `spectral_radius` are not accepted; use only
+`scc_power_iteration`. This leaves the existing `dag_seq = "exp"` and
+`dag_seq = "logdet"` behavior unchanged. The branch is experimental until
+larger benchmarks validate it.
+
+Reference:
+
+```bibtex
+@article{nazaret2023stable,
+  title={Stable differentiable causal discovery},
+  author={Nazaret, Achille and Hong, Justin and Azizi, Elham and Blei, David},
+  journal={arXiv preprint arXiv:2311.10263},
+  year={2023}
+}
+```
+
+Code reference: <https://github.com/azizilab/sdcd/tree/master>
+
+Example algorithm field:
+
+```json
+{
+  "dag_seq": "scc_power_iteration",
+  "dag_reg": 1.0,
+  "power_iter_steps": 5,
+  "scc_threshold": 1e-8
+}
+```
+
+## 14. SLURM readiness status
+
+The current NOTREKS-local workflow keeps tooling under the module directory,
+uses Benchpress fixed-data resources for shared datasets, writes run-relative
+manifest paths where possible, and runs the same `cmd.txt` locally or through
+JobFarm. Independence caching is enabled for generated hyperparameter configs.
+
+Before a first SLURM smoke, verify:
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tests/run_tests.py
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py smoke --preset tiny
+```
+
+## 15. Troubleshooting
+
+Wrong working directory:
+: Run commands from the Benchpress repository root so relative config and
+  resource paths resolve as expected.
 
 `cmd.txt` missing or empty:
 : Re-run `prepare-hparam`. The SLURM script exits before loading JobFarm when
@@ -233,13 +540,13 @@ Fixed data missing:
 : Re-run `prepare-hparam` from the Benchpress repository root. Check
   `fixed_data/metadata.json` for the exact resource paths.
 
-CPDAG SHD metric not found:
-: Confirm the Benchpress evaluation completed and inspect the columns printed
-  by `select-best`.
+Metric not found:
+: Confirm Benchpress evaluation completed and inspect the columns printed by
+  `select-best`. Use explicit `--primary-direction` for ambiguous metrics.
 
 Failed jobs:
-: Inspect `status/*.json` and `logs/*.err`. Run the corresponding line from
-  `cmd.txt` locally for debugging.
+: Inspect `jobs/<job>/status.json`, `stdout.log`, and `stderr.log`. Run the
+  corresponding line from `cmd.txt` locally for debugging.
 
 Resume JobFarm:
 : Submit with `FRESH=0` so existing JobFarm state is retained.
