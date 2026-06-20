@@ -16,7 +16,11 @@ python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
 ```
 
 See [docs/HOWTO_LOCAL_AND_SLURM.md](docs/HOWTO_LOCAL_AND_SLURM.md) for the
-complete tuning, selection, injection, local, and JobFarm workflow.
+complete tuning, selection, injection, local, and JobFarm workflow. For a fresh
+cluster checkout, start with
+[docs/HOWTO_CLUSTER_BOOTSTRAP.md](docs/HOWTO_CLUSTER_BOOTSTRAP.md), then use
+[docs/HOWTO_SLURM.md](docs/HOWTO_SLURM.md). The generated-file map is in
+[docs/EXPERIMENT_LAYOUT.md](docs/EXPERIMENT_LAYOUT.md).
 
 Current validation/final workflow:
 

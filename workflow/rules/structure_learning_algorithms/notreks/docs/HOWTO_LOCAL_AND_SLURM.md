@@ -2,6 +2,12 @@
 
 Run commands from the Benchpress repository root unless noted otherwise.
 
+For a fresh cluster setup, first read
+[HOWTO_CLUSTER_BOOTSTRAP.md](HOWTO_CLUSTER_BOOTSTRAP.md). For the concise SLURM
+submission workflow, see [HOWTO_SLURM.md](HOWTO_SLURM.md). For generated file
+locations and cleanup boundaries, see
+[EXPERIMENT_LAYOUT.md](EXPERIMENT_LAYOUT.md).
+
 ## 1. Environment setup
 
 Local:

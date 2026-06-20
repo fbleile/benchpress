@@ -1,0 +1,34 @@
+name: benchpress-notreks
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - networkx
+  - scikit-learn
+  - statsmodels
+  - matplotlib
+  - seaborn
+  - snakemake>=8
+  - pyyaml
+  - r-base
+  - r-essentials
+  - r-ggplot2
+  - r-dplyr
+  - r-tidyr
+  - r-readr
+  - r-igraph
+  - r-bnlearn
+  - r-pcalg
+  - pip:
+      - jax[cpu]
+      - hyppo
+      - gcastle
+      - causal-learn
+      - lingam
+      - pgmpy
+      - cdt

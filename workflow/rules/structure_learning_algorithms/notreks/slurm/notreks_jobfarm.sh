@@ -16,9 +16,14 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/dss/dsshome1/0C/ge86xim2/benchpress}"
 CONDA_ENV="${CONDA_ENV:-benchpress-notreks}"
-CMD_FILE="${CMD_FILE:-cmd.txt}"
-TASKDB="${TASKDB:-cmd}"
+RUN_DIR="${RUN_DIR:-results/notreks_experiments/slurm_smoke}"
+CONFIG="${CONFIG:-}"
+CMD_FILE="${CMD_FILE:-}"
+TASKDB="${TASKDB:-$RUN_DIR/logs/slurm/cmd}"
 FRESH="${FRESH:-0}"
+DRY_RUN="${DRY_RUN:-0}"
+SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-all}"
+SNAKEMAKE_CONTAINER_ARG="${SNAKEMAKE_CONTAINER_ARG:---use-apptainer}"
 CONDA_SH="${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 
 if [[ ! -d "$REPO_DIR" ]]; then
@@ -26,6 +31,25 @@ if [[ ! -d "$REPO_DIR" ]]; then
   exit 2
 fi
 cd "$REPO_DIR"
+
+mkdir -p "$RUN_DIR/logs/slurm"
+RUN_LOG="$RUN_DIR/logs/slurm/jobfarm.${SLURM_JOB_ID:-local}.out"
+exec > >(tee -a "$RUN_LOG") 2>&1
+
+if [[ -z "$CMD_FILE" ]]; then
+  if [[ -z "$CONFIG" ]]; then
+    echo "ERROR: set either CMD_FILE or CONFIG" >&2
+    exit 2
+  fi
+  CMD_FILE="$RUN_DIR/logs/slurm/cmd.txt"
+  dry_arg=""
+  if [[ "$DRY_RUN" == "1" ]]; then
+    dry_arg="-n"
+  fi
+  cat > "$CMD_FILE" <<EOF
+snakemake $dry_arg --cores "$SNAKEMAKE_CORES" $SNAKEMAKE_CONTAINER_ARG --snakefile workflow/Snakefile --configfile "$CONFIG"
+EOF
+fi
 
 if [[ ! -s "$CMD_FILE" ]]; then
   echo "ERROR: CMD_FILE is missing or empty: $CMD_FILE" >&2
@@ -45,7 +69,7 @@ conda activate "$CONDA_ENV"
 export TMPDIR="${TMPDIR:-/tmp}"
 export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/matplotlib}"
 export PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}"
-mkdir -p "$TMPDIR" "$MPLCONFIGDIR" slurm_logs
+mkdir -p "$TMPDIR" "$MPLCONFIGDIR" "$RUN_DIR/logs/slurm" slurm_logs
 
 if [[ "$FRESH" == "1" ]]; then
   rm -f "${TASKDB}.db"
@@ -53,10 +77,18 @@ if [[ "$FRESH" == "1" ]]; then
 fi
 
 echo "Starting NOTREKS JobFarm"
+echo "  host=$(hostname)"
+echo "  date=$(date -Is)"
+echo "  git_commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 echo "  REPO_DIR=$REPO_DIR"
 echo "  CONDA_ENV=$CONDA_ENV"
+echo "  RUN_DIR=$RUN_DIR"
+echo "  CONFIG=${CONFIG:-<from CMD_FILE>}"
 echo "  CMD_FILE=$CMD_FILE"
 echo "  TASKDB=$TASKDB"
 echo "  FRESH=$FRESH"
+echo "  DRY_RUN=$DRY_RUN"
+echo "  first command:"
+head -n 1 "$CMD_FILE"
 
 jobfarm start "$CMD_FILE"
