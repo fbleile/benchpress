@@ -62,13 +62,18 @@ longer accepted. Use `dag_seq="scc_power_iteration"`.
 
 Generated hyperparameter configs include an `independence_cache_dir` pointing
 to the run-local `independence_cache/` directory. Cache keys include the data
-hash, data path and file hash when available, `n`, `d`, test name, alpha,
-multiple-testing correction, columns, and cache implementation version. Each
-entry stores `metadata.json`, `all_test_results.csv`, and
-`accepted_pairs.csv`.
+hash, data path and file hash when available, `n`, `d`, raw test name, columns,
+extra test parameters, and cache implementation version. Alpha and
+multiple-testing correction are intentionally not part of the raw-test cache
+key; NOTREKS recomputes accepted pairs from cached raw p-values for each
+alpha/correction setting. Each entry stores `metadata.json`,
+`all_test_results.csv`, and `accepted_pairs.csv`.
 
-The cache is parameter-specific: the same dataset with the same test settings
-hits the cache; changing alpha, correction, test type, dimensions, data seed,
-or data contents creates a different entry. Ground-truth diagnostics, when
-available, are reported as graph-implied no-trek marginal independence rather
-than all statistical marginal independencies.
+`gcastle_fisherz`, `gcastle_g2`, and `gcastle_chi2` call gCastle's low-level
+`CITest` functions with an empty conditioning set. These are marginal tests
+used to build NOTREKS no-trek constraints, not full PC runs. Correction remains
+inside NOTREKS. `gcastle_fisherz` is the continuous/Gaussian option; `gcastle_g2`
+and `gcastle_chi2` are mainly for discrete data.
+
+Ground-truth diagnostics, when available, are reported as graph-implied no-trek
+marginal independence rather than all statistical marginal independencies.

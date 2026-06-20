@@ -350,7 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
     precompute.set_defaults(func=precompute_independencies_command)
 
     prepare_validation = subparsers.add_parser("prepare-validation")
-    prepare_validation.add_argument("--preset", choices=["tiny", "local10"], default="tiny")
+    prepare_validation.add_argument("--preset", choices=["tiny", "local10", "local10_sensible", "local10_quick"], default="tiny")
     prepare_validation.add_argument("--out", type=Path, required=True)
     prepare_validation.set_defaults(func=prepare_validation_command)
 

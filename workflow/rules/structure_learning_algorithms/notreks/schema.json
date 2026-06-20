@@ -64,7 +64,7 @@
       "independence_test": {
         "description": "Pairwise marginal-independence proxy.",
         "type": "string",
-        "enum": ["none", "pearson", "spearman", "hsic", "dcor"]
+        "enum": ["none", "pearson", "spearman", "hsic", "dcor", "gcastle_fisherz", "gcastle_g2", "gcastle_chi2"]
       },
       "independence_alpha": {
         "description": "Significance level for pairwise tests.",

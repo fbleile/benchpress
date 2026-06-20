@@ -39,6 +39,8 @@ def main() -> None:
         independence_tests.test_independence_cache_key_changes_with_parameters(path / "key")
         independence_tests.test_independence_cache_hit_miss_and_metadata(path / "hit")
         independence_tests.test_cached_accepted_pairs_match_fresh_result(path / "fresh")
+        independence_tests.test_gcastle_fisherz_runs_empty_conditioning_set()
+        independence_tests.test_gcastle_raw_cache_reused_for_alpha_and_correction(path / "gcastle-cache")
         independence_tests.test_no_trek_ground_truth_diagnostic_tiny_graph()
         independence_tests.test_repeated_independence_settings_reuse_cache(path / "reuse")
 

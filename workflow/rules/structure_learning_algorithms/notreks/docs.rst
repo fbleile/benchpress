@@ -192,26 +192,33 @@ those tests, so Pearson and Spearman runs do not require it.  Install with
 ``independence_test = "dcor"``.  For ``dcor``, the standalone ``dcor`` package
 is used as a secondary fallback when available.
 
+``gcastle_fisherz``, ``gcastle_g2``, and ``gcastle_chi2`` reuse gCastle's
+low-level ``castle.common.independence_tests.CITest`` functions.  NOTREKS calls
+these tests with an empty conditioning set, so they are marginal independence
+tests, not full PC runs.  The raw gCastle p-values are passed through the
+NOTREKS multiple-testing correction logic.  ``gcastle_fisherz`` is intended for
+continuous approximately Gaussian data; ``gcastle_g2`` and ``gcastle_chi2`` are
+more appropriate for discrete data.
+
 ``independence_correction`` can be ``none``, ``bonferroni``, or
 ``benjamini-hochberg``.
 
 Independence-test caching
 -------------------------
 
-Hyperparameter searches often reuse the same dataset and independence-test
-parameters.  Generated NOTREKS hyperparameter configs therefore include an
-optional ``independence_cache_dir``.  When present, the module checks that
-directory before computing tests.  Cache keys include a hash of the numeric
-dataset, dataset path and file hash when available, ``n``, ``d``, column names,
-test name, alpha, multiple-testing correction, extra test parameters, and the
-cache implementation version.
+Hyperparameter searches often reuse the same dataset and raw independence test.
+Generated NOTREKS hyperparameter configs therefore include an optional
+``independence_cache_dir``.  When present, the module checks that directory
+before computing tests.  Cache keys include a hash of the numeric dataset,
+dataset path and file hash when available, ``n``, ``d``, column names, raw test
+name, extra test parameters, and the cache implementation version.
 
 Each cache entry stores ``metadata.json``, ``all_test_results.csv``, and
-``accepted_pairs.csv``.  The current cache is parameter-specific: the same
-dataset plus the same test settings produces a hit, while changing alpha,
-correction, test type, dimensions, data seed, or data contents produces a
-different entry.  Raw test statistics and p-values are written, but decisions
-are not currently recomputed across different alpha/correction settings.
+``accepted_pairs.csv``.  Raw test statistics and p-values are cached separately
+from the final accepted decisions.  Changing alpha or multiple-testing
+correction reuses the raw cache and recomputes accepted marginal independence
+pairs inside NOTREKS.  Changing test type, dimensions, data seed, or data
+contents produces a different raw cache entry.
 
 When a ground-truth graph is available to the helper functions, accepted
 independence pairs can be compared with graph-implied no-trek marginal

@@ -11,7 +11,7 @@ from scipy import stats
 
 
 Pair = Tuple[int, int]
-INDEPENDENCE_CACHE_VERSION = "notreks-independence-cache-v1"
+INDEPENDENCE_CACHE_VERSION = "notreks-independence-cache-v2"
 
 
 @dataclass(frozen=True)
@@ -34,20 +34,46 @@ def _pair_key(i: int, j: int, columns: Optional[Sequence[str]]) -> str:
     return f"{columns[i]},{columns[j]}"
 
 
-def _test_pair(x: np.ndarray, y: np.ndarray, method: str) -> Tuple[float, float]:
+def _gcastle_ci_test(data: np.ndarray, i: int, j: int, method: str) -> Tuple[float, float, float, str]:
+    try:
+        from castle.common.independence_tests import CITest
+    except ImportError as exc:
+        raise ImportError(
+            f"independence_test={method!r} requires gCastle. Install it with: pip install gcastle"
+        ) from exc
+
+    mapping = {
+        "gcastle_fisherz": ("fisherz_test", "fisherz"),
+        "gcastle_g2": ("g2_test", "g2"),
+        "gcastle_chi2": ("chi2_test", "chi2"),
+    }
+    function_name, raw_name = mapping[method]
+    result = getattr(CITest, function_name)(data, int(i), int(j), [])
+    if isinstance(result, tuple):
+        if len(result) < 3:
+            raise ValueError(f"gCastle {function_name} returned an unexpected tuple: {result!r}")
+        statistic, dof, pvalue = result[0], result[1], result[-1]
+    else:
+        statistic, dof, pvalue = np.nan, np.nan, result
+    statistic_value = float("nan") if statistic is None else float(statistic)
+    dof_value = float("nan") if dof is None else float(dof)
+    return statistic_value, float(pvalue), dof_value, raw_name
+
+
+def _test_pair(x: np.ndarray, y: np.ndarray, method: str) -> Tuple[float, float, float, str]:
     mask = np.isfinite(x) & np.isfinite(y)
     x = x[mask]
     y = y[mask]
     if x.size < 3:
-        return float("nan"), 1.0
+        return float("nan"), 1.0, float("nan"), method
     if np.all(x == x[0]) or np.all(y == y[0]):
-        return 0.0, 1.0
+        return 0.0, 1.0, float("nan"), method
     if method == "pearson":
         result = stats.pearsonr(x, y)
-        return float(result.statistic), float(result.pvalue)
+        return float(result.statistic), float(result.pvalue), float("nan"), method
     if method == "spearman":
         result = stats.spearmanr(x, y)
-        return float(result.statistic), float(result.pvalue)
+        return float(result.statistic), float(result.pvalue), float("nan"), method
     if method == "hsic":
         try:
             from hyppo.independence import Hsic
@@ -57,7 +83,7 @@ def _test_pair(x: np.ndarray, y: np.ndarray, method: str) -> Tuple[float, float]
                 "Install it with: pip install hyppo"
             ) from exc
         stat, pvalue = Hsic().test(x.reshape(-1, 1), y.reshape(-1, 1))
-        return float(stat), float(pvalue)
+        return float(stat), float(pvalue), float("nan"), method
     if method == "dcor":
         try:
             from hyppo.independence import Dcorr
@@ -75,9 +101,9 @@ def _test_pair(x: np.ndarray, y: np.ndarray, method: str) -> Tuple[float, float]
                 y.reshape(-1, 1),
                 num_resamples=100,
             )
-            return float(getattr(result, "statistic", np.nan)), float(result.pvalue)
+            return float(getattr(result, "statistic", np.nan)), float(result.pvalue), float("nan"), method
         stat, pvalue = Dcorr().test(x.reshape(-1, 1), y.reshape(-1, 1))
-        return float(stat), float(pvalue)
+        return float(stat), float(pvalue), float("nan"), method
     raise ValueError(f"Unsupported independence test: {method}")
 
 
@@ -136,8 +162,6 @@ def _cache_payload(
         "d": int(X.shape[1]),
         "columns": list(columns) if columns is not None else None,
         "independence_test": method,
-        "independence_alpha": float(alpha),
-        "independence_correction": correction,
         "extra_params": extra_params or {},
     }
 
@@ -195,7 +219,7 @@ def _rows_to_result(
     )
 
 
-def _load_cache_entry(entry_dir: Path, payload: Dict[str, object]) -> Optional[IndependenceResult]:
+def _load_cache_entry(entry_dir: Path, payload: Dict[str, object]) -> Optional[List[Dict[str, object]]]:
     metadata_path = entry_dir / "metadata.json"
     results_path = entry_dir / "all_test_results.csv"
     if not metadata_path.is_file() or not results_path.is_file():
@@ -205,7 +229,6 @@ def _load_cache_entry(entry_dir: Path, payload: Dict[str, object]) -> Optional[I
         return None
 
     rows: List[Dict[str, object]] = []
-    pvalue_map: Dict[str, float] = {}
     with results_path.open(newline="") as handle:
         for raw in csv.DictReader(handle):
             row = {
@@ -214,22 +237,14 @@ def _load_cache_entry(entry_dir: Path, payload: Dict[str, object]) -> Optional[I
                 "pair_key": raw["pair_key"],
                 "statistic": float(raw["statistic"]) if raw["statistic"] else float("nan"),
                 "p_value": float(raw["p_value"]) if raw["p_value"] else float("nan"),
+                "dof": float(raw["dof"]) if raw.get("dof") else float("nan"),
+                "raw_test_name": raw.get("raw_test_name", str(payload["independence_test"])),
                 "adjusted_p_value": float(raw["adjusted_p_value"]) if raw.get("adjusted_p_value") else float("nan"),
                 "alpha_used": float(raw["alpha_used"]),
                 "accepted_independence": raw["accepted_independence"].lower() == "true",
             }
             rows.append(row)
-            pvalue_map[str(row["pair_key"])] = float(row["p_value"])
-    return _rows_to_result(
-        rows,
-        method=str(metadata["test_name"]),
-        correction=str(metadata["correction"]),
-        alpha_used=float(metadata["alpha_used"]),
-        pvalue_map=pvalue_map,
-        cache_status="hit",
-        cache_key=str(metadata["cache_key"]),
-        cache_dir=entry_dir,
-    )
+    return rows
 
 
 def _write_cache_entry(
@@ -245,6 +260,8 @@ def _write_cache_entry(
         "pair_key",
         "statistic",
         "p_value",
+        "dof",
+        "raw_test_name",
         "adjusted_p_value",
         "alpha_used",
         "accepted_independence",
@@ -282,6 +299,8 @@ def _compute_result_from_pvalues(
     pvals: List[float],
     stats_values: List[float],
     *,
+    dof_values: Optional[List[float]] = None,
+    raw_test_names: Optional[List[str]] = None,
     method: str,
     alpha: float,
     correction: str,
@@ -294,7 +313,11 @@ def _compute_result_from_pvalues(
     accepted, alpha_used = _apply_correction(raw_pairs, pvalues, float(alpha), correction)
     rows: List[Dict[str, object]] = []
     pvalue_map: Dict[str, float] = {}
-    for (i, j), statistic, pvalue, keep in zip(raw_pairs, stats_values, pvals, accepted):
+    dof_values = dof_values or [float("nan")] * len(raw_pairs)
+    raw_test_names = raw_test_names or [method] * len(raw_pairs)
+    for (i, j), statistic, pvalue, dof, raw_test_name, keep in zip(
+        raw_pairs, stats_values, pvals, dof_values, raw_test_names, accepted
+    ):
         pair_key = _pair_key(i, j, columns)
         pvalue_map[pair_key] = float(pvalue)
         if correction == "none":
@@ -310,6 +333,8 @@ def _compute_result_from_pvalues(
                 "pair_key": pair_key,
                 "statistic": float(statistic),
                 "p_value": float(pvalue),
+                "dof": float(dof),
+                "raw_test_name": str(raw_test_name),
                 "adjusted_p_value": adjusted_pvalue,
                 "alpha_used": float(alpha_used),
                 "accepted_independence": bool(keep),
@@ -321,6 +346,38 @@ def _compute_result_from_pvalues(
         correction=correction,
         alpha_used=alpha_used,
         pvalue_map=pvalue_map,
+        cache_status=cache_status,
+        cache_key=cache_key,
+        cache_dir=cache_dir,
+    )
+
+
+def _compute_result_from_raw_rows(
+    rows: List[Dict[str, object]],
+    *,
+    method: str,
+    alpha: float,
+    correction: str,
+    columns: Optional[Sequence[str]],
+    cache_status: str,
+    cache_key: Optional[str],
+    cache_dir: Optional[Path],
+) -> IndependenceResult:
+    raw_pairs = [(int(row["i"]), int(row["j"])) for row in rows]
+    pvals = [float(row["p_value"]) for row in rows]
+    stats_values = [float(row["statistic"]) for row in rows]
+    dof_values = [float(row.get("dof", float("nan"))) for row in rows]
+    raw_test_names = [str(row.get("raw_test_name", method)) for row in rows]
+    return _compute_result_from_pvalues(
+        raw_pairs,
+        pvals,
+        stats_values,
+        dof_values=dof_values,
+        raw_test_names=raw_test_names,
+        method=method,
+        alpha=float(alpha),
+        correction=correction,
+        columns=columns,
         cache_status=cache_status,
         cache_key=cache_key,
         cache_dir=cache_dir,
@@ -363,25 +420,45 @@ def pairwise_independence_candidates(
         )
         cache_key = independence_cache_key(payload)
         cache_entry_dir = cache_dir / cache_key
-        cached = _load_cache_entry(cache_entry_dir, payload)
-        if cached is not None:
-            return cached
+        cached_rows = _load_cache_entry(cache_entry_dir, payload)
+        if cached_rows is not None:
+            result = _compute_result_from_raw_rows(
+                cached_rows,
+                method=method,
+                alpha=float(alpha),
+                correction=correction,
+                columns=columns,
+                cache_status="hit",
+                cache_key=cache_key,
+                cache_dir=cache_entry_dir,
+            )
+            _write_cache_entry(cache_entry_dir, payload, result)
+            return result
 
     raw_pairs: List[Pair] = []
     pvals: List[float] = []
     stats_values: List[float] = []
+    dof_values: List[float] = []
+    raw_test_names: List[str] = []
 
     for i in range(d - 1):
         for j in range(i + 1, d):
-            statistic, pvalue = _test_pair(X[:, i], X[:, j], method)
+            if method in {"gcastle_fisherz", "gcastle_g2", "gcastle_chi2"}:
+                statistic, pvalue, dof, raw_test_name = _gcastle_ci_test(X, i, j, method)
+            else:
+                statistic, pvalue, dof, raw_test_name = _test_pair(X[:, i], X[:, j], method)
             raw_pairs.append((i, j))
             stats_values.append(statistic)
             pvals.append(pvalue)
+            dof_values.append(dof)
+            raw_test_names.append(raw_test_name)
 
     result = _compute_result_from_pvalues(
         raw_pairs,
         pvals,
         stats_values,
+        dof_values=dof_values,
+        raw_test_names=raw_test_names,
         method=method,
         alpha=float(alpha),
         correction=correction,

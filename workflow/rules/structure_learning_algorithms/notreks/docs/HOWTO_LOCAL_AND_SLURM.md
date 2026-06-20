@@ -219,9 +219,9 @@ NOTREKS fixed-data folder.
 ## 5. Independence-test caching
 
 Pairwise independence tests can dominate hyperparameter searches because many
-NOTREKS settings reuse the same dataset and the same independence-test
-parameters. Generated hyperparameter configs therefore include an
-`independence_cache_dir` pointing at:
+NOTREKS settings reuse the same dataset and the same raw independence test.
+Generated hyperparameter configs therefore include an `independence_cache_dir`
+pointing at:
 
 ```text
 results/<run_name>/independence_cache/
@@ -232,11 +232,13 @@ Each cache key includes:
 - a SHA-256 hash of the numeric dataset values;
 - dataset path and file hash when available;
 - `n`, `d`, and column names;
-- independence test name;
-- alpha;
-- multiple-testing correction;
+- raw independence test name;
 - extra test parameters when supplied;
 - the NOTREKS cache implementation version.
+
+Alpha and multiple-testing correction are not part of the raw-test cache key.
+The cache stores raw test statistics and p-values. NOTREKS then recomputes
+accepted marginal independence pairs for each alpha/correction setting.
 
 Each cache entry stores:
 
@@ -247,13 +249,28 @@ accepted_pairs.csv
 ```
 
 `all_test_results.csv` contains one row per tested pair with `i`, `j`,
-statistic, p-value, alpha used after correction, and the final
-`accepted_independence` decision. The first run for a dataset/test setting is a
-cache miss and writes the entry. Later runs with the exact same setting are
-cache hits. A different alpha, correction, test type, data seed, dimension,
-sample size, or data hash creates a different entry. This first implementation
-is parameter-specific rather than reusing raw p-values across alpha/correction
-settings; that is safer for the first SLURM pass.
+statistic, p-value, optional degrees of freedom, raw test name, alpha used after
+correction, and the final `accepted_independence` decision. The first run for a
+dataset/raw-test setting is a cache miss and writes the entry. Later runs with
+the same dataset/raw-test setting are cache hits, even when alpha or correction
+changes. A different test type, data seed, dimension, sample size, or data hash
+creates a different entry.
+
+### gCastle-backed marginal independence tests
+
+NOTREKS can reuse gCastle's low-level `castle.common.independence_tests.CITest`
+functions:
+
+- `gcastle_fisherz` -> `CITest.fisherz_test`
+- `gcastle_g2` -> `CITest.g2_test`
+- `gcastle_chi2` -> `CITest.chi2_test`
+
+NOTREKS calls these functions with an empty conditioning set (`z=[]`) to test
+marginal independence. This is not a full PC run and does not use the PC output
+graph. gCastle returns raw p-values/statistics; NOTREKS applies Bonferroni,
+Benjamini-Hochberg, or no correction itself. `gcastle_fisherz` is appropriate
+for continuous approximately Gaussian data. `gcastle_g2` and `gcastle_chi2` are
+more appropriate for discrete data.
 
 You can precompute one cache entry directly:
 
