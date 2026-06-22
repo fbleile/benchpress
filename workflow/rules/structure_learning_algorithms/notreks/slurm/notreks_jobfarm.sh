@@ -7,8 +7,8 @@
 #SBATCH --export=ALL
 #SBATCH --clusters=cm4
 #SBATCH --partition=cm4_std
-#SBATCH --qos=cm4_std
-#SBATCH --nodes=2
+#SBATCH --qos=cm4_tiny
+#SBATCH --nodes=1
 #SBATCH --ntasks=4
 #SBATCH --cpus-per-task=16
 #SBATCH --time=1:00:00
