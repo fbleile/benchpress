@@ -133,6 +133,40 @@ If Apptainer or `mksquashfs` is unavailable, stop and fix the cluster
 environment before running the final benchmark. Without `mksquashfs`, Apptainer
 cannot convert Docker images to SIF on LRZ.
 
+## Snakemake/container Python compatibility
+
+Benchpress gCastle PC and DirectLiNGAM use `docker://bpimages/gcastle:1.0.3`,
+which contains Python 3.7. Snakemake injects its own Python package into
+containerized `script:` jobs. Snakemake 9 uses Python 3.10+ syntax and is
+incompatible with that Python 3.7 container. If you see:
+
+```text
+TypeError: unsupported operand type(s) for |: 'NoneType' and 'type'
+```
+
+then the Snakemake version is too new for the gCastle container. Use the pinned
+version in `benchpress-notreks.yml`.
+
+Clean recreation with micromamba:
+
+```bash
+cd ~/benchpress
+git pull
+
+eval "$(~/bin/micromamba shell hook -s bash)"
+micromamba deactivate || true
+micromamba remove -y -n benchpress-notreks --all
+
+micromamba create -y -n benchpress-notreks \
+  -f workflow/rules/structure_learning_algorithms/notreks/configs/environment/benchpress-notreks.yml
+
+micromamba activate benchpress-notreks
+
+python --version
+snakemake --version
+python workflow/rules/structure_learning_algorithms/notreks/tests/run_tests.py
+```
+
 ## 7. Prepare the SLURM smoke experiment
 
 ```bash

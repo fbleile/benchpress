@@ -13,7 +13,10 @@ dependencies:
   - statsmodels
   - matplotlib
   - seaborn
-  - snakemake>=8
+  # Benchpress gCastle containers use Python 3.7. Snakemake injects its Python
+  # package into containerized script jobs, so avoid Snakemake 9, which uses
+  # Python 3.10+ syntax incompatible with those containers.
+  - snakemake=7.32.4
   - pyyaml
   - r-base
   - r-essentials

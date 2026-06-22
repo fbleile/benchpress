@@ -34,6 +34,12 @@ which mksquashfs
 mksquashfs -version
 ```
 
+Snakemake/container Python compatibility: gCastle PC and DirectLiNGAM use
+`docker://bpimages/gcastle:1.0.3`, which contains Python 3.7. Snakemake injects
+its Python package into containerized `script:` jobs. Snakemake 9 uses Python
+3.10+ syntax and fails in that container. Use the pinned `snakemake=7.32.4`
+environment from `benchpress-notreks.yml`.
+
 Smoke submission example:
 
 ```bash

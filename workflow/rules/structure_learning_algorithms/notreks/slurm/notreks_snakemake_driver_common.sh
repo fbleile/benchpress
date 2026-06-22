@@ -79,7 +79,12 @@ echo "  git_branch=$(git branch --show-current 2>/dev/null || echo unknown)"
 echo "  python=$(command -v python)"
 python --version
 echo "  snakemake=$(command -v snakemake)"
-snakemake --version
+SMK_VER="$(snakemake --version)"
+echo "$SMK_VER"
+if [[ "$SMK_VER" == 9.* ]] && grep -Eq '"gcastle_(pc|direct_lingam)"' "$CONFIG"; then
+  echo "ERROR: Snakemake 9 is incompatible with Python 3.7 Benchpress gCastle containers. Use the pinned environment." >&2
+  exit 3
+fi
 echo "  apptainer=$(command -v apptainer)"
 apptainer --version
 echo "  RUN_DIR=$RUN_DIR"

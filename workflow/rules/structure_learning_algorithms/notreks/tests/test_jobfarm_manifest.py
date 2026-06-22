@@ -105,9 +105,21 @@ def test_snakemake_driver_runs_one_snakemake_process() -> None:
     assert "command -v mksquashfs" in script
     assert "Apptainer cannot convert Docker images to SIF" in script
     assert "Try manually: module load $SQUASHFS_MODULE; which mksquashfs" in script
+    assert "SMK_VER=\"$(snakemake --version)\"" in script
+    assert "Snakemake 9 is incompatible with Python 3.7 Benchpress gCastle containers" in script
     assert "micromamba activate \"$CONDA_ENV\"" in script
     assert "SCRIPT_DIR=${SCRIPT_DIR:-}" in script
     assert "REPO_ROOT=${REPO_ROOT:-}" in script
+
+
+def test_environment_pins_snakemake_seven_for_gcastle_containers() -> None:
+    for env_file in (
+        MODULE_DIR / "configs/environment/benchpress-notreks.yml",
+        MODULE_DIR / "configs/environment/benchpress-notreks-minimal.yml",
+    ):
+        text = env_file.read_text()
+        assert "snakemake=7.32.4" in text
+        assert "Snakemake 9" in text
 
 
 def test_driver_wrappers_find_common_driver_from_spool_dir(tmp_path: Path) -> None:

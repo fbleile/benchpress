@@ -58,6 +58,7 @@ def main() -> None:
         jobfarm_tests.test_snakemake_driver_rejects_missing_config()
         jobfarm_tests.test_slurm_resource_presets_are_lrz_sized()
         jobfarm_tests.test_snakemake_driver_runs_one_snakemake_process()
+        jobfarm_tests.test_environment_pins_snakemake_seven_for_gcastle_containers()
         jobfarm_tests.test_driver_wrappers_find_common_driver_from_spool_dir(
             path / "slurm-spool"
         )
