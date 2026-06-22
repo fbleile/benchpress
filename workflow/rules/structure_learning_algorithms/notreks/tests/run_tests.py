@@ -57,6 +57,7 @@ def main() -> None:
         )
         jobfarm_tests.test_snakemake_driver_rejects_missing_config()
         jobfarm_tests.test_slurm_resource_presets_are_lrz_sized()
+        jobfarm_tests.test_slurm_has_only_smoke_and_heavy_user_facing_drivers()
         jobfarm_tests.test_snakemake_driver_runs_one_snakemake_process()
         jobfarm_tests.test_environment_pins_snakemake_seven_for_gcastle_containers()
         jobfarm_tests.test_driver_wrappers_find_common_driver_from_spool_dir(
@@ -74,10 +75,12 @@ def main() -> None:
         selection_tests.test_selection_works_after_moving_run_folder(path / "selection-move")
         selection_tests.test_inject_best_preserves_non_notreks_algorithms(path / "inject")
         validation_tests.test_prepare_validation_tiny_writes_one_config_and_manifest(path / "validation-tiny")
+        validation_tests.test_default_benchmark_frames_use_fresh_seeds()
         validation_tests.test_validation_tiny_expected_run_counts(path / "validation-counts")
         validation_tests.test_prepare_validation_local10_avoids_logdet_power_iter_duplicates(path / "validation-local10")
         validation_tests.test_validation_tiny_notreks_paths_are_short(path / "validation-paths")
         validation_tests.test_select_by_method_family_and_write_final_config(path / "validation-select")
+        validation_tests.test_build_selected_benchmark_uses_fresh_data_and_selected_methods(path / "selected-benchmark")
 
     print("All NOTREKS tests passed")
 

@@ -37,6 +37,16 @@ class ExpandedGrid:
     algorithm_counts: dict[str, int]
 
 
+@dataclass(frozen=True)
+class SelectedBenchmark:
+    config_path: Path
+    manifest_csv: Path
+    manifest_json: Path
+    joint_benchmarks_path: Path
+    algorithm_counts: dict[str, int]
+    dataset_count: int
+
+
 def _repo_relative(path: Path, repo_root: Path) -> str:
     try:
         return str(path.relative_to(repo_root))
@@ -97,8 +107,6 @@ def _cartesian_grid(grid: dict[str, Any]) -> list[dict[str, Any]]:
 def _data_spec_from_grid(experiment_id: str, data: dict[str, Any]) -> FixedDataSpec:
     if data.get("type", "fixed") != "fixed":
         raise ValueError("Only fixed data grids are supported")
-    if data.get("graph", "er") != "er":
-        raise ValueError("Only ER fixed-data generation is supported")
     seeds = data.get("seeds", [101, 102])
     if isinstance(seeds, int):
         seeds = [seeds]
@@ -107,10 +115,26 @@ def _data_spec_from_grid(experiment_id: str, data: dict[str, Any]) -> FixedDataS
         d=int(data.get("d", 10)),
         n_values=(int(data.get("n", 500)),),
         seeds=tuple(int(seed) for seed in seeds),
+        graph=str(data.get("graph", "er")),
         expected_degree=float(data.get("expected_degree", 2.0)),
         standardized=bool(data.get("standardized", True)),
         graph_seed=int(data.get("graph_seed", 1729)),
         weight_seed=int(data.get("weight_seed", 2718)),
+    )
+
+
+def _data_spec_from_setting(benchmark_id: str, setting: dict[str, Any], seeds: list[int]) -> FixedDataSpec:
+    name = safe_name(str(setting.get("name", f"d{setting.get('d', 10)}_n{setting.get('n', 500)}")))
+    return FixedDataSpec(
+        run_name=safe_name(f"{benchmark_id}_{name}"),
+        d=int(setting.get("d", 10)),
+        n_values=(int(setting.get("n", 500)),),
+        seeds=tuple(int(seed) for seed in seeds),
+        graph=str(setting.get("graph", "er")),
+        expected_degree=float(setting.get("expected_degree", 2.0)),
+        standardized=bool(setting.get("standardized", True)),
+        graph_seed=int(setting.get("graph_seed", 1729)),
+        weight_seed=int(setting.get("weight_seed", 2718)),
     )
 
 
@@ -355,6 +379,8 @@ def _path_id(algorithm_id: str) -> str:
         return "n" + algorithm_id.rsplit("grid", 1)[1]
     if algorithm_id == "notreks__best":
         return "nbest"
+    if algorithm_id == "notreks__selected":
+        return "nsel"
     return safe_name(algorithm_id)
 
 
@@ -376,6 +402,40 @@ def _write_manifest(rows: list[dict[str, str]], csv_path: Path, json_path: Path)
         writer.writeheader()
         writer.writerows(rows)
     json_path.write_text(json.dumps(_manifest_json_rows(rows), indent=2) + "\n")
+
+
+def _write_selected_manifest(rows: list[dict[str, Any]], csv_path: Path, json_path: Path) -> None:
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "algorithm_id",
+        "path_id",
+        "method_family",
+        "base_method",
+        "selected_algorithm_id",
+        "source_grid_algorithm_id",
+        "source_selection_metric",
+        "source_selection_value",
+        "parameters_json",
+        "hyperparameters_json",
+        "config_path",
+        "phase",
+    ]
+    csv_rows = []
+    json_rows = []
+    for row in rows:
+        hyperparameters = row["hyperparameters"]
+        csv_row = {key: row.get(key, "") for key in fieldnames}
+        csv_row["parameters_json"] = json.dumps(hyperparameters, sort_keys=True)
+        csv_row["hyperparameters_json"] = csv_row["parameters_json"]
+        csv_rows.append(csv_row)
+        json_item = dict(csv_row)
+        json_item["hyperparameters"] = hyperparameters
+        json_rows.append(json_item)
+    with csv_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(csv_rows)
+    json_path.write_text(json.dumps(json_rows, indent=2) + "\n")
 
 
 def expand_grid_config(
@@ -438,6 +498,134 @@ def expand_grid_config(
         manifest_json=manifest_json,
         joint_benchmarks_path=joint_path,
         algorithm_counts={family: len(entries) for family, (_, entries) in families.items()},
+    )
+
+
+def _selection_family_key(family: str) -> str:
+    if family in {"gcastle_direct_lingam", "gcastle_lingam"}:
+        return "gcastle_lingam"
+    return family
+
+
+def _base_method_for_family(family: str) -> str:
+    if family == "gcastle_lingam":
+        return "gcastle_direct_lingam"
+    return family
+
+
+def _selected_algorithm_id(family: str) -> str:
+    if family == "gcastle_lingam":
+        return "gcastle_lingam__best"
+    if family == "notreks":
+        return "notreks__selected"
+    return f"{family}__best"
+
+
+def _selected_methods_from_json(selection: dict[str, Any], requested: list[str]) -> dict[str, tuple[str, dict[str, Any], dict[str, Any]]]:
+    selected: dict[str, tuple[str, dict[str, Any], dict[str, Any]]] = {}
+    for requested_family in requested:
+        family = _selection_family_key(requested_family)
+        if family not in selection:
+            raise KeyError(f"Selection JSON has no entry for method family {requested_family!r}")
+        source = selection[family]
+        config = dict(source["config"])
+        config["id"] = _selected_algorithm_id(family)
+        selected[family] = (_base_method_for_family(family), config, source)
+    return selected
+
+
+def build_selected_benchmark_config(
+    repo_root: Path,
+    frame_path: Path,
+    selection_path: Path,
+    out_config: Path,
+    out_manifest_csv: Path,
+) -> SelectedBenchmark:
+    frame = load_json(frame_path)
+    selection = load_json(selection_path)
+    benchmark_id = safe_name(str(frame["benchmark_id"]))
+    benchmark_name = safe_name(str(frame.get("benchmark_name", benchmark_id)))
+    data = frame.get("data", {})
+    seeds = data.get("seeds", [201, 202])
+    if isinstance(seeds, int):
+        seeds = [seeds]
+    settings = data.get("settings", [])
+    if not settings:
+        raise ValueError(f"Benchmark frame has no data.settings: {frame_path}")
+
+    all_data_entries: list[dict[str, Any]] = []
+    metadata_root = out_config.parent / "_fixed_data" / benchmark_id
+    for setting in settings:
+        spec = _data_spec_from_setting(benchmark_id, setting, [int(seed) for seed in seeds])
+        setting_dir = metadata_root / safe_name(spec.run_name)
+        fixed_ref = prepare_fixed_data(repo_root, setting_dir, spec)
+        fixed_metadata = _fixed_data_metadata(setting_dir, fixed_ref)
+        all_data_entries.extend(_fixed_data_entries(fixed_metadata))
+    shutil.rmtree(metadata_root, ignore_errors=True)
+
+    requested = frame.get("selection", {}).get(
+        "include_method_families",
+        ["gcastle_pc", "gcastle_lingam", "notreks"],
+    )
+    selected = _selected_methods_from_json(selection, [str(value) for value in requested])
+    algorithm_ids = [entry["id"] for _, entry, _ in selected.values()]
+    prefix = str(frame.get("filename_prefix", f"notreks/{benchmark_id}/")).strip("/")
+    if not prefix.endswith("/"):
+        prefix = f"{prefix}/"
+
+    config = {
+        "benchmark_setup": [
+            {
+                "title": benchmark_name,
+                "data": all_data_entries,
+                "evaluation": _evaluation(algorithm_ids, prefix),
+            }
+        ],
+        "resources": {
+            "data": {},
+            "graph": {},
+            "parameters": {},
+            "structure_learning_algorithms": {},
+        },
+    }
+    rows: list[dict[str, Any]] = []
+    for family, (base_method, entry, source) in selected.items():
+        rows.append(
+            {
+                "algorithm_id": entry["id"],
+                "path_id": _path_id(str(entry["id"])),
+                "method_family": family,
+                "base_method": base_method,
+                "selected_algorithm_id": entry["id"],
+                "source_grid_algorithm_id": source.get("selected_algorithm_id", ""),
+                "source_selection_metric": source.get("primary_metric_column", ""),
+                "source_selection_value": source.get("primary_mean", ""),
+                "config_path": _repo_relative(out_config, repo_root),
+                "phase": "selected_benchmark",
+                "hyperparameters": entry,
+            }
+        )
+    manifest_json = out_manifest_csv.with_suffix(".json")
+    _write_selected_manifest(rows, out_manifest_csv, manifest_json)
+
+    resources = config["resources"]["structure_learning_algorithms"]
+    if "gcastle_pc" in selected:
+        resources["gcastle_pc"] = [selected["gcastle_pc"][1]]
+    if "gcastle_lingam" in selected:
+        resources["gcastle_direct_lingam"] = [selected["gcastle_lingam"][1]]
+    if "notreks" in selected:
+        resources["notreks"] = _short_notreks_entries([selected["notreks"][1]], manifest_json, repo_root)
+
+    out_config.parent.mkdir(parents=True, exist_ok=True)
+    out_config.write_text(json.dumps(config, indent=2) + "\n")
+    joint_path = repo_root / "results/output" / benchmark_name / "benchmarks" / prefix / "joint_benchmarks.csv"
+    return SelectedBenchmark(
+        config_path=out_config,
+        manifest_csv=out_manifest_csv,
+        manifest_json=manifest_json,
+        joint_benchmarks_path=joint_path,
+        algorithm_counts={family: 1 for family in selected},
+        dataset_count=len(all_data_entries),
     )
 
 

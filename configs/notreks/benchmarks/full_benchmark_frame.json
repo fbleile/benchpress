@@ -1,0 +1,46 @@
+{
+  "benchmark_id": "notreks_selected_full",
+  "benchmark_name": "notreks_selected_full",
+  "filename_prefix": "notreks/benchmark_full/",
+  "data": {
+    "type": "synthetic_fresh",
+    "seeds": [201, 202, 203, 204, 205, 206, 207, 208, 209, 210],
+    "settings": [
+      {
+        "name": "er_d10_n500_deg2",
+        "graph": "er",
+        "d": 10,
+        "n": 500,
+        "expected_degree": 2,
+        "sem_type": "gauss",
+        "standardized": true
+      },
+      {
+        "name": "er_d20_n1000_deg2",
+        "graph": "er",
+        "d": 20,
+        "n": 1000,
+        "expected_degree": 2,
+        "sem_type": "gauss",
+        "standardized": true
+      },
+      {
+        "name": "sf_d20_n1000_deg2",
+        "graph": "sf",
+        "d": 20,
+        "n": 1000,
+        "expected_degree": 2,
+        "sem_type": "gauss",
+        "standardized": true
+      }
+    ]
+  },
+  "selection": {
+    "source": "configs/notreks/selected/full_benchmark_best_by_method_family.json",
+    "include_method_families": ["gcastle_pc", "gcastle_lingam", "notreks"]
+  },
+  "evaluation": {
+    "primary_metric": "SHD_cpdag",
+    "metrics": ["SHD_cpdag", "SHD_pattern", "TPR_pattern", "FPR_pattern", "FPR_skel", "FNR_skel", "time"]
+  }
+}

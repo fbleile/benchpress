@@ -18,6 +18,7 @@ class FixedDataSpec:
     d: int = 10
     n_values: tuple[int, ...] = (500,)
     seeds: tuple[int, ...] = (1, 2, 3)
+    graph: str = "er"
     expected_degree: float = 2.0
     standardized: bool = True
     graph_seed: int = 1729
@@ -53,6 +54,7 @@ def spec_from_meta(meta: dict, default_run_name: str) -> FixedDataSpec:
         d=int(raw.get("d", 10)),
         n_values=tuple(int(value) for value in n_raw),
         seeds=tuple(int(value) for value in seed_raw),
+        graph=str(raw.get("graph", "er")),
         expected_degree=float(raw.get("expected_degree", 2.0)),
         standardized=bool(raw.get("standardized", True)),
         graph_seed=int(raw.get("graph_seed", 1729)),
@@ -67,7 +69,7 @@ def spec_from_meta(meta: dict, default_run_name: str) -> FixedDataSpec:
     return spec
 
 
-def _generate_dag(d: int, expected_degree: float, seed: int) -> np.ndarray:
+def _generate_er_dag(d: int, expected_degree: float, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     order = rng.permutation(d)
     edge_probability = min(float(expected_degree) / max(d - 1, 1), 1.0)
@@ -77,6 +79,33 @@ def _generate_dag(d: int, expected_degree: float, seed: int) -> np.ndarray:
             if rng.random() < edge_probability:
                 adjacency[order[left], order[right]] = 1
     return adjacency
+
+
+def _generate_sf_dag(d: int, expected_degree: float, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(d)
+    target_edges = max(1, min(int(round(d * expected_degree / 2.0)), d * (d - 1) // 2))
+    adjacency = np.zeros((d, d), dtype=int)
+    indegree = np.ones(d, dtype=float)
+    candidates = [(left, right) for right in range(1, d) for left in range(right)]
+    while candidates and int(adjacency.sum()) < target_edges:
+        weights = np.array([indegree[order[left]] + 1.0 for left, _ in candidates], dtype=float)
+        weights = weights / weights.sum()
+        choice = int(rng.choice(len(candidates), p=weights))
+        left, right = candidates.pop(choice)
+        parent = order[left]
+        child = order[right]
+        adjacency[parent, child] = 1
+        indegree[child] += 1.0
+    return adjacency
+
+
+def _generate_dag(d: int, expected_degree: float, seed: int, graph: str = "er") -> np.ndarray:
+    if graph == "er":
+        return _generate_er_dag(d, expected_degree, seed)
+    if graph == "sf":
+        return _generate_sf_dag(d, expected_degree, seed)
+    raise ValueError(f"Unsupported fixed-data graph type: {graph!r}")
 
 
 def _sample_weights(adjacency: np.ndarray, seed: int) -> np.ndarray:
@@ -121,7 +150,7 @@ def prepare_fixed_data(
     graph_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
-    adjacency = _generate_dag(spec.d, spec.expected_degree, spec.graph_seed)
+    adjacency = _generate_dag(spec.d, spec.expected_degree, spec.graph_seed, spec.graph)
     weights = _sample_weights(adjacency, spec.weight_seed)
     columns = [f"X{index}" for index in range(spec.d)]
     pd.DataFrame(adjacency, columns=columns).to_csv(graph_path, index=False)

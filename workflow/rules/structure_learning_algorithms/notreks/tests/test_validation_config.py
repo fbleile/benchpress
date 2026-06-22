@@ -7,6 +7,7 @@ import pandas as pd
 
 from validation import (
     assert_no_fixed_data_duplication_in_dryrun,
+    build_selected_benchmark_config,
     expand_grid_config,
     expected_algorithm_run_counts,
     parse_dryrun_job_counts,
@@ -121,6 +122,15 @@ def test_expand_grid_writes_top_level_config_and_manifest(tmp_path: Path) -> Non
     assert manifest["algorithm_id"].is_unique
     assert set(manifest.loc[manifest["base_method"] == "notreks", "path_id"]) == {"n000", "n001"}
     assert set(manifest["config_path"]) == {"configs/notreks/expanded/smoke_config.json"}
+
+
+def test_default_benchmark_frames_use_fresh_seeds() -> None:
+    repo = Path(__file__).resolve().parents[5]
+    for tag in ("smoke", "full_benchmark"):
+        grid = json.loads((repo / f"configs/notreks/grids/{tag}_grid.json").read_text())
+        frame_name = "smoke" if tag == "smoke" else "full"
+        frame = json.loads((repo / f"configs/notreks/benchmarks/{frame_name}_benchmark_frame.json").read_text())
+        assert set(grid["data"]["seeds"]).isdisjoint(set(frame["data"]["seeds"]))
 
 
 def test_prepare_validation_tiny_writes_one_config_and_manifest(tmp_path: Path) -> None:
@@ -299,3 +309,131 @@ def test_select_by_method_family_and_write_final_config(tmp_path: Path) -> None:
     assert final_manifest[0]["hyperparameters"]["id"] == "notreks__grid001"
     assert len(final_config["benchmark_setup"][0]["data"]) == 2
     assert final_config["benchmark_setup"][0]["data"][0]["data_id"].endswith("s201.csv")
+
+
+def test_build_selected_benchmark_uses_fresh_data_and_selected_methods(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    selection_path = repo / "configs/notreks/selected/smoke_best_by_method_family.json"
+    selection_path.parent.mkdir(parents=True)
+    selection_path.write_text(
+        json.dumps(
+            {
+                "gcastle_pc": {
+                    "selected_algorithm_id": "gcastle_pc__grid000",
+                    "primary_metric_column": "SHD_cpdag",
+                    "primary_mean": 2.0,
+                    "config": {
+                        "id": "gcastle_pc__grid000",
+                        "variant": "stable",
+                        "alpha": 0.05,
+                        "ci_test": "fisherz",
+                        "timeout": None,
+                    },
+                },
+                "gcastle_lingam": {
+                    "selected_algorithm_id": "gcastle_lingam__grid000",
+                    "primary_metric_column": "SHD_cpdag",
+                    "primary_mean": 3.0,
+                    "config": {
+                        "id": "gcastle_lingam__grid000",
+                        "measure": "pwling",
+                        "thresh": 0.3,
+                        "timeout": None,
+                    },
+                },
+                "notreks": {
+                    "selected_algorithm_id": "notreks__grid001",
+                    "primary_metric_column": "SHD_cpdag",
+                    "primary_mean": 1.0,
+                    "config": {
+                        "id": "notreks__grid001",
+                        "function_class": "linear",
+                        "score": "least_squares",
+                        "dag_seq": "logdet",
+                        "dag_reg": 1.0,
+                        "dag_s": 1.0,
+                        "trek_seq": "exp",
+                        "trek_reg": 1.0,
+                        "regularizer": "l1",
+                        "regularizer_scale": 0.01,
+                        "independence_test": "spearman",
+                        "independence_alpha": 0.05,
+                        "independence_correction": "benjamini-hochberg",
+                        "seed": 1,
+                        "max_iter": 3000,
+                        "lr": 0.0003,
+                        "path_steps": 5,
+                        "mu_init": 1.0,
+                        "mu_factor": 0.1,
+                        "warm_iter": 3000,
+                        "tol": 1e-6,
+                        "threshold": 0.1,
+                        "timeout": None,
+                        "init": "zero",
+                        "checkpoint": 300,
+                        "power_iter_steps": 5,
+                        "scc_threshold": 1e-8,
+                        "independence_cache_dir": "results/notreks_cache/notreks_smoke",
+                    },
+                },
+            }
+        )
+        + "\n"
+    )
+    frame_path = repo / "configs/notreks/benchmarks/smoke_benchmark_frame.json"
+    frame_path.parent.mkdir(parents=True)
+    frame_path.write_text(
+        json.dumps(
+            {
+                "benchmark_id": "notreks_selected_smoke",
+                "benchmark_name": "notreks_selected_smoke",
+                "filename_prefix": "notreks/benchmark_smoke/",
+                "data": {
+                    "type": "synthetic_fresh",
+                    "seeds": [201, 202],
+                    "settings": [
+                        {
+                            "name": "er_d10_n500_deg2",
+                            "graph": "er",
+                            "d": 10,
+                            "n": 500,
+                            "expected_degree": 2,
+                        }
+                    ],
+                },
+                "selection": {
+                    "include_method_families": ["gcastle_pc", "gcastle_lingam", "notreks"]
+                },
+            }
+        )
+        + "\n"
+    )
+    out_config = repo / "configs/notreks/expanded/selected_smoke_benchmark_config.json"
+    out_manifest = repo / "configs/notreks/expanded/selected_smoke_benchmark_manifest.csv"
+    built = build_selected_benchmark_config(repo, frame_path, selection_path, out_config, out_manifest)
+    assert built.dataset_count == 2
+    assert built.algorithm_counts == {"gcastle_pc": 1, "gcastle_lingam": 1, "notreks": 1}
+
+    config = json.loads(out_config.read_text())
+    setup = config["benchmark_setup"][0]
+    assert len(setup["data"]) == 2
+    assert all("s20" in row["data_id"] for row in setup["data"])
+    assert not any("s101" in row["data_id"] or "s102" in row["data_id"] for row in setup["data"])
+    resources = config["resources"]["structure_learning_algorithms"]
+    assert len(resources["gcastle_pc"]) == 1
+    assert len(resources["gcastle_direct_lingam"]) == 1
+    assert resources["notreks"] == [
+        {
+            "id": "notreks__selected",
+            "alg_id": "nsel",
+            "params_manifest": "configs/notreks/expanded/selected_smoke_benchmark_manifest.json",
+        }
+    ]
+    manifest = pd.read_csv(out_manifest)
+    assert set(manifest["method_family"]) == {"gcastle_pc", "gcastle_lingam", "notreks"}
+    assert set(manifest["source_grid_algorithm_id"]) == {
+        "gcastle_pc__grid000",
+        "gcastle_lingam__grid000",
+        "notreks__grid001",
+    }
+    assert set(manifest["phase"]) == {"selected_benchmark"}

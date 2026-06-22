@@ -76,22 +76,27 @@ def test_snakemake_driver_rejects_missing_config() -> None:
 
 
 def test_slurm_resource_presets_are_lrz_sized() -> None:
-    smoke = (MODULE_DIR / "slurm/notreks_driver_serial_smoke.sh").read_text()
-    serial_true = (MODULE_DIR / "slurm/notreks_driver_serial_true.sh").read_text()
-    cm4_true = (MODULE_DIR / "slurm/notreks_driver_cm4_tiny_true.sh").read_text()
-    compat = (MODULE_DIR / "slurm/notreks_jobfarm.sh").read_text()
-    all_scripts = "\n".join([smoke, serial_true, cm4_true, compat])
+    smoke = (MODULE_DIR / "slurm/notreks_driver_smoke.sh").read_text()
+    heavy = (MODULE_DIR / "slurm/notreks_driver_heavy.sh").read_text()
+    all_scripts = "\n".join([smoke, heavy])
 
     assert "#SBATCH --partition=serial_std" in smoke
     assert "#SBATCH --clusters=serial" in smoke
     assert "#SBATCH --cpus-per-task=8" in smoke
-    assert "#SBATCH --partition=serial_std" in serial_true
-    assert "#SBATCH --cpus-per-task=16" in serial_true
-    assert "#SBATCH --partition=cm4_tiny" in cm4_true
-    assert "#SBATCH --cpus-per-task=32" in cm4_true
+    assert "#SBATCH --partition=serial_std" in heavy
+    assert "#SBATCH --cpus-per-task=16" in heavy
     assert "#SBATCH --nodes=2" not in all_scripts
     assert "#SBATCH --ntasks=200" not in all_scripts
     assert "cm4_std" not in all_scripts
+
+
+def test_slurm_has_only_smoke_and_heavy_user_facing_drivers() -> None:
+    scripts = sorted(path.name for path in (MODULE_DIR / "slurm").glob("*.sh"))
+    assert scripts == [
+        "notreks_driver_heavy.sh",
+        "notreks_driver_smoke.sh",
+        "notreks_snakemake_driver_common.sh",
+    ]
 
 
 def test_snakemake_driver_runs_one_snakemake_process() -> None:
@@ -134,9 +139,8 @@ def test_environment_pins_snakemake_seven_for_gcastle_containers() -> None:
 def test_driver_wrappers_find_common_driver_from_spool_dir(tmp_path: Path) -> None:
     tmp_path.mkdir(parents=True, exist_ok=True)
     for script_name in (
-        "notreks_driver_serial_smoke.sh",
-        "notreks_driver_serial_true.sh",
-        "notreks_driver_cm4_tiny_true.sh",
+        "notreks_driver_smoke.sh",
+        "notreks_driver_heavy.sh",
     ):
         copied_script = tmp_path / script_name
         copied_script.write_text((MODULE_DIR / "slurm" / script_name).read_text())
@@ -158,10 +162,8 @@ def test_driver_wrappers_find_common_driver_from_spool_dir(tmp_path: Path) -> No
 
 def test_driver_wrappers_do_not_use_bare_common_driver_source() -> None:
     for script_name in (
-        "notreks_driver_serial_smoke.sh",
-        "notreks_driver_serial_true.sh",
-        "notreks_driver_cm4_tiny_true.sh",
-        "notreks_jobfarm.sh",
+        "notreks_driver_smoke.sh",
+        "notreks_driver_heavy.sh",
     ):
         script = (MODULE_DIR / "slurm" / script_name).read_text()
         assert "source notreks_snakemake_driver_common.sh" not in script
@@ -188,9 +190,9 @@ def test_print_slurm_launch_uses_run_logs_and_driver(tmp_path: Path) -> None:
     )
     output = completed.stdout
     assert f"RUN_DIR={run_dir}" in output
-    assert f"CONFIG={run_dir}/configs/validation_hparam_config.json" in output
+    assert "CONFIG=configs/notreks/expanded/smoke_config.json" in output
     assert "SNAKEMAKE_CORES=8" in output
     assert "sbatch --clusters=serial" in output
     assert f"-o {run_dir}/logs/slurm/%x-%j.out" in output
     assert f"-e {run_dir}/logs/slurm/%x-%j.err" in output
-    assert "notreks_driver_serial_smoke.sh" in output
+    assert "notreks_driver_smoke.sh" in output

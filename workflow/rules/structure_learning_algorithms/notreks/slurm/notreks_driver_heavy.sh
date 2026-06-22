@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-#SBATCH -o slurm_logs/notreks-smoke.%N.%j.out
-#SBATCH -J NotreksSmoke
+#SBATCH -J NotreksHeavy
 #SBATCH --mail-user=f.bleile@tum.de
 #SBATCH --mail-type=END,FAIL
 #SBATCH --get-user-env
 #SBATCH --export=ALL
 #SBATCH --clusters=serial
 #SBATCH --partition=serial_std
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=16000M
-#SBATCH --time=02:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64000M
+#SBATCH --time=24:00:00
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-8}"
+export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-16}"
 COMMON_DRIVER="${SCRIPT_DIR}/notreks_snakemake_driver_common.sh"
 if [[ ! -f "$COMMON_DRIVER" && -n "${REPO_DIR:-}" ]]; then
   COMMON_DRIVER="${REPO_DIR}/workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_snakemake_driver_common.sh"

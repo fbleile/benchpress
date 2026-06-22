@@ -26,6 +26,7 @@ from jobfarm import (  # noqa: E402
 )
 from selection import inject_best, select_best  # noqa: E402
 from validation import (  # noqa: E402
+    build_selected_benchmark_config,
     expand_grid_config,
     prepare_validation_run,
     select_best_from_config_manifest,
@@ -323,21 +324,34 @@ def expand_grid_command(args: argparse.Namespace) -> None:
     print(f"Algorithm variant counts: {expanded.algorithm_counts}")
 
 
+def build_selected_benchmark_command(args: argparse.Namespace) -> None:
+    built = build_selected_benchmark_config(
+        REPO_ROOT,
+        _resolve(args.frame),
+        _resolve(args.selection),
+        _resolve(args.out_config),
+        _resolve(args.out_manifest),
+    )
+    print(f"Selected benchmark config: {built.config_path}")
+    print(f"Manifest CSV: {built.manifest_csv}")
+    print(f"Manifest JSON: {built.manifest_json}")
+    print(f"Expected Benchpress joint benchmark: {built.joint_benchmarks_path}")
+    print(f"Dataset count: {built.dataset_count}")
+    print(f"Algorithm variant counts: {built.algorithm_counts}")
+
+
 def print_slurm_launch_command(args: argparse.Namespace) -> None:
     run_dir = args.run_dir
-    config = args.config or (run_dir / "configs/validation_hparam_config.json")
     if args.preset == "smoke":
-        script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_smoke.sh")
+        script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_smoke.sh")
+        config = args.config or Path("configs/notreks/expanded/smoke_config.json")
         cores = 8
         cluster = "serial"
-    elif args.preset == "true_serial":
-        script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_true.sh")
+    elif args.preset == "heavy":
+        script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh")
+        config = args.config or Path("configs/notreks/expanded/full_benchmark_config.json")
         cores = 16
         cluster = "serial"
-    elif args.preset == "true_cm4_tiny":
-        script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_cm4_tiny_true.sh")
-        cores = 32
-        cluster = "cm4"
     else:
         raise ValueError(f"Unknown SLURM launch preset: {args.preset}")
     log_dir = run_dir / "logs/slurm"
@@ -484,12 +498,19 @@ def build_parser() -> argparse.ArgumentParser:
     expand_grid.add_argument("--out-manifest", type=Path, required=True)
     expand_grid.set_defaults(func=expand_grid_command)
 
+    selected_benchmark = subparsers.add_parser("build-selected-benchmark")
+    selected_benchmark.add_argument("--frame", type=Path, required=True)
+    selected_benchmark.add_argument("--selection", type=Path, required=True)
+    selected_benchmark.add_argument("--out-config", type=Path, required=True)
+    selected_benchmark.add_argument("--out-manifest", type=Path, required=True)
+    selected_benchmark.set_defaults(func=build_selected_benchmark_command)
+
     slurm_launch = subparsers.add_parser("print-slurm-launch")
     slurm_launch.add_argument("--run-dir", type=Path, required=True)
     slurm_launch.add_argument("--config", type=Path, default=None)
     slurm_launch.add_argument(
         "--preset",
-        choices=["smoke", "true_serial", "true_cm4_tiny"],
+        choices=["smoke", "heavy"],
         required=True,
     )
     slurm_launch.set_defaults(func=print_slurm_launch_command)

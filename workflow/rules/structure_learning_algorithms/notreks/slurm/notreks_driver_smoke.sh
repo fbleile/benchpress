@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH -o slurm_logs/notreks-compat.%N.%j.out
-#SBATCH -J NotreksCompat
+#SBATCH -J NotreksSmoke
 #SBATCH --mail-user=f.bleile@tum.de
 #SBATCH --mail-type=END,FAIL
 #SBATCH --get-user-env
@@ -14,7 +13,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "WARNING: notreks_jobfarm.sh is deprecated; running the single Snakemake driver instead." >&2
 export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-8}"
 COMMON_DRIVER="${SCRIPT_DIR}/notreks_snakemake_driver_common.sh"
 if [[ ! -f "$COMMON_DRIVER" && -n "${REPO_DIR:-}" ]]; then
