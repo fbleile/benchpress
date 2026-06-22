@@ -26,7 +26,9 @@ from jobfarm import (  # noqa: E402
 )
 from selection import inject_best, select_best  # noqa: E402
 from validation import (  # noqa: E402
+    expand_grid_config,
     prepare_validation_run,
+    select_best_from_config_manifest,
     select_best_by_method_family,
     write_final_benchmark_config,
 )
@@ -55,7 +57,7 @@ def _write_validation_cmd(run_dir: Path, validation_config: Path, *, cores: str 
         'export PYTHONPATH="$PWD:${PYTHONPATH:-}" && '
         "snakemake "
         f"--cores {cores} "
-        "--use-apptainer "
+        "--use-singularity "
         "--snakefile workflow/Snakefile "
         f"--configfile {config_arg}\n"
     )
@@ -307,9 +309,23 @@ def prepare_experiment_command(args: argparse.Namespace) -> None:
     prepare_validation_command(argparse.Namespace(out=args.out, preset=preset))
 
 
+def expand_grid_command(args: argparse.Namespace) -> None:
+    expanded = expand_grid_config(
+        REPO_ROOT,
+        _resolve(args.grid),
+        _resolve(args.out_config),
+        _resolve(args.out_manifest),
+    )
+    print(f"Expanded config: {expanded.config_path}")
+    print(f"Manifest CSV: {expanded.manifest_csv}")
+    print(f"Manifest JSON: {expanded.manifest_json}")
+    print(f"Expected Benchpress joint benchmark: {expanded.joint_benchmarks_path}")
+    print(f"Algorithm variant counts: {expanded.algorithm_counts}")
+
+
 def print_slurm_launch_command(args: argparse.Namespace) -> None:
     run_dir = args.run_dir
-    config = run_dir / "configs/validation_hparam_config.json"
+    config = args.config or (run_dir / "configs/validation_hparam_config.json")
     if args.preset == "smoke":
         script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_smoke.sh")
         cores = 8
@@ -338,14 +354,31 @@ def print_slurm_launch_command(args: argparse.Namespace) -> None:
 
 
 def select_validation_command(args: argparse.Namespace) -> None:
-    selected = select_best_by_method_family(
-        _resolve(args.run_dir),
-        REPO_ROOT,
-        primary_metric=args.primary_metric,
-        primary_direction=args.primary_direction,
-        secondary_metric=args.secondary_metric,
-        secondary_direction=args.secondary_direction,
-    )
+    if args.config is not None or args.manifest is not None:
+        if args.config is None or args.manifest is None or args.out_dir is None:
+            raise ValueError("--config, --manifest, and --out-dir must be provided together")
+        selected = select_best_from_config_manifest(
+            REPO_ROOT,
+            _resolve(args.config),
+            _resolve(args.manifest),
+            _resolve(args.out_dir),
+            args.tag,
+            primary_metric=args.primary_metric,
+            primary_direction=args.primary_direction,
+            secondary_metric=args.secondary_metric,
+            secondary_direction=args.secondary_direction,
+        )
+    else:
+        if args.run_dir is None:
+            raise ValueError("Either --run-dir or --config/--manifest/--out-dir is required")
+        selected = select_best_by_method_family(
+            _resolve(args.run_dir),
+            REPO_ROOT,
+            primary_metric=args.primary_metric,
+            primary_direction=args.primary_direction,
+            secondary_metric=args.secondary_metric,
+            secondary_direction=args.secondary_direction,
+        )
     for family, value in selected.items():
         print(
             f"{family}: {value['selected_algorithm_id']} "
@@ -445,8 +478,15 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_experiment.add_argument("--out", type=Path, required=True)
     prepare_experiment.set_defaults(func=prepare_experiment_command)
 
+    expand_grid = subparsers.add_parser("expand-grid")
+    expand_grid.add_argument("--grid", type=Path, required=True)
+    expand_grid.add_argument("--out-config", type=Path, required=True)
+    expand_grid.add_argument("--out-manifest", type=Path, required=True)
+    expand_grid.set_defaults(func=expand_grid_command)
+
     slurm_launch = subparsers.add_parser("print-slurm-launch")
     slurm_launch.add_argument("--run-dir", type=Path, required=True)
+    slurm_launch.add_argument("--config", type=Path, default=None)
     slurm_launch.add_argument(
         "--preset",
         choices=["smoke", "true_serial", "true_cm4_tiny"],
@@ -455,7 +495,11 @@ def build_parser() -> argparse.ArgumentParser:
     slurm_launch.set_defaults(func=print_slurm_launch_command)
 
     select_validation = subparsers.add_parser("select-validation-best")
-    select_validation.add_argument("--run-dir", type=Path, required=True)
+    select_validation.add_argument("--run-dir", type=Path, default=None)
+    select_validation.add_argument("--config", type=Path, default=None)
+    select_validation.add_argument("--manifest", type=Path, default=None)
+    select_validation.add_argument("--out-dir", type=Path, default=None)
+    select_validation.add_argument("--tag", default="validation")
     select_validation.add_argument("--primary-metric", default="SHD_cpdag")
     select_validation.add_argument("--primary-direction", choices=["min", "max"], default=None)
     select_validation.add_argument("--secondary-metric", default=None)

@@ -7,6 +7,7 @@ import pandas as pd
 
 from validation import (
     assert_no_fixed_data_duplication_in_dryrun,
+    expand_grid_config,
     expected_algorithm_run_counts,
     parse_dryrun_job_counts,
     prepare_validation_run,
@@ -20,6 +21,106 @@ def _repo(tmp_path: Path) -> Path:
     (repo / "resources/data/mydatasets").mkdir(parents=True)
     (repo / "resources/adjmat/myadjmats").mkdir(parents=True)
     return repo
+
+
+def _simple_cartesian_grid(repo: Path) -> Path:
+    grid_path = repo / "configs/notreks/grids/smoke_grid.json"
+    grid_path.parent.mkdir(parents=True)
+    grid_path.write_text(
+        json.dumps(
+            {
+                "experiment_id": "notreks_smoke",
+                "benchmark_name": "notreks_smoke_validation",
+                "filename_prefix": "notreks/smoke/validation/",
+                "data": {
+                    "type": "fixed",
+                    "seeds": [101, 102],
+                    "d": 10,
+                    "n": 500,
+                    "graph": "er",
+                    "expected_degree": 2,
+                    "standardized": True,
+                },
+                "methods": {
+                    "gcastle_pc": {
+                        "enabled": True,
+                        "grid": {
+                            "variant": ["stable"],
+                            "alpha": [0.05],
+                            "ci_test": ["fisherz"],
+                            "timeout": [None],
+                        },
+                    },
+                    "gcastle_direct_lingam": {
+                        "enabled": True,
+                        "grid": {"measure": ["pwling"], "thresh": [0.3], "timeout": [None]},
+                    },
+                    "notreks": {
+                        "enabled": True,
+                        "grid": {
+                            "score": ["least_squares"],
+                            "dag_seq": ["logdet"],
+                            "trek_seq": ["exp"],
+                            "trek_reg": [1.0],
+                            "regularizer": ["l1"],
+                            "regularizer_scale": [0.01],
+                            "independence_test": ["spearman", "gcastle_fisherz"],
+                            "independence_alpha": [0.05],
+                            "independence_correction": ["benjamini-hochberg"],
+                            "threshold": [0.1],
+                            "max_iter": [3000],
+                            "path_steps": [5],
+                            "stage_iteration_budget": [3000],
+                            "power_iter_steps": [5],
+                            "timeout": [None],
+                        },
+                    },
+                },
+            }
+        )
+        + "\n"
+    )
+    return grid_path
+
+
+def test_expand_grid_writes_top_level_config_and_manifest(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    grid_path = _simple_cartesian_grid(repo)
+    out_config = repo / "configs/notreks/expanded/smoke_config.json"
+    out_manifest = repo / "configs/notreks/expanded/smoke_manifest.csv"
+    expanded = expand_grid_config(repo, grid_path, out_config, out_manifest)
+
+    assert expanded.config_path == out_config
+    assert expanded.manifest_csv == out_manifest
+    assert expanded.manifest_json == out_manifest.with_suffix(".json")
+    assert expanded.algorithm_counts == {
+        "gcastle_pc": 1,
+        "gcastle_lingam": 1,
+        "notreks": 2,
+    }
+    assert "results/" not in str(out_config)
+    assert "results/" not in str(out_manifest)
+
+    config = json.loads(out_config.read_text())
+    resources = config["resources"]["structure_learning_algorithms"]
+    assert len(config["benchmark_setup"][0]["data"]) == 2
+    assert len(resources["gcastle_pc"]) == 1
+    assert len(resources["gcastle_direct_lingam"]) == 1
+    assert len(resources["notreks"]) == 2
+    assert resources["notreks"][0] == {
+        "id": "notreks__grid000",
+        "alg_id": "n000",
+        "params_manifest": "configs/notreks/expanded/smoke_manifest.json",
+    }
+    text = out_config.read_text()
+    assert "independence_cache_dir" not in text
+    assert "function_class" not in json.dumps(resources["notreks"])
+
+    manifest = pd.read_csv(out_manifest)
+    assert set(manifest["method_family"]) == {"gcastle_pc", "gcastle_lingam", "notreks"}
+    assert manifest["algorithm_id"].is_unique
+    assert set(manifest.loc[manifest["base_method"] == "notreks", "path_id"]) == {"n000", "n001"}
+    assert set(manifest["config_path"]) == {"configs/notreks/expanded/smoke_config.json"}
 
 
 def test_prepare_validation_tiny_writes_one_config_and_manifest(tmp_path: Path) -> None:

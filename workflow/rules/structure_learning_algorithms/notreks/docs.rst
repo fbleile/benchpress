@@ -1,256 +1,149 @@
 NOTREKS
 =======
 
-This is a local, minimal Benchpress structure-learning module for NOTREKS.  The
-implementation is intentionally small: it reads Benchpress CSV input, parses the
-NOTREKS configuration, optionally computes pairwise independence-candidate
-pairs, builds a weighted adjacency estimate from a linear baseline plus a
-DAGMA-style central-path optimizer, thresholds that matrix, and writes the
-standard Benchpress adjacency matrix, runtime, and number-of-tests outputs.
+NOTREKS is a Benchpress structure-learning module with a linear optimizer,
+optional no-trek regularization, cached marginal-independence tests, and a
+small hyperparameter-selection workflow.
 
-Only ``function_class = "linear"`` is implemented.  Nonlinear function classes
-may be added later.
+Experiment layout
+-----------------
 
-Score
+Human-edited grids live under::
+
+  configs/notreks/grids/
+
+Generated Benchpress configs and manifests are written under::
+
+  configs/notreks/expanded/
+
+Selection outputs that define the next run are written under::
+
+  configs/notreks/selected/
+
+Benchmark outputs remain in Benchpress's normal ``results/`` tree.  Generated
+NOTREKS fixed-data resources are reproducible and are ignored by git.
+
+Grid expansion
+--------------
+
+Smoke grid::
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    expand-grid \
+    --grid configs/notreks/grids/smoke_grid.json \
+    --out-config configs/notreks/expanded/smoke_config.json \
+    --out-manifest configs/notreks/expanded/smoke_manifest.csv
+
+Full validation grid::
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    expand-grid \
+    --grid configs/notreks/grids/full_benchmark_grid.json \
+    --out-config configs/notreks/expanded/full_benchmark_config.json \
+    --out-manifest configs/notreks/expanded/full_benchmark_manifest.csv
+
+The grid format is intentionally simple: each enabled method has a ``grid``
+dictionary, and list-valued entries are expanded by Cartesian product.  The
+manifest maps compact ids such as ``notreks__grid000`` back to full
+hyperparameters, keeping Snakemake output paths short.
+
+Local dry-run
+-------------
+
+Benchpress currently uses Snakemake 7 for Python-3.7 gCastle container
+compatibility, so use ``--use-singularity`` locally and on LRZ::
+
+  snakemake -n \
+    --cores 1 \
+    --use-singularity \
+    --snakefile workflow/Snakefile \
+    --configfile configs/notreks/expanded/smoke_config.json
+
+SLURM
 -----
 
-``score = "least_squares"`` is intended for linear SEM-style additive-noise
-models and NOTEARS-like squared-loss comparisons.
+Smoke and full validation use the same Snakemake-driver mechanism; smoke only
+uses fewer datasets, fewer variants, and smaller resources.  On LRZ the driver
+loads ``apptainer/1.3.4`` and ``squashfs/4.6.1`` because Apptainer image pulls
+need ``mksquashfs``.  With Snakemake 7 the driver chooses
+``--use-singularity`` and creates a local ``singularity -> apptainer`` shim when
+needed.
 
-``score = "gaussian_likelihood"`` uses a minimal diagonal-noise Gaussian linear
-SEM score based on residual variances from ``X @ (I - W)``.
+Smoke submit::
 
-Possible future score types include ``logistic``, ``poisson``,
-``generalized_linear``, and ``nonlinear_mlp``.
+  mkdir -p results/notreks/smoke/logs/slurm
+  RUN_DIR=results/notreks/smoke \
+  CONFIG=configs/notreks/expanded/smoke_config.json \
+  SNAKEMAKE_CORES=8 \
+  sbatch --clusters=serial \
+    --export=ALL,RUN_DIR=results/notreks/smoke,CONFIG=configs/notreks/expanded/smoke_config.json,SNAKEMAKE_CORES=8 \
+    -o results/notreks/smoke/logs/slurm/%x-%j.out \
+    -e results/notreks/smoke/logs/slurm/%x-%j.err \
+    workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_smoke.sh
 
-DAG penalty
------------
+Full validation submit on ``serial_std``::
 
-``dag_seq`` selects the acyclicity penalty family:
+  mkdir -p results/notreks/full_benchmark/logs/slurm
+  RUN_DIR=results/notreks/full_benchmark \
+  CONFIG=configs/notreks/expanded/full_benchmark_config.json \
+  SNAKEMAKE_CORES=16 \
+  sbatch --clusters=serial \
+    --export=ALL,RUN_DIR=results/notreks/full_benchmark,CONFIG=configs/notreks/expanded/full_benchmark_config.json,SNAKEMAKE_CORES=16 \
+    -o results/notreks/full_benchmark/logs/slurm/%x-%j.out \
+    -e results/notreks/full_benchmark/logs/slurm/%x-%j.err \
+    workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_true.sh
 
-* ``none`` disables the DAG penalty.
-* ``exp`` denotes a NOTEARS-style exponential trace / power-series penalty.
-* ``log`` denotes a logarithmic sequence variant.
-* ``inv`` denotes an inverse/resolvent-style sequence variant.
-* ``logdet`` denotes a DAGMA-style log-det barrier with parameter ``dag_s``.
-* ``scc_power_iteration`` denotes an experimental SCC-blockwise SDCD-style
-  power-iteration surrogate on ``W * W``.
+If the full grid needs more one-node parallelism, use the existing
+``notreks_driver_cm4_tiny_true.sh`` script with ``SNAKEMAKE_CORES=32``.
+Do not use multi-node ``cm4_std`` resources unless the workload is explicitly
+changed to a distributed workflow.
 
-``dag_reg`` is the non-negative scaling factor for this penalty.  ``dag_s`` is
-kept in every config for simplicity and is relevant to ``dag_seq = "logdet"``.
-
-The current optimizer supports ``dag_seq`` values ``none``, ``exp``,
-``logdet``, and ``scc_power_iteration``.
-The log-det case uses the DAGMA-style barrier
-``-logdet(s * I - W * W) + d * log(s)`` at each central-path stage.  The
-``exp`` case uses the NOTEARS-style ``trace(expm(W * W)) - d`` penalty.  The
-``scc_power_iteration`` case follows an SCC-blockwise SDCD detached-gradient
-surrogate.  For signed NOTREKS weights it constructs the NOTEARS-style
-nonnegative proxy ``A = W * W`` with a zero diagonal, detects nontrivial
-strongly connected components from ``A > scc_threshold``, approximates
-left/right Perron vectors inside each SCC by fixed-step power iteration, forms
-``G_scc = outer(u, v) / (dot(u, v) + eps)``, and optimizes
-``sum(stop_gradient(G) * A)`` with JAX.  SCC detection is structural and is not
-differentiated through.  The default ``power_iter_steps`` is 5 to keep the
-value/gradient call closer to logdet cost in small-matrix timing checks.  This
-branch is experimental and should be benchmarked before large use.  The old
-names ``power_iteration`` and ``spectral_radius`` are rejected; use
-``scc_power_iteration``.  The
-``log`` and ``inv`` variants remain documented placeholders and raise
-``NotImplementedError`` in the optimizer path.
-
-References for the implemented DAG constraints:
-
-* ``dag_seq = "exp"`` follows NOTEARS: Zheng, Aragam, Ravikumar, and Xing,
-  "DAGs with NO TEARS: Continuous Optimization for Structure Learning", NeurIPS
-  2018. Code reference: https://github.com/xunzheng/notears
-* ``dag_seq = "logdet"`` follows DAGMA: Bello, Aragam, and Ravikumar, "DAGMA:
-  Learning DAGs via M-matrices and a Log-Determinant Acyclicity
-  Characterization", NeurIPS 2022. Code reference:
-  https://github.com/kevinsbello/dagma
-* ``dag_seq = "scc_power_iteration"`` is inspired by SDCD: Nazaret, Hong,
-  Azizi, and Blei, "Stable differentiable causal discovery", arXiv 2023. Code
-  reference: https://github.com/azizilab/sdcd/tree/master
-
-Trek penalty
-------------
-
-``trek_seq`` selects the trek penalty sequence:
-
-* ``none`` disables the trek penalty.
-* ``exp``, ``log``, and ``inv`` select simple sequence variants.
-
-``trek_reg`` is the non-negative scaling factor.  The candidate marginal
-independencies used by the trek penalty are supplied by the optional pairwise
-tests.
-
-The implemented trek penalty is matrix-function based.  Let ``A = W * W``.
-The sequence determines a matrix ``F(A)``:
-
-* ``exp`` uses ``F = expm(A)``.
-* ``inv`` uses ``F = (I - A + eps I)^(-1)`` with a small ridge.
-* ``log`` uses the truncated series
-  ``F = I + A + A^2 / 2 + ... + A^K / K`` with ``K = 2d``.
-
-Then ``H = F.T @ F``.  For each accepted marginal-independence pair ``(i, j)``,
-the optimizer penalizes ``H[i, j]``.  Since ``H`` is symmetric and pairs are
-stored once as undirected pairs, this is equivalent to using the symmetric
-entry.  The current trek penalty is the sum over accepted pairs.  The penalty
-discourages shared trek/connectivity mass between variables that the pairwise
-tests accepted as candidate marginal independencies.  ``binom`` is a possible
-future sequence but is not exposed in the schema.
-
-Central-path optimizer
-----------------------
-
-For each central-path stage, the implemented objective is:
-
-``mu * [score(W; X) + regularizer_scale * R(W) + trek_reg * T(W; I)] + dag_reg * h(W; s)``
-
-The score, ordinary coefficient regularizer, and current NOTREKS trek
-regularizer are multiplied by ``mu``.  The DAGMA log-det barrier is outside
-``mu``.
-
-``dag_reg`` is not ignored: for ``dag_seq = "logdet"`` it multiplies the
-log-det barrier.  ``dag_reg = 1`` gives the faithful DAGMA scaling.
-
-Optimizer controls:
-
-* ``mu_init`` is the first central-path multiplier.
-* ``mu_factor`` multiplies ``mu`` after each successful stage.
-* ``path_steps`` is the number of central-path stages.
-* ``max_iter`` is the inner iteration limit for every stage under the current
-  ``max_every_stage`` policy.
-* ``warm_iter`` remains accepted for compatibility with older configs, but the
-  current optimizer does not consume it.
-* ``lr`` is the Adam learning rate, with backtracking if a step leaves the
-  log-det domain or increases the objective.
-* ``tol`` is the relative objective-improvement stopping tolerance inside a
-  stage.
-
-The optimizer records the stage index, ``mu``, iteration budget, actual
-iterations, objective terms, and convergence status. Using fewer iterations in
-early continuation stages can be faster, but may pass an under-solved point to
-later stages. The current implementation avoids that tradeoff by applying
-``max_iter`` to every stage.
-
-For ``dag_seq = "logdet"``, the optimizer checks the DAGMA M-matrix domain:
-``s * I - W * W`` must be invertible and its inverse must not have substantially
-negative entries.  Invalid trial steps are rejected and retried with a smaller
-learning rate.
-
-Regularizer
------------
-
-``regularizer`` is one of ``none``, ``l1``, or ``l2``.  The baseline initializer
-uses ridge-style fitting for ``l2`` and simple coefficient soft-thresholding for
-``l1``.  The optimizer uses raw ``sum(abs(W))`` for ``l1`` with the
-corresponding ``sign(W)`` subgradient and raw ``sum(W * W)`` for ``l2`` with
-gradient ``2W``.  To run without ordinary coefficient regularization, use
-``regularizer = "none"`` and ``regularizer_scale = 0``.
-
-Scaling conventions
--------------------
-
-The objective follows the earlier local DAGMA-like scaling used for the
-NOTREKS experiments:
-
-* ``least_squares`` is centered and uses
-  ``0.5 * ||XW - X||_F^2 / n``.
-* ``gaussian_likelihood`` is ``0.5 * sum_j log(sigma_j^2)``.
-* ``l1`` is ``sum(abs(W))``.
-* ``l2`` is ``sum(W * W)``.
-* ``dag_seq = "exp"`` is ``trace(expm(W * W)) - d``.
-* ``dag_seq = "logdet"`` is
-  ``-logdet(sI - W * W) + d log(s)``.
-* ``dag_seq = "scc_power_iteration"`` uses an SCC-blockwise SDCD-style
-  surrogate on ``W * W`` with a zero diagonal.
-* ``trek_seq`` penalties use
-  ``T(W; I) = sum_{(i,j) in I} H[i,j]``.
-
-The DAG terms are raw constraint violations.  The current regularizer and trek
-terms are intentionally unnormalized, matching the earlier local runs where the
-module performed best under the tested hyperparameters.  If no independence
-pairs are accepted, the trek value and gradient are exactly zero.
-
-Independence tests
-------------------
-
-``independence_test = "none"`` skips testing and uses an empty independence set.
-``pearson`` and ``spearman`` test all ``d(d-1)/2`` variable pairs using
-``scipy.stats``.  Large p-values are interpreted as compatibility with
-independence, so those pairs are returned as candidate marginal independencies.
-
-Pearson tests zero linear correlation.  Spearman tests zero rank correlation.
-Both are proxies for marginal independence, not general independence tests;
-Pearson has the usual Gaussian interpretation under Gaussian assumptions.
-
-``hsic`` and ``dcor`` are nonlinear dependence tests when the optional
-``hyppo`` package is installed.  The module imports ``hyppo`` lazily only for
-those tests, so Pearson and Spearman runs do not require it.  Install with
-``pip install hyppo`` to use ``independence_test = "hsic"`` or
-``independence_test = "dcor"``.  For ``dcor``, the standalone ``dcor`` package
-is used as a secondary fallback when available.
-
-``gcastle_fisherz``, ``gcastle_g2``, and ``gcastle_chi2`` reuse gCastle's
-low-level ``castle.common.independence_tests.CITest`` functions.  NOTREKS calls
-these tests with an empty conditioning set, so they are marginal independence
-tests, not full PC runs.  The raw gCastle p-values are passed through the
-NOTREKS multiple-testing correction logic.  ``gcastle_fisherz`` is intended for
-continuous approximately Gaussian data; ``gcastle_g2`` and ``gcastle_chi2`` are
-more appropriate for discrete data.
-
-``independence_correction`` can be ``none``, ``bonferroni``, or
-``benjamini-hochberg``.
-
-Independence-test caching
--------------------------
-
-Hyperparameter searches often reuse the same dataset and raw independence test.
-Generated NOTREKS hyperparameter configs therefore include an optional
-``independence_cache_dir``.  When present, the module checks that directory
-before computing tests.  Cache keys include a hash of the numeric dataset,
-dataset path and file hash when available, ``n``, ``d``, column names, raw test
-name, extra test parameters, and the cache implementation version.
-
-Each cache entry stores ``metadata.json``, ``all_test_results.csv``, and
-``accepted_pairs.csv``.  Raw test statistics and p-values are cached separately
-from the final accepted decisions.  Changing alpha or multiple-testing
-correction reuses the raw cache and recomputes accepted marginal independence
-pairs inside NOTREKS.  Changing test type, dimensions, data seed, or data
-contents produces a different raw cache entry.
-
-When a ground-truth graph is available to the helper functions, accepted
-independence pairs can be compared with graph-implied no-trek marginal
-independencies.  This diagnostic reports true-positive no-trek pairs,
-false-positive accepted pairs, false-negative no-trek pairs, precision, recall,
-and F1.  It should be read as a graph-implied no-trek diagnostic, not as a
-complete list of all true statistical marginal independencies in nonlinear or
-non-Gaussian settings.
-
-Tolerance
+Selection
 ---------
 
-``tol`` is a positive numerical stopping tolerance reserved for the future
-optimizer.  In the current local optimizer it controls relative objective
-improvement.  Later it may also refer to gradient norm, constraint residual, or
-a related stopping criterion.
+After validation finishes, select one setting per method family::
 
-Current optimizer support
--------------------------
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    select-validation-best \
+    --config configs/notreks/expanded/smoke_config.json \
+    --manifest configs/notreks/expanded/smoke_manifest.csv \
+    --out-dir configs/notreks/selected \
+    --tag smoke \
+    --primary-metric SHD_cpdag
 
-Implemented:
+The selector joins Benchpress metrics to the manifest by ``algorithm_id`` and
+writes ``<tag>_best_by_method_family.json`` plus
+``<tag>_validation_summary.csv``.
 
-* ``function_class = "linear"``
-* ``score`` in ``{"least_squares", "gaussian_likelihood"}``
-* ``dag_seq`` in
-  ``{"none", "exp", "logdet", "scc_power_iteration"}``
-* ``trek_seq`` in ``{"none", "exp", "log", "inv"}``
-* ``regularizer`` in ``{"none", "l1", "l2"}``
+DAG constraints
+---------------
 
-Not yet implemented in the optimizer:
+Implemented names:
 
-* ``dag_seq`` in ``{"log", "inv"}``
+* ``dag_seq="exp"``: NOTEARS exponential-trace acyclicity constraint from
+  Zheng et al. (2018), code reference https://github.com/xunzheng/notears.
+* ``dag_seq="logdet"``: DAGMA log-det acyclicity barrier from Bello et al.
+  (2022), code reference https://github.com/kevinsbello/dagma.
+* ``dag_seq="scc_power_iteration"``: experimental SCC-blockwise SDCD-style
+  detached Perron-gradient surrogate inspired by Nazaret et al. (2023), code
+  reference https://github.com/azizilab/sdcd/tree/master.
 
-Unsupported optimizer settings raise ``NotImplementedError`` rather than being
-silently mapped to another objective.
+For ``scc_power_iteration``, NOTREKS uses the smooth NOTEARS-style nonnegative
+proxy ``A = W * W`` with a zero diagonal, computes SCCs from the support of
+``A``, and applies blockwise power iteration inside nontrivial SCCs.  The old
+aliases ``power_iteration`` and ``spectral_radius`` are intentionally rejected.
+
+Independence tests and cache
+----------------------------
+
+NOTREKS supports ``none``, ``pearson``, ``spearman``, ``hsic``, ``dcor``,
+``gcastle_fisherz``, ``gcastle_g2``, and ``gcastle_chi2``.  The gCastle-backed
+tests call the low-level CI test with an empty conditioning set; this is not a
+full PC run.  Multiple-testing correction remains in NOTREKS.
+
+When ``independence_cache_dir`` is present in the manifest-resolved
+hyperparameters, raw test statistics and p-values are cached.  Changing alpha
+or correction reuses the raw cache and recomputes accepted pairs.  Diagnostics
+can compare accepted pairs with graph-implied no-trek marginal independence;
+that phrase is structural and should not be read as all statistical marginal
+independencies in every nonlinear or non-Gaussian regime.

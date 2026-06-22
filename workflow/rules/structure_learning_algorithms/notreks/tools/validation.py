@@ -6,6 +6,7 @@ import csv
 import hashlib
 import itertools
 import json
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,15 @@ class ValidationRun:
     validation_manifest_json: Path
     validation_joint_benchmarks_path: Path
     final_fixed_data: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ExpandedGrid:
+    config_path: Path
+    manifest_csv: Path
+    manifest_json: Path
+    joint_benchmarks_path: Path
+    algorithm_counts: dict[str, int]
 
 
 def _repo_relative(path: Path, repo_root: Path) -> str:
@@ -72,6 +82,108 @@ def _fixed_data_entries(fixed_data: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return entries
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else [value]
+
+
+def _cartesian_grid(grid: dict[str, Any]) -> list[dict[str, Any]]:
+    keys = list(grid)
+    values = [_as_list(grid[key]) for key in keys]
+    return [dict(zip(keys, item)) for item in itertools.product(*values)]
+
+
+def _data_spec_from_grid(experiment_id: str, data: dict[str, Any]) -> FixedDataSpec:
+    if data.get("type", "fixed") != "fixed":
+        raise ValueError("Only fixed data grids are supported")
+    if data.get("graph", "er") != "er":
+        raise ValueError("Only ER fixed-data generation is supported")
+    seeds = data.get("seeds", [101, 102])
+    if isinstance(seeds, int):
+        seeds = [seeds]
+    return FixedDataSpec(
+        run_name=safe_name(str(data.get("name", experiment_id))),
+        d=int(data.get("d", 10)),
+        n_values=(int(data.get("n", 500)),),
+        seeds=tuple(int(seed) for seed in seeds),
+        expected_degree=float(data.get("expected_degree", 2.0)),
+        standardized=bool(data.get("standardized", True)),
+        graph_seed=int(data.get("graph_seed", 1729)),
+        weight_seed=int(data.get("weight_seed", 2718)),
+    )
+
+
+def _with_ids(
+    method_family: str,
+    base_method: str,
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    prefix = "gcastle_lingam" if method_family == "gcastle_lingam" else method_family
+    result = []
+    for index, entry in enumerate(entries):
+        item = dict(entry)
+        item["id"] = item.get("id") or f"{prefix}__grid{index:03d}"
+        result.append(item)
+    return result
+
+
+def _notreks_defaults(entry: dict[str, Any], experiment_id: str) -> dict[str, Any]:
+    item = {
+        "function_class": "linear",
+        "score": "least_squares",
+        "dag_reg": 1.0,
+        "dag_s": 1.0,
+        "trek_seq": "exp",
+        "regularizer": "l1",
+        "independence_correction": "benjamini-hochberg",
+        "independence_alpha": 0.05,
+        "seed": 1,
+        "max_iter": 30000,
+        "lr": 0.0003,
+        "path_steps": 5,
+        "mu_init": 1.0,
+        "mu_factor": 0.1,
+        "tol": 1e-6,
+        "threshold": 0.1,
+        "timeout": None,
+        "init": "zero",
+        "power_iter_steps": 5,
+        "scc_threshold": 1e-8,
+        "independence_cache_dir": f"results/notreks_cache/{safe_name(experiment_id)}",
+    }
+    item.update(entry)
+    if "stage_iteration_budget" in item:
+        item["warm_iter"] = int(item.pop("stage_iteration_budget"))
+    else:
+        item["warm_iter"] = int(item["max_iter"])
+    item["checkpoint"] = int(item.get("checkpoint", max(int(item["max_iter"]) // 10, 1)))
+    item.pop("algorithm_id", None)
+    return item
+
+
+def _method_families_from_grid(grid: dict[str, Any], experiment_id: str) -> dict[str, tuple[str, list[dict[str, Any]]]]:
+    methods = grid.get("methods", {})
+    families: dict[str, tuple[str, list[dict[str, Any]]]] = {}
+    if methods.get("gcastle_pc", {}).get("enabled", False):
+        entries = _with_ids(
+            "gcastle_pc",
+            "gcastle_pc",
+            _cartesian_grid(methods["gcastle_pc"].get("grid", {})),
+        )
+        families["gcastle_pc"] = ("gcastle_pc", entries)
+    if methods.get("gcastle_direct_lingam", {}).get("enabled", False):
+        entries = _with_ids(
+            "gcastle_lingam",
+            "gcastle_direct_lingam",
+            _cartesian_grid(methods["gcastle_direct_lingam"].get("grid", {})),
+        )
+        families["gcastle_lingam"] = ("gcastle_direct_lingam", entries)
+    if methods.get("notreks", {}).get("enabled", False):
+        raw_entries = [_notreks_defaults(entry, experiment_id) for entry in _cartesian_grid(methods["notreks"].get("grid", {}))]
+        entries = _with_ids("notreks", "notreks", raw_entries)
+        families["notreks"] = ("notreks", entries)
+    return families
 
 
 def _pc_grid(preset: str) -> list[dict[str, Any]]:
@@ -264,6 +376,69 @@ def _write_manifest(rows: list[dict[str, str]], csv_path: Path, json_path: Path)
         writer.writeheader()
         writer.writerows(rows)
     json_path.write_text(json.dumps(_manifest_json_rows(rows), indent=2) + "\n")
+
+
+def expand_grid_config(
+    repo_root: Path,
+    grid_path: Path,
+    out_config: Path,
+    out_manifest_csv: Path,
+) -> ExpandedGrid:
+    grid = load_json(grid_path)
+    experiment_id = safe_name(str(grid["experiment_id"]))
+    benchmark_name = safe_name(str(grid.get("benchmark_name", f"{experiment_id}_validation")))
+    metadata_dir = out_config.parent / "_fixed_data" / experiment_id
+    fixed_ref = prepare_fixed_data(
+        repo_root,
+        metadata_dir,
+        _data_spec_from_grid(experiment_id, grid.get("data", {})),
+    )
+    fixed_metadata = _fixed_data_metadata(metadata_dir, fixed_ref)
+    shutil.rmtree(metadata_dir, ignore_errors=True)
+    families = _method_families_from_grid(grid, experiment_id)
+    algorithm_ids = [entry["id"] for _, entries in families.values() for entry in entries]
+    prefix = str(grid.get("filename_prefix", f"notreks/{experiment_id}/validation/")).strip("/")
+    if not prefix.endswith("/"):
+        prefix = f"{prefix}/"
+    config = {
+        "benchmark_setup": [
+            {
+                "title": benchmark_name,
+                "data": _fixed_data_entries(fixed_metadata),
+                "evaluation": _evaluation(algorithm_ids, prefix),
+            }
+        ],
+        "resources": {
+            "data": {},
+            "graph": {},
+            "parameters": {},
+            "structure_learning_algorithms": {},
+        },
+    }
+    resources = config["resources"]["structure_learning_algorithms"]
+    if "gcastle_pc" in families:
+        resources["gcastle_pc"] = families["gcastle_pc"][1]
+    if "gcastle_lingam" in families:
+        resources["gcastle_direct_lingam"] = families["gcastle_lingam"][1]
+    rows = _manifest_rows(Path(_repo_relative(out_config, repo_root)), "validation", families)
+    manifest_json = out_manifest_csv.with_suffix(".json")
+    _write_manifest(rows, out_manifest_csv, manifest_json)
+    if "notreks" in families:
+        resources["notreks"] = _short_notreks_entries(
+            families["notreks"][1],
+            manifest_json,
+            repo_root,
+        )
+    out_config.parent.mkdir(parents=True, exist_ok=True)
+    out_config.write_text(json.dumps(config, indent=2) + "\n")
+    joint_path = repo_root / "results/output" / benchmark_name / "benchmarks" / prefix / "joint_benchmarks.csv"
+    return ExpandedGrid(
+        config_path=out_config,
+        manifest_csv=out_manifest_csv,
+        manifest_json=manifest_json,
+        joint_benchmarks_path=joint_path,
+        algorithm_counts={family: len(entries) for family, (_, entries) in families.items()},
+    )
 
 
 def _short_notreks_entries(entries: list[dict[str, Any]], manifest_path: Path, repo_root: Path) -> list[dict[str, str]]:
@@ -484,6 +659,81 @@ def select_best_by_method_family(
     selection_dir.mkdir(parents=True, exist_ok=True)
     (selection_dir / "best_by_method_family.json").write_text(json.dumps(selected, indent=2) + "\n")
     pd.DataFrame(summary_rows).to_csv(selection_dir / "validation_summary.csv", index=False)
+    return selected
+
+
+def _joint_benchmarks_from_config(repo_root: Path, config_path: Path) -> Path:
+    config = load_json(config_path)
+    setup = config["benchmark_setup"][0]
+    title = setup["title"]
+    prefix = setup["evaluation"]["benchmarks"]["filename_prefix"]
+    return repo_root / "results/output" / title / "benchmarks" / prefix / "joint_benchmarks.csv"
+
+
+def select_best_from_config_manifest(
+    repo_root: Path,
+    config_path: Path,
+    manifest_path: Path,
+    out_dir: Path,
+    tag: str,
+    primary_metric: str = "SHD_cpdag",
+    primary_direction: str | None = None,
+    secondary_metric: str | None = None,
+    secondary_direction: str | None = None,
+) -> dict[str, Any]:
+    joint_path = _joint_benchmarks_from_config(repo_root, config_path)
+    if not joint_path.is_file():
+        raise FileNotFoundError(f"Missing validation Benchpress result: {joint_path}")
+    manifest = pd.read_csv(manifest_path)
+    results = pd.read_csv(joint_path)
+    id_column = _id_column(list(results.columns))
+    metric_column = resolve_metric_column(list(results.columns), primary_metric)
+    metric_direction = primary_direction or default_direction(metric_column)
+    secondary_column = resolve_metric_column(list(results.columns), secondary_metric) if secondary_metric else None
+    secondary_dir = secondary_direction or (default_direction(secondary_column) if secondary_column else None)
+    merged = results.merge(manifest, left_on=id_column, right_on="algorithm_id", how="inner")
+    if merged.empty:
+        raise ValueError(f"No validation rows matched algorithm ids in {manifest_path}")
+    merged[metric_column] = pd.to_numeric(merged[metric_column], errors="coerce")
+    selected: dict[str, Any] = {}
+    summary_rows = []
+    for family, group in merged.groupby("method_family"):
+        grouped = group.groupby("algorithm_id", dropna=False)
+        ranking = pd.DataFrame({"primary": grouped[metric_column].mean()})
+        if secondary_column:
+            group = group.copy()
+            group[secondary_column] = pd.to_numeric(group[secondary_column], errors="coerce")
+            ranking["secondary"] = group.groupby("algorithm_id", dropna=False)[secondary_column].mean()
+        ranking["algorithm_id"] = ranking.index.astype(str)
+        ranking = ranking.reset_index(drop=True)
+        sort_cols = ["primary"]
+        ascending = [metric_direction == "min"]
+        if secondary_column:
+            sort_cols.append("secondary")
+            ascending.append(secondary_dir == "min")
+        sort_cols.append("algorithm_id")
+        ascending.append(True)
+        ranking = ranking.sort_values(sort_cols, ascending=ascending, kind="mergesort")
+        best = ranking.iloc[0]
+        best_id = str(best["algorithm_id"])
+        manifest_row = manifest.loc[manifest["algorithm_id"] == best_id].iloc[0]
+        config = json.loads(manifest_row["hyperparameters_json"])
+        selected[family] = {
+            "selected_algorithm_id": best_id,
+            "method_family": family,
+            "base_method": manifest_row["base_method"],
+            "primary_metric_column": metric_column,
+            "primary_direction": metric_direction,
+            "primary_mean": float(best["primary"]),
+            "secondary_metric_column": secondary_column,
+            "secondary_direction": secondary_dir,
+            "secondary_mean": None if not secondary_column else float(best["secondary"]),
+            "config": config,
+        }
+        summary_rows.append(selected[family])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / f"{tag}_best_by_method_family.json").write_text(json.dumps(selected, indent=2) + "\n")
+    pd.DataFrame(summary_rows).to_csv(out_dir / f"{tag}_validation_summary.csv", index=False)
     return selected
 
 

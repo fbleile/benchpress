@@ -58,7 +58,7 @@ def test_validation_command_file_references_generated_config(tmp_path: Path) -> 
     assert commands[0].startswith('cd "')
     assert "&&" in commands[0]
     assert "snakemake" in text
-    assert "--use-apptainer" in text
+    assert "--use-singularity" in text
     assert "--snakefile workflow/Snakefile" in text
     assert "configs/validation_hparam_config.json" in text
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/dss/dsshome1/0C/ge86xim2/benchpress}"
-RUN_DIR="${RUN_DIR:-results/notreks_experiments/slurm_smoke}"
+RUN_DIR="${RUN_DIR:-results/notreks/smoke}"
 CONFIG="${CONFIG:-}"
 SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-${SLURM_CPUS_PER_TASK:-1}}"
 MICROMAMBA_BIN="${MICROMAMBA_BIN:-$HOME/bin/micromamba}"

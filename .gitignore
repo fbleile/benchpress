@@ -1,8 +1,8 @@
 *.class
 .devcontainer
-.snakemake
+.snakemake/
 .vscode
-results
+results/
 docs/build
 .DS_Store
 docs/source/_build
@@ -10,7 +10,13 @@ Rplots.pdf
 causal-cmd.log
 .java/
 .cache/
-__pycache__
+__pycache__/
 workflow/schemas/tmp.config.schema.json
 .RData
 .Rhistory
+*.pyc
+resources/data/mydatasets/notreks_*/
+resources/data/mydatasets/notreks_hparam/
+resources/adjmat/myadjmats/gnotreks_*.csv
+resources/adjmat/myadjmats/notreks_*.csv
+resources/adjmat/myadjmats/notreks_hparam_*.csv

@@ -58,12 +58,7 @@ def test_run_folder_uses_relative_paths_and_clean_metadata(tmp_path: Path) -> No
 
 def test_docs_reference_dag_constraints_and_literature() -> None:
     module_dir = Path(__file__).resolve().parents[1]
-    text = "\n".join(
-        [
-            (module_dir / "README.md").read_text(),
-            (module_dir / "docs/HOWTO_LOCAL_AND_SLURM.md").read_text(),
-        ]
-    )
+    text = (module_dir / "docs.rst").read_text()
     for token in [
         "dag_seq=\"exp\"",
         "NOTEARS",

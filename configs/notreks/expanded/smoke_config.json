@@ -1,0 +1,77 @@
+{
+  "benchmark_setup": [
+    {
+      "title": "notreks_smoke_validation",
+      "data": [
+        {
+          "graph_id": "gnotreks_smoke.csv",
+          "parameters_id": null,
+          "data_id": "notreks_smoke/s101.csv",
+          "seed_range": null
+        },
+        {
+          "graph_id": "gnotreks_smoke.csv",
+          "parameters_id": null,
+          "data_id": "notreks_smoke/s102.csv",
+          "seed_range": null
+        }
+      ],
+      "evaluation": {
+        "benchmarks": {
+          "filename_prefix": "notreks/smoke/validation/",
+          "show_seed": true,
+          "errorbar": true,
+          "errorbarh": false,
+          "scatter": true,
+          "path": true,
+          "text": false,
+          "ids": [
+            "gcastle_pc__grid000",
+            "gcastle_lingam__grid000",
+            "notreks__grid000",
+            "notreks__grid001"
+          ]
+        },
+        "graph_true_plots": false,
+        "graph_true_stats": true,
+        "graph_plots": []
+      }
+    }
+  ],
+  "resources": {
+    "data": {},
+    "graph": {},
+    "parameters": {},
+    "structure_learning_algorithms": {
+      "gcastle_pc": [
+        {
+          "variant": "stable",
+          "alpha": 0.05,
+          "ci_test": "fisherz",
+          "timeout": null,
+          "id": "gcastle_pc__grid000"
+        }
+      ],
+      "gcastle_direct_lingam": [
+        {
+          "measure": "pwling",
+          "thresh": 0.3,
+          "timeout": null,
+          "id": "gcastle_lingam__grid000"
+        }
+      ],
+      "notreks": [
+        {
+          "id": "notreks__grid000",
+          "alg_id": "n000",
+          "params_manifest": "configs/notreks/expanded/smoke_manifest.json"
+        },
+        {
+          "id": "notreks__grid001",
+          "alg_id": "n001",
+          "params_manifest": "configs/notreks/expanded/smoke_manifest.json"
+        }
+      ]
+    }
+  }
+}
