@@ -332,22 +332,25 @@ bash results/notreks_hparam_run/cmd.txt
 Each command runs one expanded template config through normal Benchpress and
 writes per-job status and logs under `jobs/<job_id>_<template_id>/`.
 
-## 8. Run hyperparameter jobs with SLURM JobFarm
+## 8. Run validation jobs on SLURM
 
 ```bash
-FRESH=1 \
-REPO_DIR=/dss/dsshome1/0C/ge86xim2/benchpress \
-CONDA_ENV=benchpress-notreks \
-CMD_FILE=results/notreks_hparam_run/cmd.txt \
-sbatch workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_jobfarm.sh
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  print-slurm-launch \
+  --run-dir results/notreks_experiments/slurm_smoke \
+  --preset smoke
 ```
 
-The SLURM script contains no benchmark logic. It only executes the same
-`cmd.txt` used locally. Set `CONDA_SH` if conda is installed somewhere other
-than `$HOME/miniconda3`.
+Smoke and true validation runs use the same SLURM mechanism: one driver job
+starts one Snakemake process, and Snakemake parallelizes Benchpress jobs. The
+smoke run only uses fewer datasets, fewer method variants, and smaller LRZ
+resources.
 
-Use `FRESH=0` (the default) to preserve JobFarm's resumable database and result
-state. Use `FRESH=1` only when intentionally starting a fresh JobFarm database.
+The smoke preset uses LRZ `serial_std` with 8 cores. The true run defaults to
+`serial_std` with 16 cores, with an optional `cm4_tiny` 32-core script when more
+single-node parallelism is justified. Do not start many concurrent Snakemake
+processes from JobFarm in one checkout; that can conflict over `.snakemake`
+locks and metadata.
 
 ## 9. Select best hyperparameters
 
@@ -417,8 +420,8 @@ BENCHPRESS_SKIP_CONTAINER_CHECK=1 snakemake \
 The bypass is only for local macOS development. Linux/SLURM benchmark runs
 should use the normal Apptainer/Singularity setup.
 
-For large final benchmarks, generate command lists that call the same normal
-Benchpress configs and submit them through the same JobFarm wrapper.
+For large final benchmarks, use the same single-Snakemake SLURM driver pattern
+as validation, with a final benchmark config passed through `CONFIG=...`.
 
 ## 12. Tune/test separation
 
@@ -536,8 +539,8 @@ Example algorithm field:
 
 The current NOTREKS-local workflow keeps tooling under the module directory,
 uses Benchpress fixed-data resources for shared datasets, writes run-relative
-manifest paths where possible, and runs the same `cmd.txt` locally or through
-JobFarm. Independence caching is enabled for generated hyperparameter configs.
+manifest paths where possible, and uses one Snakemake driver process on SLURM.
+Independence caching is enabled for generated hyperparameter configs.
 
 Before a first SLURM smoke, verify:
 
@@ -552,12 +555,12 @@ Wrong working directory:
 : Run commands from the Benchpress repository root so relative config and
   resource paths resolve as expected.
 
-`cmd.txt` missing or empty:
-: Re-run `prepare-hparam`. The SLURM script exits before loading JobFarm when
-  the command file is missing or empty.
+SLURM config missing:
+: Re-run `prepare-experiment` or `prepare-validation`. The Snakemake driver
+  fails before loading the environment when `CONFIG` is missing.
 
 Conda environment not found:
-: Set `CONDA_ENV` and, if needed, `CONDA_SH` when submitting.
+: Set `CONDA_ENV` and, if needed, `MICROMAMBA_BIN` when submitting.
 
 Fixed data missing:
 : Re-run `prepare-hparam` from the Benchpress repository root. Check
@@ -571,5 +574,6 @@ Failed jobs:
 : Inspect `jobs/<job>/status.json`, `stdout.log`, and `stderr.log`. Run the
   corresponding line from `cmd.txt` locally for debugging.
 
-Resume JobFarm:
-: Submit with `FRESH=0` so existing JobFarm state is retained.
+Resume Snakemake:
+: Re-submit the same driver command after fixing the failure. Snakemake reuses
+  valid completed outputs.

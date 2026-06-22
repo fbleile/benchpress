@@ -307,6 +307,36 @@ def prepare_experiment_command(args: argparse.Namespace) -> None:
     prepare_validation_command(argparse.Namespace(out=args.out, preset=preset))
 
 
+def print_slurm_launch_command(args: argparse.Namespace) -> None:
+    run_dir = args.run_dir
+    config = run_dir / "configs/validation_hparam_config.json"
+    if args.preset == "smoke":
+        script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_smoke.sh")
+        cores = 8
+        cluster = "serial"
+    elif args.preset == "true_serial":
+        script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_true.sh")
+        cores = 16
+        cluster = "serial"
+    elif args.preset == "true_cm4_tiny":
+        script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_cm4_tiny_true.sh")
+        cores = 32
+        cluster = "cm4"
+    else:
+        raise ValueError(f"Unknown SLURM launch preset: {args.preset}")
+    log_dir = run_dir / "logs/slurm"
+    print(f"mkdir -p {log_dir}")
+    print(
+        f"RUN_DIR={run_dir} \\\n"
+        f"CONFIG={config} \\\n"
+        f"SNAKEMAKE_CORES={cores} \\\n"
+        f"sbatch --clusters={cluster} "
+        f"-o {log_dir}/%x-%j.out "
+        f"-e {log_dir}/%x-%j.err "
+        f"{script}"
+    )
+
+
 def select_validation_command(args: argparse.Namespace) -> None:
     selected = select_best_by_method_family(
         _resolve(args.run_dir),
@@ -414,6 +444,15 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_experiment.add_argument("--grid", type=Path, required=True)
     prepare_experiment.add_argument("--out", type=Path, required=True)
     prepare_experiment.set_defaults(func=prepare_experiment_command)
+
+    slurm_launch = subparsers.add_parser("print-slurm-launch")
+    slurm_launch.add_argument("--run-dir", type=Path, required=True)
+    slurm_launch.add_argument(
+        "--preset",
+        choices=["smoke", "true_serial", "true_cm4_tiny"],
+        required=True,
+    )
+    slurm_launch.set_defaults(func=print_slurm_launch_command)
 
     select_validation = subparsers.add_parser("select-validation-best")
     select_validation.add_argument("--run-dir", type=Path, required=True)

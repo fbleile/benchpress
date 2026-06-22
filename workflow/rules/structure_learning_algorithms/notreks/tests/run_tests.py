@@ -55,8 +55,10 @@ def main() -> None:
         jobfarm_tests.test_validation_command_file_references_generated_config(
             path / "validation-cmd"
         )
-        jobfarm_tests.test_slurm_script_rejects_missing_command_file(path / "slurm")
-        jobfarm_tests.test_slurm_script_defaults_to_run_dir_command_file()
+        jobfarm_tests.test_snakemake_driver_rejects_missing_config()
+        jobfarm_tests.test_slurm_resource_presets_are_lrz_sized()
+        jobfarm_tests.test_snakemake_driver_runs_one_snakemake_process()
+        jobfarm_tests.test_print_slurm_launch_uses_run_logs_and_driver(path / "launch")
         path_tests.test_run_folder_uses_relative_paths_and_clean_metadata(path / "paths")
         path_tests.test_docs_reference_dag_constraints_and_literature()
         for name in ("selection", "selection-missing", "selection-tie", "selection-move", "inject"):

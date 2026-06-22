@@ -132,6 +132,9 @@ results/notreks_experiments/slurm_smoke/configs/validation_hparam_manifest.json
 results/notreks_experiments/slurm_smoke/cmd.txt
 ```
 
+`cmd.txt` is kept as a readable local command record. The SLURM submission path
+uses the Snakemake driver scripts below, not a JobFarm command list.
+
 ## 8. Dry-run the smoke config
 
 On the cluster, use the normal Benchpress container path:
@@ -150,17 +153,26 @@ container option supported by that checkout.
 ## 9. Submit the SLURM smoke
 
 ```bash
+mkdir -p results/notreks_experiments/slurm_smoke/logs/slurm
 RUN_DIR=results/notreks_experiments/slurm_smoke \
 CONFIG=results/notreks_experiments/slurm_smoke/configs/validation_hparam_config.json \
-CMD_FILE=results/notreks_experiments/slurm_smoke/cmd.txt \
-FRESH=1 \
-sbatch workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_jobfarm.sh
+SNAKEMAKE_CORES=8 \
+sbatch --clusters=serial \
+  -o results/notreks_experiments/slurm_smoke/logs/slurm/%x-%j.out \
+  -e results/notreks_experiments/slurm_smoke/logs/slurm/%x-%j.err \
+  workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_smoke.sh
 ```
 
 The job script currently sets SLURM mail notifications to
 `f.bleile@tum.de`. Edit the `#SBATCH --mail-user=...` header in
-`workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_jobfarm.sh`
+`workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial_smoke.sh`
 if the cluster run should notify a different address.
+
+Smoke and true use the same mechanism: one SLURM job starts one Snakemake
+process, and Snakemake parallelizes Benchpress jobs. The smoke grid only uses
+fewer datasets, fewer hyperparameter variants, and smaller SLURM resources.
+This avoids `.snakemake` lock and metadata conflicts from running many
+independent Snakemake processes at once.
 
 The script is configurable through environment variables. The most important
 ones are:
@@ -168,17 +180,31 @@ ones are:
 ```bash
 REPO_DIR=/path/to/benchpress
 CONDA_ENV=benchpress-notreks
+MICROMAMBA_BIN=$HOME/bin/micromamba
 RUN_DIR=results/notreks_experiments/slurm_smoke
 CONFIG=results/notreks_experiments/slurm_smoke/configs/validation_hparam_config.json
-CMD_FILE=results/notreks_experiments/slurm_smoke/cmd.txt
-FRESH=1
+SNAKEMAKE_CORES=8
 ```
+
+LRZ resource guidance: smoke uses `serial_std` with 8 cores. The true grid can
+use `serial_std` with 16 cores, or `cm4_tiny` with 32 cores if more local
+parallelism is justified. Do not use `cm4_std` or multi-node allocations for
+the smoke run.
 
 ## 10. Monitor the smoke run
 
 ```bash
-squeue -u "$USER"
+squeue -u "$USER" --clusters=serial,cm4
 tail -f results/notreks_experiments/slurm_smoke/logs/slurm/*.out
+```
+
+Cancel/check commands:
+
+```bash
+scancel --clusters=serial <jobid>
+scancel --clusters=cm4 <jobid>
+scontrol -M serial show job <jobid>
+scontrol -M cm4 show job <jobid>
 ```
 
 If the run fails, keep the run directory and logs. Do not delete the fixed data,

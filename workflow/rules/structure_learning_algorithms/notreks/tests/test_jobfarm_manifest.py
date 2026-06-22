@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -64,29 +63,68 @@ def test_validation_command_file_references_generated_config(tmp_path: Path) -> 
     assert "configs/validation_hparam_config.json" in text
 
 
-def test_slurm_script_rejects_missing_command_file(tmp_path: Path) -> None:
-    script = MODULE_DIR / "slurm/notreks_jobfarm.sh"
-    run_dir = tmp_path / "run"
-    real_smoke_log = REPO_ROOT / "results/notreks_experiments/slurm_smoke/logs/slurm/jobfarm.local.out"
-    before = real_smoke_log.read_text() if real_smoke_log.exists() else None
+def test_snakemake_driver_rejects_missing_config() -> None:
+    script = MODULE_DIR / "slurm/notreks_snakemake_driver_common.sh"
     completed = subprocess.run(
         ["bash", str(script)],
         cwd=REPO_ROOT,
-        env={
-            **os.environ,
-            "REPO_DIR": str(REPO_ROOT),
-            "RUN_DIR": str(run_dir),
-            "CMD_FILE": str(tmp_path / "missing.txt"),
-        },
         capture_output=True,
         text=True,
     )
-    assert completed.returncode != 0
-    assert "CMD_FILE is missing or empty" in completed.stderr
-    after = real_smoke_log.read_text() if real_smoke_log.exists() else None
-    assert after == before
+    assert completed.returncode == 2
+    assert "CONFIG must point to a Benchpress config file" in completed.stderr
 
 
-def test_slurm_script_defaults_to_run_dir_command_file() -> None:
-    script = (MODULE_DIR / "slurm/notreks_jobfarm.sh").read_text()
-    assert 'CMD_FILE="${CMD_FILE:-${RUN_DIR}/cmd.txt}"' in script
+def test_slurm_resource_presets_are_lrz_sized() -> None:
+    smoke = (MODULE_DIR / "slurm/notreks_driver_serial_smoke.sh").read_text()
+    serial_true = (MODULE_DIR / "slurm/notreks_driver_serial_true.sh").read_text()
+    cm4_true = (MODULE_DIR / "slurm/notreks_driver_cm4_tiny_true.sh").read_text()
+    compat = (MODULE_DIR / "slurm/notreks_jobfarm.sh").read_text()
+    all_scripts = "\n".join([smoke, serial_true, cm4_true, compat])
+
+    assert "#SBATCH --partition=serial_std" in smoke
+    assert "#SBATCH --clusters=serial" in smoke
+    assert "#SBATCH --cpus-per-task=8" in smoke
+    assert "#SBATCH --partition=serial_std" in serial_true
+    assert "#SBATCH --cpus-per-task=16" in serial_true
+    assert "#SBATCH --partition=cm4_tiny" in cm4_true
+    assert "#SBATCH --cpus-per-task=32" in cm4_true
+    assert "#SBATCH --nodes=2" not in all_scripts
+    assert "#SBATCH --ntasks=200" not in all_scripts
+    assert "cm4_std" not in all_scripts
+
+
+def test_snakemake_driver_runs_one_snakemake_process() -> None:
+    script = (MODULE_DIR / "slurm/notreks_snakemake_driver_common.sh").read_text()
+    assert script.count("\nsnakemake \\") == 1
+    assert "--use-apptainer" in script
+    assert "--configfile \"$CONFIG\"" in script
+    assert "module load \"$APPTAINER_MODULE\"" in script
+    assert "micromamba activate \"$CONDA_ENV\"" in script
+
+
+def test_print_slurm_launch_uses_run_logs_and_driver(tmp_path: Path) -> None:
+    run_dir = tmp_path / "slurm_smoke"
+    completed = subprocess.run(
+        [
+            "python",
+            str(MODULE_DIR / "tools/cli.py"),
+            "print-slurm-launch",
+            "--run-dir",
+            str(run_dir),
+            "--preset",
+            "smoke",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    output = completed.stdout
+    assert f"RUN_DIR={run_dir}" in output
+    assert f"CONFIG={run_dir}/configs/validation_hparam_config.json" in output
+    assert "SNAKEMAKE_CORES=8" in output
+    assert "sbatch --clusters=serial" in output
+    assert f"-o {run_dir}/logs/slurm/%x-%j.out" in output
+    assert f"-e {run_dir}/logs/slurm/%x-%j.err" in output
+    assert "notreks_driver_serial_smoke.sh" in output

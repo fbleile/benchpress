@@ -29,7 +29,7 @@ slurm_true
 workflow/rules/structure_learning_algorithms/notreks/
   configs/environment/       conda environment files
   docs/                      local, SLURM, bootstrap, and layout docs
-  slurm/                     SLURM/JobFarm wrapper
+  slurm/                     SLURM Snakemake driver scripts
   tools/                     config generation, selection, cache helpers
   tests/                     NOTREKS tests
 ```
@@ -47,6 +47,7 @@ results/notreks_experiments/<run_name>/
     validation_hparam_manifest.csv
     validation_hparam_manifest.json
     final_benchmark_config.json
+  cmd.txt                         legacy/local command record
   independence_cache/
   selection/
     best_by_method_family.json
@@ -70,6 +71,17 @@ results/output/<run_name>_final/
 
 The validation manifest maps short algorithm IDs, such as `notreks__grid003`,
 back to full hyperparameters. Keep the manifest with the generated config.
+
+SLURM logs should be written under the run directory, for example:
+
+```text
+results/notreks_experiments/slurm_smoke/logs/slurm/
+results/notreks_experiments/slurm_true/logs/slurm/
+```
+
+The SLURM workflow uses one driver job running one Snakemake process. The
+generated `cmd.txt` is useful for inspection and local debugging, but it is not
+the active JobFarm input for validation runs.
 
 ## Fixed data
 

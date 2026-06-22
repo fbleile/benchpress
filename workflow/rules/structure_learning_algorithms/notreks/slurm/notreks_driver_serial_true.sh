@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-#SBATCH -o slurm_logs/notreks-compat.%N.%j.out
-#SBATCH -J NotreksCompat
+#SBATCH -o slurm_logs/notreks-true-serial.%N.%j.out
+#SBATCH -J NotreksTrueSerial
 #SBATCH --mail-user=f.bleile@tum.de
 #SBATCH --mail-type=END,FAIL
 #SBATCH --get-user-env
 #SBATCH --export=ALL
 #SBATCH --clusters=serial
 #SBATCH --partition=serial_std
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=16000M
-#SBATCH --time=02:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64000M
+#SBATCH --time=24:00:00
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "WARNING: notreks_jobfarm.sh is deprecated; running the single Snakemake driver instead." >&2
-export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-8}"
+export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-16}"
 exec "$SCRIPT_DIR/notreks_snakemake_driver_common.sh"
