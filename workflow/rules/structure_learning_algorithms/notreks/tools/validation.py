@@ -177,10 +177,7 @@ def _notreks_defaults(entry: dict[str, Any], experiment_id: str) -> dict[str, An
         "independence_cache_dir": f"results/notreks_cache/{safe_name(experiment_id)}",
     }
     item.update(entry)
-    if "stage_iteration_budget" in item:
-        item["warm_iter"] = int(item.pop("stage_iteration_budget"))
-    else:
-        item["warm_iter"] = int(item["max_iter"])
+    item["warm_iter"] = int(item["max_iter"])
     item["checkpoint"] = int(item.get("checkpoint", max(int(item["max_iter"]) // 10, 1)))
     item.pop("algorithm_id", None)
     return item

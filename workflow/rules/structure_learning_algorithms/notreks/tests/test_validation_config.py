@@ -71,7 +71,6 @@ def _simple_cartesian_grid(repo: Path) -> Path:
                             "threshold": [0.1],
                             "max_iter": [3000],
                             "path_steps": [5],
-                            "stage_iteration_budget": [3000],
                             "power_iter_steps": [5],
                             "timeout": [None],
                         },

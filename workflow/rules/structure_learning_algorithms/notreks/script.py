@@ -136,7 +136,7 @@ def _print_config_sanity(cfg: NotreksConfig) -> None:
         "NOTREKS run config: "
         f"id={cfg.algorithm_id}, threshold={cfg.threshold}, init={cfg.init}, "
         f"score={cfg.score}, dag_reg={cfg.dag_reg}, trek_seq={cfg.trek_seq}, trek_reg={cfg.trek_reg}, "
-        f"stage_iter_policy=max_every_stage, stage_iteration_budget={cfg.max_iter}, "
+        f"stage_iter_policy=max_every_stage, max_iter={cfg.max_iter}, path_steps={cfg.path_steps}, "
         f"power_iter_steps={cfg.power_iter_steps}, scc_threshold={cfg.scc_threshold}, "
         f"independence_cache_dir={cfg.independence_cache_dir}"
     )

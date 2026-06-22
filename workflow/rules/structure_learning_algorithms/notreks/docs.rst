@@ -97,6 +97,13 @@ compatibility, so use ``--use-singularity`` locally and on LRZ::
     --snakefile workflow/Snakefile \
     --configfile configs/notreks/expanded/smoke_config.json
 
+Manual NOTREKS example
+----------------------
+
+A tiny direct Python example can be run without Snakemake::
+
+  python workflow/rules/structure_learning_algorithms/notreks/tests/manual_notreks_example.py
+
 SLURM modes
 -----------
 

@@ -44,7 +44,6 @@
         "threshold": [0.1],
         "max_iter": [30000],
         "path_steps": [5],
-        "stage_iteration_budget": [30000],
         "power_iter_steps": [5],
         "timeout": [null]
       }
