@@ -15,4 +15,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-8}"
-exec "$SCRIPT_DIR/notreks_snakemake_driver_common.sh"
+COMMON_DRIVER="${SCRIPT_DIR}/notreks_snakemake_driver_common.sh"
+if [[ ! -f "$COMMON_DRIVER" && -n "${REPO_DIR:-}" ]]; then
+  COMMON_DRIVER="${REPO_DIR}/workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_snakemake_driver_common.sh"
+fi
+if [[ ! -f "$COMMON_DRIVER" && -n "${SLURM_SUBMIT_DIR:-}" ]]; then
+  COMMON_DRIVER="${SLURM_SUBMIT_DIR}/workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_snakemake_driver_common.sh"
+fi
+if [[ ! -f "$COMMON_DRIVER" ]]; then
+  echo "ERROR: common NOTREKS driver not found: $COMMON_DRIVER" >&2
+  exit 2
+fi
+# shellcheck source=/dev/null
+source "$COMMON_DRIVER"

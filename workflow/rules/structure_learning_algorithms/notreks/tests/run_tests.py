@@ -58,6 +58,10 @@ def main() -> None:
         jobfarm_tests.test_snakemake_driver_rejects_missing_config()
         jobfarm_tests.test_slurm_resource_presets_are_lrz_sized()
         jobfarm_tests.test_snakemake_driver_runs_one_snakemake_process()
+        jobfarm_tests.test_driver_wrappers_find_common_driver_from_spool_dir(
+            path / "slurm-spool"
+        )
+        jobfarm_tests.test_driver_wrappers_do_not_use_bare_common_driver_source()
         jobfarm_tests.test_print_slurm_launch_uses_run_logs_and_driver(path / "launch")
         path_tests.test_run_folder_uses_relative_paths_and_clean_metadata(path / "paths")
         path_tests.test_docs_reference_dag_constraints_and_literature()

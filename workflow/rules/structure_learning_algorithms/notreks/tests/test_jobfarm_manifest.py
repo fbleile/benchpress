@@ -101,6 +101,46 @@ def test_snakemake_driver_runs_one_snakemake_process() -> None:
     assert "--configfile \"$CONFIG\"" in script
     assert "module load \"$APPTAINER_MODULE\"" in script
     assert "micromamba activate \"$CONDA_ENV\"" in script
+    assert "SCRIPT_DIR=${SCRIPT_DIR:-}" in script
+    assert "REPO_ROOT=${REPO_ROOT:-}" in script
+
+
+def test_driver_wrappers_find_common_driver_from_spool_dir(tmp_path: Path) -> None:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    for script_name in (
+        "notreks_driver_serial_smoke.sh",
+        "notreks_driver_serial_true.sh",
+        "notreks_driver_cm4_tiny_true.sh",
+    ):
+        copied_script = tmp_path / script_name
+        copied_script.write_text((MODULE_DIR / "slurm" / script_name).read_text())
+        completed = subprocess.run(
+            ["bash", str(copied_script)],
+            cwd=tmp_path,
+            env={
+                "REPO_DIR": str(REPO_ROOT),
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(Path.home()),
+            },
+            capture_output=True,
+            text=True,
+        )
+        assert completed.returncode == 2
+        assert "CONFIG must point to a Benchpress config file" in completed.stderr
+        assert "common NOTREKS driver not found" not in completed.stderr
+
+
+def test_driver_wrappers_do_not_use_bare_common_driver_source() -> None:
+    for script_name in (
+        "notreks_driver_serial_smoke.sh",
+        "notreks_driver_serial_true.sh",
+        "notreks_driver_cm4_tiny_true.sh",
+        "notreks_jobfarm.sh",
+    ):
+        script = (MODULE_DIR / "slurm" / script_name).read_text()
+        assert "source notreks_snakemake_driver_common.sh" not in script
+        assert 'source "$COMMON_DRIVER"' in script
+        assert 'COMMON_DRIVER="${SCRIPT_DIR}/notreks_snakemake_driver_common.sh"' in script
 
 
 def test_print_slurm_launch_uses_run_logs_and_driver(tmp_path: Path) -> None:

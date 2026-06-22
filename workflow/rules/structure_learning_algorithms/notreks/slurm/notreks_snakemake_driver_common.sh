@@ -19,6 +19,7 @@ if [[ ! -d "$REPO_DIR" ]]; then
 fi
 
 cd "$REPO_DIR"
+REPO_ROOT="$PWD"
 
 if [[ ! -f "$CONFIG" ]]; then
   echo "ERROR: CONFIG does not exist: $CONFIG" >&2
@@ -28,6 +29,14 @@ fi
 mkdir -p "$RUN_DIR/logs/slurm"
 RUN_LOG="$RUN_DIR/logs/slurm/driver-${SLURM_JOB_ID:-local}.log"
 exec > >(tee -a "$RUN_LOG") 2>&1
+
+echo "NOTREKS Snakemake driver configuration"
+echo "  SCRIPT_DIR=${SCRIPT_DIR:-}"
+echo "  REPO_ROOT=${REPO_ROOT:-}"
+echo "  PWD=$(pwd)"
+echo "  RUN_DIR=${RUN_DIR:-}"
+echo "  CONFIG=${CONFIG:-}"
+echo "  SNAKEMAKE_CORES=${SNAKEMAKE_CORES:-}"
 
 module load "$APPTAINER_MODULE"
 
