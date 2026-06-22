@@ -9,9 +9,9 @@
 #SBATCH --partition=cm4_std
 #SBATCH --qos=cm4_std
 #SBATCH --nodes=2
-#SBATCH --ntasks=200
+#SBATCH --ntasks=40
 #SBATCH --cpus-per-task=2
-#SBATCH --time=24:00:00
+#SBATCH --time=4:00:00
 
 set -euo pipefail
 
