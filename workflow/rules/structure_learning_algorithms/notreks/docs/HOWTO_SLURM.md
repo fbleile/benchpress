@@ -57,6 +57,12 @@ TypeError: unsupported operand type(s) for |: 'NoneType' and 'type'
 recreate or update the cluster environment from the repository environment
 file.
 
+Snakemake 7 uses the older container flag `--use-singularity`, while Snakemake
+8/9 can use `--use-apptainer`. LRZ provides Apptainer. The NOTREKS SLURM driver
+therefore creates a run-local `singularity -> apptainer` shim under
+`results/notreks_experiments/<run>/bin/` when Snakemake 7 is active and no
+`singularity` binary is already on `PATH`.
+
 Print the exact submit command:
 
 ```bash

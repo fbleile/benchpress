@@ -97,7 +97,12 @@ def test_slurm_resource_presets_are_lrz_sized() -> None:
 def test_snakemake_driver_runs_one_snakemake_process() -> None:
     script = (MODULE_DIR / "slurm/notreks_snakemake_driver_common.sh").read_text()
     assert script.count("\nsnakemake \\") == 1
-    assert "--use-apptainer" in script
+    assert '"$CONTAINER_FLAG"' in script
+    assert 'CONTAINER_FLAG="--use-apptainer"' in script
+    assert 'CONTAINER_FLAG="--use-singularity"' in script
+    assert 'SMK_MAJOR="${SMK_VER%%.*}"' in script
+    assert 'if [[ "$SMK_MAJOR" -ge 8 ]]' in script
+    assert "--use-apptainer \\" not in script
     assert "--configfile \"$CONFIG\"" in script
     assert "module load \"$APPTAINER_MODULE\"" in script
     assert 'SQUASHFS_MODULE="${SQUASHFS_MODULE:-squashfs/4.6.1}"' in script
@@ -107,6 +112,10 @@ def test_snakemake_driver_runs_one_snakemake_process() -> None:
     assert "Try manually: module load $SQUASHFS_MODULE; which mksquashfs" in script
     assert "SMK_VER=\"$(snakemake --version)\"" in script
     assert "Snakemake 9 is incompatible with Python 3.7 Benchpress gCastle containers" in script
+    assert 'SHIM_DIR="${RUN_DIR}/bin"' in script
+    assert 'ln -sf "$(command -v apptainer)" "${SHIM_DIR}/singularity"' in script
+    assert 'export PATH="${PWD}/${SHIM_DIR}:$PATH"' in script
+    assert "singularity --version || true" in script
     assert "micromamba activate \"$CONDA_ENV\"" in script
     assert "SCRIPT_DIR=${SCRIPT_DIR:-}" in script
     assert "REPO_ROOT=${REPO_ROOT:-}" in script

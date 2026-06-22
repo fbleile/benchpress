@@ -147,6 +147,10 @@ TypeError: unsupported operand type(s) for |: 'NoneType' and 'type'
 then the Snakemake version is too new for the gCastle container. Use the pinned
 version in `benchpress-notreks.yml`.
 
+Snakemake 7 uses `--use-singularity`, not `--use-apptainer`. LRZ provides
+Apptainer, so the NOTREKS SLURM driver creates a run-local
+`singularity -> apptainer` shim if `singularity` is missing from `PATH`.
+
 Clean recreation with micromamba:
 
 ```bash

@@ -85,8 +85,23 @@ if [[ "$SMK_VER" == 9.* ]] && grep -Eq '"gcastle_(pc|direct_lingam)"' "$CONFIG";
   echo "ERROR: Snakemake 9 is incompatible with Python 3.7 Benchpress gCastle containers. Use the pinned environment." >&2
   exit 3
 fi
+SMK_MAJOR="${SMK_VER%%.*}"
+if [[ "$SMK_MAJOR" -ge 8 ]]; then
+  CONTAINER_FLAG="--use-apptainer"
+else
+  CONTAINER_FLAG="--use-singularity"
+  if ! command -v singularity >/dev/null 2>&1; then
+    SHIM_DIR="${RUN_DIR}/bin"
+    mkdir -p "$SHIM_DIR"
+    ln -sf "$(command -v apptainer)" "${SHIM_DIR}/singularity"
+    export PATH="${PWD}/${SHIM_DIR}:$PATH"
+  fi
+fi
 echo "  apptainer=$(command -v apptainer)"
 apptainer --version
+echo "  container_flag=$CONTAINER_FLAG"
+echo "  singularity=$(command -v singularity || true)"
+singularity --version || true
 echo "  RUN_DIR=$RUN_DIR"
 echo "  CONFIG=$CONFIG"
 echo "  SNAKEMAKE_CORES=$SNAKEMAKE_CORES"
@@ -95,6 +110,6 @@ echo "  log=$RUN_LOG"
 
 snakemake \
   --cores "$SNAKEMAKE_CORES" \
-  --use-apptainer \
+  "$CONTAINER_FLAG" \
   --snakefile workflow/Snakefile \
   --configfile "$CONFIG"

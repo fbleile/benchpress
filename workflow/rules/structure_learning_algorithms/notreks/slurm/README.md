@@ -40,6 +40,11 @@ its Python package into containerized `script:` jobs. Snakemake 9 uses Python
 3.10+ syntax and fails in that container. Use the pinned `snakemake=7.32.4`
 environment from `benchpress-notreks.yml`.
 
+Snakemake 7 requires `--use-singularity`. LRZ provides Apptainer, so the common
+driver creates a run-local `singularity -> apptainer` shim under
+`$RUN_DIR/bin/` if needed. Snakemake 8/9 can use `--use-apptainer`, but
+Snakemake 9 remains incompatible with the Python 3.7 gCastle container.
+
 Smoke submission example:
 
 ```bash
