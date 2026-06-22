@@ -8,6 +8,7 @@ SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-${SLURM_CPUS_PER_TASK:-1}}"
 MICROMAMBA_BIN="${MICROMAMBA_BIN:-$HOME/bin/micromamba}"
 CONDA_ENV="${CONDA_ENV:-benchpress-notreks}"
 APPTAINER_MODULE="${APPTAINER_MODULE:-apptainer/1.3.4}"
+SQUASHFS_MODULE="${SQUASHFS_MODULE:-squashfs/4.6.1}"
 
 if [[ -z "$CONFIG" ]]; then
   echo "ERROR: CONFIG must point to a Benchpress config file" >&2
@@ -39,6 +40,24 @@ echo "  CONFIG=${CONFIG:-}"
 echo "  SNAKEMAKE_CORES=${SNAKEMAKE_CORES:-}"
 
 module load "$APPTAINER_MODULE"
+module load "$SQUASHFS_MODULE"
+
+if ! command -v apptainer >/dev/null 2>&1; then
+  echo "ERROR: apptainer not found after module load $APPTAINER_MODULE" >&2
+  exit 3
+fi
+
+if ! command -v mksquashfs >/dev/null 2>&1; then
+  echo "ERROR: mksquashfs not found after module load $SQUASHFS_MODULE. Apptainer cannot convert Docker images to SIF." >&2
+  echo "PATH=$PATH" >&2
+  echo "Try manually: module load $SQUASHFS_MODULE; which mksquashfs" >&2
+  exit 3
+fi
+
+echo "apptainer=$(command -v apptainer)"
+apptainer --version
+echo "mksquashfs=$(command -v mksquashfs)"
+mksquashfs -version || true
 
 if [[ ! -x "$MICROMAMBA_BIN" ]]; then
   echo "ERROR: MICROMAMBA_BIN is not executable: $MICROMAMBA_BIN" >&2

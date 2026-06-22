@@ -100,6 +100,11 @@ def test_snakemake_driver_runs_one_snakemake_process() -> None:
     assert "--use-apptainer" in script
     assert "--configfile \"$CONFIG\"" in script
     assert "module load \"$APPTAINER_MODULE\"" in script
+    assert 'SQUASHFS_MODULE="${SQUASHFS_MODULE:-squashfs/4.6.1}"' in script
+    assert "module load \"$SQUASHFS_MODULE\"" in script
+    assert "command -v mksquashfs" in script
+    assert "Apptainer cannot convert Docker images to SIF" in script
+    assert "Try manually: module load $SQUASHFS_MODULE; which mksquashfs" in script
     assert "micromamba activate \"$CONDA_ENV\"" in script
     assert "SCRIPT_DIR=${SCRIPT_DIR:-}" in script
     assert "REPO_ROOT=${REPO_ROOT:-}" in script

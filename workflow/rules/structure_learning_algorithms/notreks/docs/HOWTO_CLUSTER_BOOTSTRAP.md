@@ -52,6 +52,7 @@ module avail
 module avail anaconda
 module avail miniconda
 module avail apptainer
+module avail squashfs
 module avail singularity
 module avail R
 ```
@@ -61,6 +62,7 @@ Load the matching modules for the cluster. Examples:
 ```bash
 module load anaconda
 module load apptainer
+module load squashfs
 ```
 
 or:
@@ -71,6 +73,19 @@ module load singularity
 ```
 
 Use the actual module names reported by `module avail`.
+
+On LRZ, Apptainer image pulls require `mksquashfs`. Load `squashfs/4.6.1`
+together with `apptainer/1.3.4`. The NOTREKS SLURM driver does this
+automatically, but this manual diagnostic is useful before submitting:
+
+```bash
+module load apptainer/1.3.4
+module load squashfs/4.6.1
+which apptainer
+apptainer --version
+which mksquashfs
+mksquashfs -version
+```
 
 ## 5. Create the conda/mamba environment
 
@@ -108,11 +123,15 @@ All NOTREKS tests passed
 Also verify the container runtime for final cluster runs:
 
 ```bash
-apptainer --version || singularity --version
+module load apptainer/1.3.4
+module load squashfs/4.6.1
+apptainer --version
+mksquashfs -version
 ```
 
-If neither Apptainer nor Singularity is available, stop and fix the cluster
-environment before running the final benchmark.
+If Apptainer or `mksquashfs` is unavailable, stop and fix the cluster
+environment before running the final benchmark. Without `mksquashfs`, Apptainer
+cannot convert Docker images to SIF on LRZ.
 
 ## 7. Prepare the SLURM smoke experiment
 

@@ -31,6 +31,19 @@ snakemake -n \
   --configfile results/notreks_experiments/slurm_smoke/configs/validation_hparam_config.json
 ```
 
+On LRZ, Apptainer image pulls require `mksquashfs`. The NOTREKS SLURM driver
+loads both `apptainer/1.3.4` and `squashfs/4.6.1` before Snakemake starts. To
+diagnose the module setup manually:
+
+```bash
+module load apptainer/1.3.4
+module load squashfs/4.6.1
+which apptainer
+apptainer --version
+which mksquashfs
+mksquashfs -version
+```
+
 Print the exact submit command:
 
 ```bash

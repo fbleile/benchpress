@@ -16,6 +16,24 @@ workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_serial
 workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_cm4_tiny_true.sh
 ```
 
+On LRZ, Apptainer image pulls require `mksquashfs`. The common driver loads:
+
+```bash
+module load apptainer/1.3.4
+module load squashfs/4.6.1
+```
+
+Manual diagnostic:
+
+```bash
+module load apptainer/1.3.4
+module load squashfs/4.6.1
+which apptainer
+apptainer --version
+which mksquashfs
+mksquashfs -version
+```
+
 Smoke submission example:
 
 ```bash
