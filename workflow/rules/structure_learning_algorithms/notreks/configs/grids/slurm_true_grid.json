@@ -1,0 +1,5 @@
+{
+  "name": "slurm_true",
+  "preset": "local10",
+  "description": "Larger SLURM validation grid for selecting one best setting per method family."
+}

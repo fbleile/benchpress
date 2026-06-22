@@ -1,0 +1,5 @@
+{
+  "name": "slurm_smoke",
+  "preset": "tiny",
+  "description": "Small SLURM smoke grid for the NOTREKS Benchpress pipeline."
+}
