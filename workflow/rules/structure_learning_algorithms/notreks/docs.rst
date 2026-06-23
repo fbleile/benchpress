@@ -16,7 +16,7 @@ Selected-method benchmark frames live under::
 
   configs/notreks/benchmarks/
 
-Generated Benchpress configs and manifests are written under::
+Expanded Benchpress configs and manifests are written under::
 
   configs/notreks/expanded/
 

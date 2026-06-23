@@ -20,7 +20,7 @@
         "graph": "er",
         "d": 20,
         "n": 1000,
-        "expected_degree": 2,
+        "expected_degree": 3,
         "sem_type": "gauss",
         "standardized": true
       },
@@ -29,7 +29,16 @@
         "graph": "sf",
         "d": 20,
         "n": 1000,
-        "expected_degree": 2,
+        "expected_degree": 3,
+        "sem_type": "gauss",
+        "standardized": true
+      },
+      {
+        "name": "er_d100_n2000_deg3",
+        "graph": "er",
+        "d": 100,
+        "n": 2000,
+        "expected_degree": 4,
         "sem_type": "gauss",
         "standardized": true
       }
