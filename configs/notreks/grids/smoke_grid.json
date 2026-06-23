@@ -42,7 +42,7 @@
         "independence_alpha": [0.05],
         "independence_correction": ["benjamini-hochberg"],
         "threshold": [0.1],
-        "max_iter": [3000],
+        "max_iter": [30000],
         "path_steps": [5],
         "power_iter_steps": [5],
         "timeout": [null]
