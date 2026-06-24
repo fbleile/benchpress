@@ -683,6 +683,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-PY
-
-chmod +x workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py
