@@ -1,7 +1,7 @@
 {
-  "experiment_id": "notreks_full_benchmark",
-  "benchmark_name": "notreks_full_benchmark_validation",
-  "filename_prefix": "notreks/full_benchmark/validation/",
+  "experiment_id": "notreks_hyperparam",
+  "benchmark_name": "notreks_hyperparam_validation",
+  "filename_prefix": "notreks/hyperparam/validation/",
   "data": {
     "type": "fixed",
     "seeds": [101, 102, 103, 104, 105, 106, 107, 108, 109, 110],
