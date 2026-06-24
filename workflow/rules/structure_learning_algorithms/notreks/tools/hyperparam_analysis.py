@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-cat > workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py <<'PY'
-#!/usr/bin/env python3
 """
 Hyperparameter analysis for NOTREKS validation runs.
 
