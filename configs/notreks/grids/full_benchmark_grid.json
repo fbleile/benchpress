@@ -16,16 +16,8 @@
       "enabled": true,
       "grid": {
         "variant": ["stable"],
-        "alpha": [0.01, 0.05, 0.1],
-        "ci_test": ["fisherz"],
-        "timeout": [null]
-      }
-    },
-    "gcastle_direct_lingam": {
-      "enabled": true,
-      "grid": {
-        "measure": ["pwling", "kernel"],
-        "thresh": [0.1, 0.3],
+        "alpha": [0.01, 0.05],
+        "ci_test": ["spearman", "fisherz"],
         "timeout": [null]
       }
     },
@@ -35,22 +27,22 @@
         "score": ["least_squares"],
         "dag_seq": ["exp", "logdet", "scc_power_iteration"],
         "trek_seq": ["exp"],
-        "trek_reg": [0.1, 1.0, 3.0],
+        "trek_reg": [1.0, 3.0, 5.0],
         "regularizer": ["l1"],
-        "regularizer_scale": [0.001, 0.01],
-        "independence_test": ["spearman", "dcor", "gcastle_fisherz"],
-        "independence_alpha": [0.05],
+        "regularizer_scale": [0.01],
+        "independence_test": ["gcastle_fisherz"],
+        "independence_alpha": [0.01, 0.03, 0.05],
         "independence_correction": ["benjamini-hochberg"],
-        "threshold": [0.01, 0.1],
-        "max_iter": [60000],
-        "path_steps": [2, 5],
-        "power_iter_steps": [7],
+        "threshold": [0.1, 0.3],
+        "max_iter": [30000, 60000],
+        "path_steps": [5],
+        "power_iter_steps": [15],
         "timeout": [null]
       }
     }
   },
   "selection": {
-    "primary_metric": "SHD_cpdag",
+    "primary_metric": "SHD_pattern",
     "mode": "minimize",
     "group_by": "method_family"
   }
