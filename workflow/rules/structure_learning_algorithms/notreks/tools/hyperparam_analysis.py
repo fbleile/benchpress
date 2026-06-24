@@ -69,7 +69,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "auto: use config threshold/thresh if available, otherwise best ROC row. "
             "all: keep all ROC rows. "
-            "best: choose best row per alg_id by primary metric."
+            "best: choose best row per id by primary metric."
         ),
     )
     return parser.parse_args()
@@ -135,12 +135,12 @@ def load_roc(path: Path) -> pd.DataFrame:
     if unnamed:
         df = df.drop(columns=unnamed)
 
-    if "alg_id" not in df.columns:
+    if "id" not in df.columns:
         raise ValueError(
-            f"ROC file must contain column 'alg_id'. Found columns: {list(df.columns)}"
+            f"ROC file must contain column 'id'. Found columns: {list(df.columns)}"
         )
 
-    df = df.rename(columns={"alg_id": "algorithm_id"})
+    df = df.rename(columns={"id": "algorithm_id"})
     df["algorithm_id"] = df["algorithm_id"].astype(str)
 
     return df
@@ -624,7 +624,7 @@ def main() -> None:
 
     if merged.empty:
         raise ValueError(
-            "No rows after joining ROC_data.csv with manifest.json on alg_id/algorithm_id."
+            "No rows after joining ROC_data.csv with manifest.json on id/algorithm_id."
         )
 
     metric_map = resolve_metric_columns(merged, args.metrics)
