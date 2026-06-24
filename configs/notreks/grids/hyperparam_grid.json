@@ -17,7 +17,7 @@
       "grid": {
         "variant": ["stable"],
         "alpha": [0.01, 0.05],
-        "ci_test": ["spearman", "fisherz"],
+        "ci_test": ["fisherz"],
         "timeout": [null]
       }
     },
