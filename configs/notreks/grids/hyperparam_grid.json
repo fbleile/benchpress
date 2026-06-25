@@ -8,7 +8,7 @@
     "d": 20,
     "n": 500,
     "graph": "er",
-    "expected_degree": 2,
+    "expected_degree": 3,
     "standardized": true
   },
   "methods": {
