@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """
-Hyperparameter analysis for NOTREKS validation runs.
+Hyperparameter + threshold analysis for NOTREKS validation runs.
 
-Inputs for tag <tag>:
+Expected inputs for tag <tag>:
   configs/notreks/expanded/<tag>_manifest.json
   results/output/notreks_<tag>_validation/benchmarks/notreks/<tag>/validation/ROC_data.csv
 
+Main outputs:
+  results/notreks/hyperparam_analysis/<tag>/report.md
+  results/notreks/hyperparam_analysis/<tag>/best_threshold_by_algorithm.csv
+  results/notreks/hyperparam_analysis/<tag>/threshold_curve_by_algorithm.csv
+  results/notreks/hyperparam_analysis/<tag>/algorithm_summary.csv
+  results/notreks/hyperparam_analysis/<tag>/hyperparam_main_effects.csv
+  results/notreks/hyperparam_analysis/<tag>/numeric_correlations.csv
+
 Example:
   python workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py \
-    --tag smoke
-
-  python workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py \
-    --tag full_benchmark \
+    --tag hyperparam \
+    --primary-metric SHD_pattern \
     --metrics SHD_pattern time TPR_pattern FPR_pattern
 """
 
@@ -29,6 +35,7 @@ import pandas as pd
 
 
 DEFAULT_METRICS = ["SHD_pattern", "time"]
+DEFAULT_PRIMARY_METRIC = "SHD_pattern"
 
 LOWER_IS_BETTER_HINTS = [
     "shd",
@@ -39,6 +46,7 @@ LOWER_IS_BETTER_HINTS = [
     "runtime",
     "loss",
     "error",
+    "distance",
 ]
 
 HIGHER_IS_BETTER_HINTS = [
@@ -52,24 +60,68 @@ HIGHER_IS_BETTER_HINTS = [
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--tag", required=True)
-    parser.add_argument("--repo-root", default=".")
-    parser.add_argument("--manifest", default=None)
-    parser.add_argument("--roc-data", default=None)
-    parser.add_argument("--metrics", nargs="+", default=DEFAULT_METRICS)
-    parser.add_argument("--primary-metric", default=None)
-    parser.add_argument("--out-dir", default=None)
-    parser.add_argument("--top-k", type=int, default=10)
-    parser.add_argument("--max-levels", type=int, default=25)
+    parser = argparse.ArgumentParser(
+        description="Analyze validation hyperparameters and select best thresholds."
+    )
     parser.add_argument(
-        "--threshold-policy",
-        choices=["auto", "all", "best"],
-        default="auto",
+        "--tag",
+        required=True,
+        help="Experiment tag, e.g. smoke, hyperparam, full_benchmark.",
+    )
+    parser.add_argument(
+        "--repo-root",
+        default=".",
+        help="Repository root. Default: current directory.",
+    )
+    parser.add_argument(
+        "--manifest",
+        default=None,
+        help="Optional manifest JSON path. Default: configs/notreks/expanded/<tag>_manifest.json.",
+    )
+    parser.add_argument(
+        "--roc-data",
+        default=None,
         help=(
-            "auto: use config threshold/thresh if available, otherwise best ROC row. "
-            "all: keep all ROC rows. "
-            "best: choose best row per id by primary metric."
+            "Optional ROC_data.csv path. Default: "
+            "results/output/notreks_<tag>_validation/benchmarks/notreks/<tag>/validation/ROC_data.csv"
+        ),
+    )
+    parser.add_argument(
+        "--out-dir",
+        default=None,
+        help="Output directory. Default: results/notreks/hyperparam_analysis/<tag>.",
+    )
+    parser.add_argument(
+        "--metrics",
+        nargs="+",
+        default=DEFAULT_METRICS,
+        help="Metrics to analyze. Default: SHD_pattern time.",
+    )
+    parser.add_argument(
+        "--primary-metric",
+        default=DEFAULT_PRIMARY_METRIC,
+        help="Primary validation metric used for threshold and config ranking.",
+    )
+    parser.add_argument(
+        "--top-k",
+        type=int,
+        default=10,
+        help="Number of best/worst configs/effects shown per family in the report.",
+    )
+    parser.add_argument(
+        "--max-levels",
+        type=int,
+        default=25,
+        help="Maximum number of unique parameter levels for main-effect analysis.",
+    )
+    parser.add_argument(
+        "--threshold-mode",
+        choices=["best", "config", "all"],
+        default="best",
+        help=(
+            "best: choose best threshold per algorithm by primary metric. "
+            "config: use threshold/thresh from manifest if available, otherwise best. "
+            "all: do not collapse ROC rows for hyperparam summaries."
         ),
     )
     return parser.parse_args()
@@ -77,53 +129,97 @@ def parse_args() -> argparse.Namespace:
 
 def lower_is_better(metric: str) -> bool:
     m = metric.lower()
+
     if any(x in m for x in HIGHER_IS_BETTER_HINTS):
         return False
+
     if any(x in m for x in LOWER_IS_BETTER_HINTS):
         return True
+
+    # Conservative default for benchmark/error metrics.
     return True
 
 
 def flatten_dict(d: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    out = {}
-    for k, v in d.items():
-        key = f"{prefix}.{k}" if prefix else str(k)
-        if isinstance(v, dict):
-            out.update(flatten_dict(v, key))
+    out: dict[str, Any] = {}
+
+    for key, value in d.items():
+        new_key = f"{prefix}.{key}" if prefix else str(key)
+
+        if isinstance(value, dict):
+            out.update(flatten_dict(value, new_key))
         else:
-            out[key] = v
+            out[new_key] = value
+
     return out
+
+
+def parse_json_dict(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+
+    if isinstance(value, float) and math.isnan(value):
+        return {}
+
+    if isinstance(value, dict):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return {}
+
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {}
+
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def load_manifest(path: Path) -> pd.DataFrame:
     raw = json.loads(path.read_text())
 
-    rows = []
-    for item in raw:
-        hp = item.get("hyperparameters")
-        if hp is None:
-            hp_json = item.get("hyperparameters_json", "{}")
-            hp = json.loads(hp_json) if hp_json else {}
+    if not isinstance(raw, list):
+        raise ValueError(f"Manifest must be a JSON list: {path}")
 
-        row = {
-            "algorithm_id": item["algorithm_id"],
+    rows: list[dict[str, Any]] = []
+
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+
+        algorithm_id = item.get("algorithm_id")
+        if algorithm_id is None:
+            continue
+
+        hyperparams = item.get("hyperparameters")
+        if not isinstance(hyperparams, dict):
+            hyperparams = parse_json_dict(item.get("hyperparameters_json"))
+
+        row: dict[str, Any] = {
+            "algorithm_id": str(algorithm_id),
             "path_id": item.get("path_id"),
             "method_family": item.get("method_family"),
             "base_method": item.get("base_method"),
             "phase": item.get("phase"),
+            "config_path": item.get("config_path"),
         }
 
-        for k, v in flatten_dict(hp).items():
-            row[f"param.{k}"] = v
+        for key, value in flatten_dict(hyperparams).items():
+            row[f"param.{key}"] = value
 
         rows.append(row)
 
     df = pd.DataFrame(rows)
 
+    if df.empty:
+        raise ValueError(f"No manifest rows loaded from {path}")
+
     if "method_family" not in df.columns or df["method_family"].isna().all():
-        df["method_family"] = df["algorithm_id"].astype(str).str.replace(
-            r"__grid\d+$", "", regex=True
-        )
+        df["method_family"] = df["algorithm_id"].str.replace(r"__grid\d+$", "", regex=True)
+
+    if "base_method" not in df.columns:
+        df["base_method"] = df["method_family"]
 
     return df
 
@@ -135,41 +231,49 @@ def load_roc(path: Path) -> pd.DataFrame:
     if unnamed:
         df = df.drop(columns=unnamed)
 
-    if "id" not in df.columns:
+    if "alg_id" not in df.columns:
         raise ValueError(
-            f"ROC file must contain column 'id'. Found columns: {list(df.columns)}"
+            f"ROC_data.csv must contain column 'alg_id'. Found columns: {list(df.columns)}"
         )
 
-    df = df.rename(columns={"id": "algorithm_id"})
-    df["algorithm_id"] = df["algorithm_id"].astype(str)
+    df["alg_id"] = df["alg_id"].astype(str)
 
     return df
 
 
 def resolve_metric_columns(df: pd.DataFrame, requested: list[str]) -> dict[str, str]:
+    """
+    Map public metric names such as SHD_pattern to existing columns such as
+    SHD_pattern_mean.
+    """
     lower_to_real = {c.lower(): c for c in df.columns}
-    out = {}
+    out: dict[str, str] = {}
 
-    for m in requested:
+    for metric in requested:
         candidates = [
-            m,
-            f"{m}_mean",
-            m.removesuffix("_mean"),
+            metric,
+            f"{metric}_mean",
         ]
 
+        if metric.endswith("_mean"):
+            candidates.append(metric.removesuffix("_mean"))
+
         found = None
-        for c in candidates:
-            if c in df.columns:
-                found = c
+
+        for candidate in candidates:
+            if candidate in df.columns:
+                found = candidate
                 break
-            if c.lower() in lower_to_real:
-                found = lower_to_real[c.lower()]
+
+            if candidate.lower() in lower_to_real:
+                found = lower_to_real[candidate.lower()]
                 break
 
         if found is None:
-            print(f"[warning] metric '{m}' not found in ROC_data.csv")
+            print(f"[warning] metric '{metric}' not found in ROC_data.csv")
         else:
-            out[m] = found
+            public_name = metric.removesuffix("_mean")
+            out[public_name] = found
 
     if not out:
         raise ValueError(
@@ -180,11 +284,35 @@ def resolve_metric_columns(df: pd.DataFrame, requested: list[str]) -> dict[str, 
     return out
 
 
-def coerce_metrics(df: pd.DataFrame, metric_map: dict[str, str]) -> pd.DataFrame:
+def coerce_metric_columns(df: pd.DataFrame, metric_map: dict[str, str]) -> pd.DataFrame:
+    """
+    Adds canonical public metric columns, e.g. SHD_pattern from SHD_pattern_mean.
+    """
     out = df.copy()
+
     for public_name, source_col in metric_map.items():
         out[public_name] = pd.to_numeric(out[source_col], errors="coerce")
+
     return out
+
+
+def metric_list_from_map(metric_map: dict[str, str]) -> list[str]:
+    return list(metric_map.keys())
+
+
+def weighted_mean(values: pd.Series, weights: pd.Series | None = None) -> float:
+    values = pd.to_numeric(values, errors="coerce")
+
+    if weights is None:
+        return float(values.mean())
+
+    weights = pd.to_numeric(weights, errors="coerce")
+    valid = values.notna() & weights.notna() & (weights > 0)
+
+    if not valid.any():
+        return float(values.mean())
+
+    return float(np.average(values[valid], weights=weights[valid]))
 
 
 def get_config_threshold(row: pd.Series) -> float | None:
@@ -194,118 +322,251 @@ def get_config_threshold(row: pd.Series) -> float | None:
                 return float(row[key])
             except Exception:
                 pass
+
     return None
 
 
-def collapse_threshold_rows(
-    df: pd.DataFrame,
+def select_best_thresholds(
+    rows: pd.DataFrame,
+    metrics: list[str],
     primary_metric: str,
-    policy: str,
-) -> pd.DataFrame:
-    if policy == "all":
-        df = df.copy()
-        df["_threshold_policy"] = "all_roc_rows"
-        return df
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Aggregate ROC rows by algorithm_id × thresh and select the best threshold
+    per algorithm_id according to the primary validation metric.
+    """
+    if "thresh" not in rows.columns:
+        raise ValueError("Cannot select thresholds: ROC_data.csv has no 'thresh' column.")
 
-    if "thresh" not in df.columns:
-        df = df.copy()
-        df["_threshold_policy"] = "no_thresh_column"
-        return df
+    if primary_metric not in rows.columns:
+        raise ValueError(f"Primary metric '{primary_metric}' not found in merged rows.")
 
-    df = df.copy()
-    df["thresh_numeric"] = pd.to_numeric(df["thresh"], errors="coerce")
+    group_cols = ["method_family", "base_method", "algorithm_id", "thresh"]
 
-    rows = []
+    temp = rows.copy()
+    temp["thresh"] = pd.to_numeric(temp["thresh"], errors="coerce")
+
+    weight_col = "n_seeds" if "n_seeds" in temp.columns else None
+
+    records: list[dict[str, Any]] = []
+
+    for keys, group in temp.groupby(group_cols, dropna=False):
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+
+        record = dict(zip(group_cols, keys))
+        record["n_rows"] = int(len(group))
+
+        if weight_col is not None:
+            weights = group[weight_col]
+            record["n_weight"] = float(pd.to_numeric(weights, errors="coerce").fillna(0).sum())
+        else:
+            weights = None
+            record["n_weight"] = float(len(group))
+
+        for metric in metrics:
+            if metric in group.columns:
+                record[metric] = weighted_mean(group[metric], weights)
+
+        records.append(record)
+
+    threshold_curve = pd.DataFrame(records)
+
+    if threshold_curve.empty:
+        raise ValueError("Threshold curve is empty after grouping.")
+
     primary_lower = lower_is_better(primary_metric)
 
-    for _, group in df.groupby("algorithm_id", dropna=False):
-        if len(group) == 1:
-            chosen = group.iloc[0].copy()
-            chosen["_threshold_policy"] = "single_row"
-            rows.append(chosen)
+    best_records = []
+
+    for _, group in threshold_curve.groupby(
+        ["method_family", "base_method", "algorithm_id"],
+        dropna=False,
+    ):
+        metric_values = pd.to_numeric(group[primary_metric], errors="coerce")
+
+        if metric_values.notna().sum() == 0:
             continue
 
-        if policy == "best":
-            metric = pd.to_numeric(group[primary_metric], errors="coerce")
-            idx = metric.idxmin() if primary_lower else metric.idxmax()
-            chosen = group.loc[idx].copy()
-            chosen["_threshold_policy"] = "best_roc_row"
-            rows.append(chosen)
-            continue
+        idx = metric_values.idxmin() if primary_lower else metric_values.idxmax()
+        chosen = group.loc[idx].copy()
 
-        # auto policy
-        target = get_config_threshold(group.iloc[0])
-        if target is not None and group["thresh_numeric"].notna().any():
-            idx = (group["thresh_numeric"] - target).abs().idxmin()
-            chosen = group.loc[idx].copy()
-            chosen["_threshold_policy"] = "closest_to_config_threshold"
-            chosen["_target_threshold"] = target
-            rows.append(chosen)
-        else:
-            metric = pd.to_numeric(group[primary_metric], errors="coerce")
-            idx = metric.idxmin() if primary_lower else metric.idxmax()
-            chosen = group.loc[idx].copy()
-            chosen["_threshold_policy"] = "best_roc_row_no_config_threshold"
-            rows.append(chosen)
+        chosen["selected_primary_metric"] = primary_metric
+        chosen["selected_primary_value"] = chosen[primary_metric]
+        chosen["lower_is_better"] = primary_lower
+        chosen["n_thresholds_considered"] = int(group["thresh"].nunique(dropna=True))
 
-    out = pd.DataFrame(rows).drop(columns=["thresh_numeric"], errors="ignore")
+        best_records.append(chosen)
+
+    best_thresholds = pd.DataFrame(best_records)
+
+    if not best_thresholds.empty:
+        best_thresholds = best_thresholds.sort_values(
+            ["method_family", primary_metric],
+            ascending=[True, primary_lower],
+        )
+
+    return threshold_curve, best_thresholds
+
+
+def collapse_rows_for_analysis(
+    rows: pd.DataFrame,
+    best_thresholds: pd.DataFrame,
+    primary_metric: str,
+    threshold_mode: str,
+) -> pd.DataFrame:
+    """
+    Returns the row table used for algorithm summaries/effects.
+
+    best:
+      Keep only ROC rows whose threshold is selected as best per algorithm.
+    config:
+      Keep ROC rows closest to manifest threshold/thresh if available,
+      otherwise best threshold.
+    all:
+      Keep all ROC rows.
+    """
+    if threshold_mode == "all":
+        out = rows.copy()
+        out["_threshold_selection"] = "all"
+        return out
+
+    if "thresh" not in rows.columns:
+        out = rows.copy()
+        out["_threshold_selection"] = "no_thresh_column"
+        return out
+
+    temp = rows.copy()
+    temp["thresh_numeric"] = pd.to_numeric(temp["thresh"], errors="coerce")
+
+    chosen_rows = []
+    primary_lower = lower_is_better(primary_metric)
+
+    best_lookup = {}
+    if not best_thresholds.empty:
+        for _, r in best_thresholds.iterrows():
+            best_lookup[str(r["algorithm_id"])] = float(r["thresh"])
+
+    for algorithm_id, group in temp.groupby("algorithm_id", dropna=False):
+        algorithm_id = str(algorithm_id)
+        group = group.copy()
+
+        selected_threshold = None
+        selection_reason = None
+
+        if threshold_mode == "config":
+            target = get_config_threshold(group.iloc[0])
+            if target is not None and group["thresh_numeric"].notna().any():
+                selected_threshold = float(
+                    group.loc[(group["thresh_numeric"] - target).abs().idxmin(), "thresh_numeric"]
+                )
+                selection_reason = "closest_to_config_threshold"
+
+        if selected_threshold is None:
+            if algorithm_id in best_lookup:
+                selected_threshold = best_lookup[algorithm_id]
+                selection_reason = "best_validation_threshold"
+            else:
+                metric_values = pd.to_numeric(group[primary_metric], errors="coerce")
+                idx = metric_values.idxmin() if primary_lower else metric_values.idxmax()
+                selected_threshold = float(group.loc[idx, "thresh_numeric"])
+                selection_reason = "best_validation_threshold_fallback"
+
+        keep = group[
+            np.isclose(
+                group["thresh_numeric"].astype(float),
+                float(selected_threshold),
+                equal_nan=False,
+            )
+        ].copy()
+
+        if keep.empty:
+            idx = (group["thresh_numeric"] - selected_threshold).abs().idxmin()
+            keep = group.loc[[idx]].copy()
+
+        keep["_selected_threshold"] = selected_threshold
+        keep["_threshold_selection"] = selection_reason
+        chosen_rows.append(keep)
+
+    out = pd.concat(chosen_rows, ignore_index=True, sort=False)
+    out = out.drop(columns=["thresh_numeric"], errors="ignore")
+
     return out
 
 
-def param_cols(df: pd.DataFrame) -> list[str]:
-    skip_patterns = [
+def parameter_columns(df: pd.DataFrame) -> list[str]:
+    skip = {
         "param.id",
         "param.independence_cache_dir",
         "param.timeout",
-    ]
+    }
+
     cols = []
-    for c in df.columns:
-        if not c.startswith("param."):
+
+    for col in df.columns:
+        if not col.startswith("param."):
             continue
-        if c in skip_patterns:
+
+        if col in skip:
             continue
-        cols.append(c)
+
+        cols.append(col)
+
     return cols
 
 
-def algorithm_summary(df: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
+def algorithm_summary(rows: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
     agg = {}
-    for m in metrics:
-        if m in df.columns:
-            agg[m] = ["mean", "std", "count"]
 
-    out = (
-        df.groupby(["method_family", "algorithm_id"], dropna=False)
+    for metric in metrics:
+        if metric in rows.columns:
+            agg[metric] = ["mean", "std", "count"]
+
+    summary = (
+        rows.groupby(["method_family", "base_method", "algorithm_id"], dropna=False)
         .agg(agg)
         .reset_index()
     )
 
-    out.columns = [
+    summary.columns = [
         "_".join([x for x in col if x]) if isinstance(col, tuple) else col
-        for col in out.columns
+        for col in summary.columns
     ]
 
-    return out
+    # Add selected threshold if rows were collapsed.
+    if "_selected_threshold" in rows.columns:
+        th = (
+            rows.groupby(["method_family", "base_method", "algorithm_id"], dropna=False)["_selected_threshold"]
+            .first()
+            .reset_index()
+            .rename(columns={"_selected_threshold": "selected_threshold"})
+        )
+        summary = summary.merge(th, on=["method_family", "base_method", "algorithm_id"], how="left")
+
+    return summary
 
 
-def main_effects(
-    df: pd.DataFrame,
+def compute_main_effects(
+    rows: pd.DataFrame,
     metrics: list[str],
     max_levels: int,
 ) -> pd.DataFrame:
-    records = []
+    records: list[dict[str, Any]] = []
 
-    for family, fam in df.groupby("method_family", dropna=False):
-        for p in param_cols(fam):
-            values = fam[p].fillna("<missing>").astype(str)
-            n_levels = values.nunique()
+    for family, fam in rows.groupby("method_family", dropna=False):
+        for param in parameter_columns(fam):
+            values = fam[param].fillna("<missing>").astype(str)
+            n_levels = values.nunique(dropna=False)
 
             if n_levels <= 1 or n_levels > max_levels:
                 continue
 
             for metric in metrics:
-                temp = fam[[p, metric]].copy()
-                temp[p] = temp[p].fillna("<missing>").astype(str)
+                if metric not in fam.columns:
+                    continue
+
+                temp = fam[[param, metric]].copy()
+                temp[param] = temp[param].fillna("<missing>").astype(str)
                 temp[metric] = pd.to_numeric(temp[metric], errors="coerce")
                 temp = temp.dropna(subset=[metric])
 
@@ -313,7 +574,7 @@ def main_effects(
                     continue
 
                 grouped = (
-                    temp.groupby(p, dropna=False)[metric]
+                    temp.groupby(param, dropna=False)[metric]
                     .agg(["mean", "std", "count"])
                     .reset_index()
                 )
@@ -327,22 +588,22 @@ def main_effects(
 
                 best = grouped.loc[best_idx]
                 worst = grouped.loc[worst_idx]
-                global_mean = temp[metric].mean()
+                global_mean = float(temp[metric].mean())
 
                 records.append(
                     {
                         "method_family": family,
-                        "parameter": p.replace("param.", "", 1),
+                        "parameter": param.replace("param.", "", 1),
                         "metric": metric,
                         "lower_is_better": metric_lower,
                         "n_levels": int(n_levels),
-                        "best_value": best[p],
+                        "best_value": best[param],
                         "best_mean": float(best["mean"]),
                         "best_count": int(best["count"]),
-                        "worst_value": worst[p],
+                        "worst_value": worst[param],
                         "worst_mean": float(worst["mean"]),
                         "worst_count": int(worst["count"]),
-                        "global_mean": float(global_mean),
+                        "global_mean": global_mean,
                         "effect_range": float(abs(worst["mean"] - best["mean"])),
                     }
                 )
@@ -351,20 +612,27 @@ def main_effects(
         return pd.DataFrame()
 
     out = pd.DataFrame(records)
-    return out.sort_values(["method_family", "metric", "effect_range"], ascending=[True, True, False])
+
+    return out.sort_values(
+        ["method_family", "metric", "effect_range"],
+        ascending=[True, True, False],
+    )
 
 
-def numeric_correlations(df: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
-    records = []
+def compute_numeric_correlations(rows: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
+    records: list[dict[str, Any]] = []
 
-    for family, fam in df.groupby("method_family", dropna=False):
-        for p in param_cols(fam):
-            x = pd.to_numeric(fam[p], errors="coerce")
+    for family, fam in rows.groupby("method_family", dropna=False):
+        for param in parameter_columns(fam):
+            x = pd.to_numeric(fam[param], errors="coerce")
 
             if x.notna().sum() < 3 or x.nunique(dropna=True) < 3:
                 continue
 
             for metric in metrics:
+                if metric not in fam.columns:
+                    continue
+
                 y = pd.to_numeric(fam[metric], errors="coerce")
                 valid = x.notna() & y.notna()
 
@@ -377,12 +645,12 @@ def numeric_correlations(df: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
                 records.append(
                     {
                         "method_family": family,
-                        "parameter": p.replace("param.", "", 1),
+                        "parameter": param.replace("param.", "", 1),
                         "metric": metric,
                         "n": int(valid.sum()),
-                        "pearson": pearson,
-                        "spearman": spearman,
-                        "abs_spearman": abs(spearman) if pd.notna(spearman) else np.nan,
+                        "pearson": float(pearson) if pd.notna(pearson) else np.nan,
+                        "spearman": float(spearman) if pd.notna(spearman) else np.nan,
+                        "abs_spearman": abs(float(spearman)) if pd.notna(spearman) else np.nan,
                         "direction_note": "positive means larger parameter values increase the metric",
                     }
                 )
@@ -391,61 +659,14 @@ def numeric_correlations(df: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
         return pd.DataFrame()
 
     out = pd.DataFrame(records)
-    return out.sort_values(["method_family", "metric", "abs_spearman"], ascending=[True, True, False])
+
+    return out.sort_values(
+        ["method_family", "metric", "abs_spearman"],
+        ascending=[True, True, False],
+    )
 
 
-def pareto_front(df: pd.DataFrame, primary_metric: str, time_metric: str = "time") -> pd.DataFrame:
-    if primary_metric not in df.columns or time_metric not in df.columns:
-        return pd.DataFrame()
-
-    rows = []
-
-    for family, fam in df.groupby("method_family", dropna=False):
-        temp = fam.copy()
-        temp[primary_metric] = pd.to_numeric(temp[primary_metric], errors="coerce")
-        temp[time_metric] = pd.to_numeric(temp[time_metric], errors="coerce")
-        temp = temp.dropna(subset=[primary_metric, time_metric])
-
-        if temp.empty:
-            continue
-
-        primary_lower = lower_is_better(primary_metric)
-
-        for idx, row in temp.iterrows():
-            dominated = False
-            for jdx, other in temp.iterrows():
-                if idx == jdx:
-                    continue
-
-                primary_better_or_equal = (
-                    other[primary_metric] <= row[primary_metric]
-                    if primary_lower
-                    else other[primary_metric] >= row[primary_metric]
-                )
-                time_better_or_equal = other[time_metric] <= row[time_metric]
-
-                primary_strict = (
-                    other[primary_metric] < row[primary_metric]
-                    if primary_lower
-                    else other[primary_metric] > row[primary_metric]
-                )
-                time_strict = other[time_metric] < row[time_metric]
-
-                if primary_better_or_equal and time_better_or_equal and (primary_strict or time_strict):
-                    dominated = True
-                    break
-
-            if not dominated:
-                rows.append(row)
-
-    if not rows:
-        return pd.DataFrame()
-
-    out = pd.DataFrame(rows)
-    return out.sort_values(["method_family", primary_metric, time_metric])
-
-
-def md_table(df: pd.DataFrame, max_rows: int = 15) -> str:
+def markdown_table(df: pd.DataFrame, max_rows: int = 20) -> str:
     if df is None or df.empty:
         return "_No rows._"
 
@@ -453,18 +674,20 @@ def md_table(df: pd.DataFrame, max_rows: int = 15) -> str:
 
     for col in shown.columns:
         if pd.api.types.is_float_dtype(shown[col]):
-            shown[col] = shown[col].map(lambda x: "" if pd.isna(x) else f"{x:.4g}")
+            shown[col] = shown[col].map(lambda x: "" if pd.isna(x) else f"{x:.5g}")
         else:
             shown[col] = shown[col].map(lambda x: "" if pd.isna(x) else str(x))
 
-    cols = list(shown.columns)
-    header = "| " + " | ".join(cols) + " |"
-    sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+    columns = list(shown.columns)
+
+    header = "| " + " | ".join(columns) + " |"
+    separator = "| " + " | ".join(["---"] * len(columns)) + " |"
+
     body = []
     for _, row in shown.iterrows():
-        body.append("| " + " | ".join(str(row[c]) for c in cols) + " |")
+        body.append("| " + " | ".join(str(row[col]) for col in columns) + " |")
 
-    return "\n".join([header, sep] + body)
+    return "\n".join([header, separator] + body)
 
 
 def write_report(
@@ -472,16 +695,21 @@ def write_report(
     tag: str,
     manifest_path: Path,
     roc_path: Path,
-    df: pd.DataFrame,
+    all_rows: pd.DataFrame,
+    analysis_rows: pd.DataFrame,
+    threshold_curve: pd.DataFrame,
+    best_thresholds: pd.DataFrame,
     summary: pd.DataFrame,
     effects: pd.DataFrame,
-    corrs: pd.DataFrame,
-    pareto: pd.DataFrame,
+    correlations: pd.DataFrame,
     metrics: list[str],
     primary_metric: str,
+    threshold_mode: str,
     top_k: int,
 ) -> None:
-    lines = []
+    primary_lower = lower_is_better(primary_metric)
+
+    lines: list[str] = []
 
     lines.append(f"# Hyperparameter analysis for `{tag}`")
     lines.append("")
@@ -489,92 +717,117 @@ def write_report(
     lines.append("")
     lines.append(f"- Manifest: `{manifest_path}`")
     lines.append(f"- ROC data: `{roc_path}`")
-    lines.append(f"- Rows analyzed: `{len(df)}`")
-    lines.append(f"- Method families: `{', '.join(sorted(df['method_family'].dropna().astype(str).unique()))}`")
+    lines.append(f"- Raw merged ROC rows: `{len(all_rows)}`")
+    lines.append(f"- Rows used for hyperparam analysis: `{len(analysis_rows)}`")
     lines.append(f"- Metrics: `{', '.join(metrics)}`")
     lines.append(f"- Primary metric: `{primary_metric}`")
+    lines.append(f"- Threshold mode: `{threshold_mode}`")
     lines.append("")
-    lines.append("## Interpretation note")
+    lines.append("## Threshold selection")
     lines.append("")
     lines.append(
-        "This is a descriptive hyperparameter analysis. "
-        "For a factorial validation grid, main-effect contrasts are useful hints, "
-        "but they are not causal proof. Interactions between hyperparameters and "
-        "dataset-specific effects can still dominate."
+        f"For each `algorithm_id`, thresholds are selected by the validation metric `{primary_metric}`. "
+        "Lower is better for error-like metrics such as SHD/time/FPR; higher is better for TPR/precision/recall."
     )
     lines.append("")
-    lines.append("The script resolves metric names such as `SHD_pattern` to `SHD_pattern_mean` if needed.")
+
+    threshold_cols = [
+        c for c in [
+            "method_family",
+            "base_method",
+            "algorithm_id",
+            "thresh",
+            primary_metric,
+            "time",
+            "n_rows",
+            "n_weight",
+            "n_thresholds_considered",
+        ]
+        if c in best_thresholds.columns
+    ]
+
+    lines.append("### Best threshold per algorithm")
+    lines.append("")
+    if not best_thresholds.empty:
+        best_thresholds_sorted = best_thresholds.sort_values(
+            ["method_family", primary_metric],
+            ascending=[True, primary_lower],
+        )
+        lines.append(markdown_table(best_thresholds_sorted[threshold_cols], max_rows=100))
+    else:
+        lines.append("_No threshold rows._")
     lines.append("")
 
     lines.append("## Overall algorithm summary")
     lines.append("")
-    primary_col = f"{primary_metric}_mean"
-    if primary_col in summary.columns:
-        summary_sorted = summary.sort_values(primary_col, ascending=lower_is_better(primary_metric))
+    sort_col = f"{primary_metric}_mean"
+    if sort_col in summary.columns:
+        summary_sorted = summary.sort_values(sort_col, ascending=primary_lower)
+    elif primary_metric in summary.columns:
+        summary_sorted = summary.sort_values(primary_metric, ascending=primary_lower)
     else:
         summary_sorted = summary
-    lines.append(md_table(summary_sorted, max_rows=30))
+
+    lines.append(markdown_table(summary_sorted, max_rows=50))
     lines.append("")
 
-    for family in sorted(df["method_family"].dropna().astype(str).unique()):
-        fam_summary = summary_sorted[summary_sorted["method_family"].astype(str) == family]
-        fam_effects = effects[effects["method_family"].astype(str) == family] if not effects.empty else effects
-        fam_corrs = corrs[corrs["method_family"].astype(str) == family] if not corrs.empty else corrs
-        fam_pareto = pareto[pareto["method_family"].astype(str) == family] if not pareto.empty else pareto
-
+    for family in sorted(analysis_rows["method_family"].dropna().astype(str).unique()):
         lines.append(f"## `{family}`")
         lines.append("")
 
+        fam_summary = summary_sorted[summary_sorted["method_family"].astype(str) == family]
+
         lines.append("### Best configurations")
         lines.append("")
-        lines.append(md_table(fam_summary, max_rows=top_k))
+        lines.append(markdown_table(fam_summary, max_rows=top_k))
         lines.append("")
 
         lines.append("### Worst configurations")
         lines.append("")
-        lines.append(md_table(fam_summary.tail(top_k), max_rows=top_k))
+        lines.append(markdown_table(fam_summary.tail(top_k), max_rows=top_k))
         lines.append("")
 
         lines.append("### Largest main effects")
         lines.append("")
-        if not fam_effects.empty:
-            fam_primary_effects = fam_effects[fam_effects["metric"] == primary_metric]
-            lines.append(md_table(fam_primary_effects, max_rows=top_k))
+        if not effects.empty:
+            fam_effects = effects[
+                (effects["method_family"].astype(str) == family)
+                & (effects["metric"] == primary_metric)
+            ].sort_values("effect_range", ascending=False)
+
+            lines.append(markdown_table(fam_effects, max_rows=top_k))
         else:
-            lines.append("_No varying hyperparameters found._")
+            lines.append("_No varying hyperparameters with enough observations._")
         lines.append("")
 
         lines.append("### Numeric correlations")
         lines.append("")
-        if not fam_corrs.empty:
-            lines.append(md_table(fam_corrs, max_rows=top_k))
+        if not correlations.empty:
+            fam_corr = correlations[
+                (correlations["method_family"].astype(str) == family)
+                & (correlations["metric"] == primary_metric)
+            ].sort_values("abs_spearman", ascending=False)
+
+            lines.append(markdown_table(fam_corr, max_rows=top_k))
         else:
             lines.append("_No numeric hyperparameters with enough variation._")
         lines.append("")
 
-        lines.append("### Accuracy/time Pareto candidates")
-        lines.append("")
-        if not fam_pareto.empty:
-            keep_cols = [
-                c for c in [
-                    "algorithm_id",
-                    primary_metric,
-                    "time",
-                    "thresh",
-                    "_threshold_policy",
-                ]
-                if c in fam_pareto.columns
-            ]
-            param_keep = [
-                c for c in param_cols(fam_pareto)
-                if fam_pareto[c].nunique(dropna=False) > 1
-            ][:8]
-            lines.append(md_table(fam_pareto[keep_cols + param_keep], max_rows=top_k))
-        else:
-            lines.append("_No Pareto table available._")
-        lines.append("")
+    lines.append("## Notes")
+    lines.append("")
+    lines.append(
+        "- This is validation analysis. Selecting thresholds by the same validation data is okay for model selection, "
+        "but final performance should be reported on separate benchmark/test data."
+    )
+    lines.append(
+        "- Main effects are descriptive. They are useful hints, not causal claims, because hyperparameter interactions can matter."
+    )
+    lines.append(
+        "- Pareto analysis is intentionally not included here; selection is by the primary validation metric."
+    )
+    lines.append("")
 
-    path.write_text("\n".join(lines))
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> None:
@@ -603,55 +856,87 @@ def main() -> None:
         / "ROC_data.csv"
     )
 
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
-    if not roc_path.exists():
-        raise FileNotFoundError(f"ROC_data.csv not found: {roc_path}")
-
     out_dir = (
         Path(args.out_dir)
         if args.out_dir
         else repo_root / "results" / "notreks" / "hyperparam_analysis" / tag
     )
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    primary_metric = args.primary_metric or args.metrics[0]
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest_path}")
+
+    if not roc_path.exists():
+        raise FileNotFoundError(f"ROC_data.csv not found: {roc_path}")
 
     manifest = load_manifest(manifest_path)
     roc = load_roc(roc_path)
 
-    merged = roc.merge(manifest, on="algorithm_id", how="inner")
+    merged = roc.merge(
+        manifest,
+        left_on="alg_id",
+        right_on="algorithm_id",
+        how="inner",
+    )
 
     if merged.empty:
+        roc_ids = set(roc["alg_id"].astype(str))
+        manifest_ids = set(manifest["algorithm_id"].astype(str))
+
         raise ValueError(
-            "No rows after joining ROC_data.csv with manifest.json on id/algorithm_id."
+            "No rows after joining ROC_data.csv with manifest.json using "
+            "ROC_data.alg_id == manifest.algorithm_id.\n"
+            f"ROC ids: {len(roc_ids)}\n"
+            f"Manifest ids: {len(manifest_ids)}\n"
+            f"Matched ids: {len(roc_ids & manifest_ids)}\n"
+            f"Example ROC-only ids: {sorted(roc_ids - manifest_ids)[:10]}\n"
+            f"Example manifest-only ids: {sorted(manifest_ids - roc_ids)[:10]}"
         )
 
     metric_map = resolve_metric_columns(merged, args.metrics)
-    metrics = list(metric_map.keys())
+    merged = coerce_metric_columns(merged, metric_map)
+    metrics = metric_list_from_map(metric_map)
+
+    primary_metric = args.primary_metric.removesuffix("_mean")
     if primary_metric not in metrics:
-        primary_metric = metrics[0]
+        if primary_metric in merged.columns:
+            metrics = [primary_metric] + [m for m in metrics if m != primary_metric]
+        else:
+            print(
+                f"[warning] primary metric '{args.primary_metric}' not found. "
+                f"Using '{metrics[0]}' instead."
+            )
+            primary_metric = metrics[0]
 
-    merged = coerce_metrics(merged, metric_map)
-
-    before_collapse = len(merged)
-    merged = collapse_threshold_rows(
-        merged,
+    threshold_curve, best_thresholds = select_best_thresholds(
+        rows=merged,
+        metrics=metrics,
         primary_metric=primary_metric,
-        policy=args.threshold_policy,
     )
-    after_collapse = len(merged)
 
-    summary = algorithm_summary(merged, metrics)
-    effects = main_effects(merged, metrics, max_levels=args.max_levels)
-    corrs = numeric_correlations(merged, metrics)
-    pareto = pareto_front(merged, primary_metric=primary_metric, time_metric="time")
+    analysis_rows = collapse_rows_for_analysis(
+        rows=merged,
+        best_thresholds=best_thresholds,
+        primary_metric=primary_metric,
+        threshold_mode=args.threshold_mode,
+    )
 
-    merged.to_csv(out_dir / "analysis_rows.csv", index=False)
+    summary = algorithm_summary(analysis_rows, metrics)
+    effects = compute_main_effects(
+        analysis_rows,
+        metrics=metrics,
+        max_levels=args.max_levels,
+    )
+    correlations = compute_numeric_correlations(analysis_rows, metrics)
+
+    merged.to_csv(out_dir / "all_merged_roc_rows.csv", index=False)
+    analysis_rows.to_csv(out_dir / "analysis_rows.csv", index=False)
+    threshold_curve.to_csv(out_dir / "threshold_curve_by_algorithm.csv", index=False)
+    best_thresholds.to_csv(out_dir / "best_threshold_by_algorithm.csv", index=False)
     summary.to_csv(out_dir / "algorithm_summary.csv", index=False)
     effects.to_csv(out_dir / "hyperparam_main_effects.csv", index=False)
-    corrs.to_csv(out_dir / "numeric_correlations.csv", index=False)
-    pareto.to_csv(out_dir / "pareto_candidates.csv", index=False)
+    correlations.to_csv(out_dir / "numeric_correlations.csv", index=False)
 
     report_path = out_dir / "report.md"
     write_report(
@@ -659,23 +944,30 @@ def main() -> None:
         tag=tag,
         manifest_path=manifest_path,
         roc_path=roc_path,
-        df=merged,
+        all_rows=merged,
+        analysis_rows=analysis_rows,
+        threshold_curve=threshold_curve,
+        best_thresholds=best_thresholds,
         summary=summary,
         effects=effects,
-        corrs=corrs,
-        pareto=pareto,
+        correlations=correlations,
         metrics=metrics,
         primary_metric=primary_metric,
+        threshold_mode=args.threshold_mode,
         top_k=args.top_k,
     )
 
     print(f"Read manifest: {manifest_path}")
     print(f"Read ROC data: {roc_path}")
-    print(f"Rows before threshold collapse: {before_collapse}")
-    print(f"Rows after threshold collapse:  {after_collapse}")
-    print(f"Wrote: {out_dir}")
+    print(f"Wrote output directory: {out_dir}")
     print("")
-    print(f"Open report:")
+    print("Key files:")
+    print(f"  {out_dir / 'report.md'}")
+    print(f"  {out_dir / 'best_threshold_by_algorithm.csv'}")
+    print(f"  {out_dir / 'threshold_curve_by_algorithm.csv'}")
+    print(f"  {out_dir / 'algorithm_summary.csv'}")
+    print("")
+    print("Open report:")
     print(f"  less {report_path}")
 
 
