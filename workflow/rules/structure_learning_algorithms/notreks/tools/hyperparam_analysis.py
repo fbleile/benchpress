@@ -875,7 +875,7 @@ def main() -> None:
 
     merged = roc.merge(
         manifest,
-        left_on="alg_id",
+        left_on="id",
         right_on="algorithm_id",
         how="inner",
     )
