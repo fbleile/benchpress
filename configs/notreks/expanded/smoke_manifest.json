@@ -35,11 +35,11 @@
     "path_id": "n000",
     "method_family": "notreks",
     "base_method": "notreks",
-    "hyperparameters_json": "{\"checkpoint\": 300, \"dag_reg\": 1.0, \"dag_s\": 1.0, \"dag_seq\": \"logdet\", \"function_class\": \"linear\", \"id\": \"notreks__grid000\", \"independence_alpha\": 0.05, \"independence_cache_dir\": \"results/notreks_cache/notreks_smoke\", \"independence_correction\": \"benjamini-hochberg\", \"independence_test\": \"spearman\", \"init\": \"zero\", \"lr\": 0.0003, \"max_iter\": 3000, \"mu_factor\": 0.1, \"mu_init\": 1.0, \"path_steps\": 5, \"power_iter_steps\": 5, \"regularizer\": \"l1\", \"regularizer_scale\": 0.01, \"scc_threshold\": 1e-08, \"score\": \"least_squares\", \"seed\": 1, \"threshold\": 0.1, \"timeout\": null, \"tol\": 1e-06, \"trek_reg\": 1.0, \"trek_seq\": \"exp\", \"warm_iter\": 3000}",
+    "hyperparameters_json": "{\"checkpoint\": 3000, \"dag_reg\": 1.0, \"dag_s\": 1.0, \"dag_seq\": \"logdet\", \"function_class\": \"linear\", \"id\": \"notreks__grid000\", \"independence_alpha\": 0.05, \"independence_cache_dir\": \"results/notreks_cache/notreks_smoke\", \"independence_correction\": \"benjamini-hochberg\", \"independence_test\": \"spearman\", \"init\": \"zero\", \"lr\": 0.0003, \"max_iter\": 30000, \"mu_factor\": 0.1, \"mu_init\": 1.0, \"path_steps\": 5, \"power_iter_steps\": 5, \"regularizer\": \"l1\", \"regularizer_scale\": 0.01, \"scc_threshold\": 1e-08, \"score\": \"least_squares\", \"seed\": 1, \"threshold\": 0.1, \"timeout\": null, \"tol\": 1e-06, \"trek_reg\": 1.0, \"trek_seq\": \"exp\", \"warm_iter\": 30000}",
     "config_path": "configs/notreks/expanded/smoke_config.json",
     "phase": "validation",
     "hyperparameters": {
-      "checkpoint": 300,
+      "checkpoint": 3000,
       "dag_reg": 1.0,
       "dag_s": 1.0,
       "dag_seq": "logdet",
@@ -51,7 +51,7 @@
       "independence_test": "spearman",
       "init": "zero",
       "lr": 0.0003,
-      "max_iter": 3000,
+      "max_iter": 30000,
       "mu_factor": 0.1,
       "mu_init": 1.0,
       "path_steps": 5,
@@ -66,7 +66,7 @@
       "tol": 1e-06,
       "trek_reg": 1.0,
       "trek_seq": "exp",
-      "warm_iter": 3000
+      "warm_iter": 30000
     }
   },
   {
@@ -74,11 +74,11 @@
     "path_id": "n001",
     "method_family": "notreks",
     "base_method": "notreks",
-    "hyperparameters_json": "{\"checkpoint\": 300, \"dag_reg\": 1.0, \"dag_s\": 1.0, \"dag_seq\": \"logdet\", \"function_class\": \"linear\", \"id\": \"notreks__grid001\", \"independence_alpha\": 0.05, \"independence_cache_dir\": \"results/notreks_cache/notreks_smoke\", \"independence_correction\": \"benjamini-hochberg\", \"independence_test\": \"gcastle_fisherz\", \"init\": \"zero\", \"lr\": 0.0003, \"max_iter\": 3000, \"mu_factor\": 0.1, \"mu_init\": 1.0, \"path_steps\": 5, \"power_iter_steps\": 5, \"regularizer\": \"l1\", \"regularizer_scale\": 0.01, \"scc_threshold\": 1e-08, \"score\": \"least_squares\", \"seed\": 1, \"threshold\": 0.1, \"timeout\": null, \"tol\": 1e-06, \"trek_reg\": 1.0, \"trek_seq\": \"exp\", \"warm_iter\": 3000}",
+    "hyperparameters_json": "{\"checkpoint\": 3000, \"dag_reg\": 1.0, \"dag_s\": 1.0, \"dag_seq\": \"logdet\", \"function_class\": \"linear\", \"id\": \"notreks__grid001\", \"independence_alpha\": 0.05, \"independence_cache_dir\": \"results/notreks_cache/notreks_smoke\", \"independence_correction\": \"benjamini-hochberg\", \"independence_test\": \"gcastle_fisherz\", \"init\": \"zero\", \"lr\": 0.0003, \"max_iter\": 30000, \"mu_factor\": 0.1, \"mu_init\": 1.0, \"path_steps\": 5, \"power_iter_steps\": 5, \"regularizer\": \"l1\", \"regularizer_scale\": 0.01, \"scc_threshold\": 1e-08, \"score\": \"least_squares\", \"seed\": 1, \"threshold\": 0.1, \"timeout\": null, \"tol\": 1e-06, \"trek_reg\": 1.0, \"trek_seq\": \"exp\", \"warm_iter\": 30000}",
     "config_path": "configs/notreks/expanded/smoke_config.json",
     "phase": "validation",
     "hyperparameters": {
-      "checkpoint": 300,
+      "checkpoint": 3000,
       "dag_reg": 1.0,
       "dag_s": 1.0,
       "dag_seq": "logdet",
@@ -90,7 +90,7 @@
       "independence_test": "gcastle_fisherz",
       "init": "zero",
       "lr": 0.0003,
-      "max_iter": 3000,
+      "max_iter": 30000,
       "mu_factor": 0.1,
       "mu_init": 1.0,
       "path_steps": 5,
@@ -105,7 +105,7 @@
       "tol": 1e-06,
       "trek_reg": 1.0,
       "trek_seq": "exp",
-      "warm_iter": 3000
+      "warm_iter": 30000
     }
   },
   {
@@ -113,11 +113,11 @@
     "path_id": "n002",
     "method_family": "notreks",
     "base_method": "notreks",
-    "hyperparameters_json": "{\"checkpoint\": 300, \"dag_reg\": 1.0, \"dag_s\": 1.0, \"dag_seq\": \"scc_power_iteration\", \"function_class\": \"linear\", \"id\": \"notreks__grid002\", \"independence_alpha\": 0.05, \"independence_cache_dir\": \"results/notreks_cache/notreks_smoke\", \"independence_correction\": \"benjamini-hochberg\", \"independence_test\": \"spearman\", \"init\": \"zero\", \"lr\": 0.0003, \"max_iter\": 3000, \"mu_factor\": 0.1, \"mu_init\": 1.0, \"path_steps\": 5, \"power_iter_steps\": 5, \"regularizer\": \"l1\", \"regularizer_scale\": 0.01, \"scc_threshold\": 1e-08, \"score\": \"least_squares\", \"seed\": 1, \"threshold\": 0.1, \"timeout\": null, \"tol\": 1e-06, \"trek_reg\": 1.0, \"trek_seq\": \"exp\", \"warm_iter\": 3000}",
+    "hyperparameters_json": "{\"checkpoint\": 3000, \"dag_reg\": 1.0, \"dag_s\": 1.0, \"dag_seq\": \"scc_power_iteration\", \"function_class\": \"linear\", \"id\": \"notreks__grid002\", \"independence_alpha\": 0.05, \"independence_cache_dir\": \"results/notreks_cache/notreks_smoke\", \"independence_correction\": \"benjamini-hochberg\", \"independence_test\": \"spearman\", \"init\": \"zero\", \"lr\": 0.0003, \"max_iter\": 30000, \"mu_factor\": 0.1, \"mu_init\": 1.0, \"path_steps\": 5, \"power_iter_steps\": 5, \"regularizer\": \"l1\", \"regularizer_scale\": 0.01, \"scc_threshold\": 1e-08, \"score\": \"least_squares\", \"seed\": 1, \"threshold\": 0.1, \"timeout\": null, \"tol\": 1e-06, \"trek_reg\": 1.0, \"trek_seq\": \"exp\", \"warm_iter\": 30000}",
     "config_path": "configs/notreks/expanded/smoke_config.json",
     "phase": "validation",
     "hyperparameters": {
-      "checkpoint": 300,
+      "checkpoint": 3000,
       "dag_reg": 1.0,
       "dag_s": 1.0,
       "dag_seq": "scc_power_iteration",
@@ -129,7 +129,7 @@
       "independence_test": "spearman",
       "init": "zero",
       "lr": 0.0003,
-      "max_iter": 3000,
+      "max_iter": 30000,
       "mu_factor": 0.1,
       "mu_init": 1.0,
       "path_steps": 5,
@@ -144,7 +144,7 @@
       "tol": 1e-06,
       "trek_reg": 1.0,
       "trek_seq": "exp",
-      "warm_iter": 3000
+      "warm_iter": 30000
     }
   },
   {
@@ -152,11 +152,11 @@
     "path_id": "n003",
     "method_family": "notreks",
     "base_method": "notreks",
-    "hyperparameters_json": "{\"checkpoint\": 300, \"dag_reg\": 1.0, \"dag_s\": 1.0, \"dag_seq\": \"scc_power_iteration\", \"function_class\": \"linear\", \"id\": \"notreks__grid003\", \"independence_alpha\": 0.05, \"independence_cache_dir\": \"results/notreks_cache/notreks_smoke\", \"independence_correction\": \"benjamini-hochberg\", \"independence_test\": \"gcastle_fisherz\", \"init\": \"zero\", \"lr\": 0.0003, \"max_iter\": 3000, \"mu_factor\": 0.1, \"mu_init\": 1.0, \"path_steps\": 5, \"power_iter_steps\": 5, \"regularizer\": \"l1\", \"regularizer_scale\": 0.01, \"scc_threshold\": 1e-08, \"score\": \"least_squares\", \"seed\": 1, \"threshold\": 0.1, \"timeout\": null, \"tol\": 1e-06, \"trek_reg\": 1.0, \"trek_seq\": \"exp\", \"warm_iter\": 3000}",
+    "hyperparameters_json": "{\"checkpoint\": 3000, \"dag_reg\": 1.0, \"dag_s\": 1.0, \"dag_seq\": \"scc_power_iteration\", \"function_class\": \"linear\", \"id\": \"notreks__grid003\", \"independence_alpha\": 0.05, \"independence_cache_dir\": \"results/notreks_cache/notreks_smoke\", \"independence_correction\": \"benjamini-hochberg\", \"independence_test\": \"gcastle_fisherz\", \"init\": \"zero\", \"lr\": 0.0003, \"max_iter\": 30000, \"mu_factor\": 0.1, \"mu_init\": 1.0, \"path_steps\": 5, \"power_iter_steps\": 5, \"regularizer\": \"l1\", \"regularizer_scale\": 0.01, \"scc_threshold\": 1e-08, \"score\": \"least_squares\", \"seed\": 1, \"threshold\": 0.1, \"timeout\": null, \"tol\": 1e-06, \"trek_reg\": 1.0, \"trek_seq\": \"exp\", \"warm_iter\": 30000}",
     "config_path": "configs/notreks/expanded/smoke_config.json",
     "phase": "validation",
     "hyperparameters": {
-      "checkpoint": 300,
+      "checkpoint": 3000,
       "dag_reg": 1.0,
       "dag_s": 1.0,
       "dag_seq": "scc_power_iteration",
@@ -168,7 +168,7 @@
       "independence_test": "gcastle_fisherz",
       "init": "zero",
       "lr": 0.0003,
-      "max_iter": 3000,
+      "max_iter": 30000,
       "mu_factor": 0.1,
       "mu_init": 1.0,
       "path_steps": 5,
@@ -183,7 +183,7 @@
       "tol": 1e-06,
       "trek_reg": 1.0,
       "trek_seq": "exp",
-      "warm_iter": 3000
+      "warm_iter": 30000
     }
   }
 ]

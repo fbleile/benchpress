@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -211,3 +212,68 @@ def test_repeated_independence_settings_reuse_cache(tmp_path: Path) -> None:
         )
         statuses.append(result.cache_status)
     assert statuses == ["miss", "hit", "hit"]
+
+
+def test_malformed_cache_entry_is_ignored_and_recomputed(tmp_path: Path) -> None:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    df = _data()
+    data_path = tmp_path / "data.csv"
+    cache_dir = tmp_path / "cache"
+    df.to_csv(data_path, index=False)
+    X = df.to_numpy(dtype=float)
+
+    first = pairwise_independence_candidates(
+        X,
+        method="spearman",
+        alpha=0.05,
+        correction="none",
+        columns=list(df.columns),
+        cache_dir=cache_dir,
+        dataset_path=data_path,
+    )
+    entry = cache_dir / str(first.cache_key)
+    rows_path = entry / "all_test_results.csv"
+    rows = pd.read_csv(rows_path).astype(object)
+    rows.loc[0, "p_value"] = "e"
+    rows.to_csv(rows_path, index=False)
+
+    second = pairwise_independence_candidates(
+        X,
+        method="spearman",
+        alpha=0.05,
+        correction="none",
+        columns=list(df.columns),
+        cache_dir=cache_dir,
+        dataset_path=data_path,
+    )
+    assert second.cache_status == "miss"
+    assert second.number_of_tests == first.number_of_tests
+    repaired = pd.read_csv(rows_path)
+    assert repaired["p_value"].map(np.isfinite).all()
+
+
+def test_parallel_cache_access_does_not_crash(tmp_path: Path) -> None:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    df = _data()
+    data_path = tmp_path / "data.csv"
+    cache_dir = tmp_path / "cache"
+    df.to_csv(data_path, index=False)
+    X = df.to_numpy(dtype=float)
+
+    def run_once() -> tuple[str, int]:
+        result = pairwise_independence_candidates(
+            X,
+            method="spearman",
+            alpha=0.05,
+            correction="benjamini-hochberg",
+            columns=list(df.columns),
+            cache_dir=cache_dir,
+            dataset_path=data_path,
+        )
+        return result.cache_status, result.number_of_tests
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda _: run_once(), range(8)))
+
+    assert {count for _, count in results} == {3}
+    assert all(status in {"hit", "miss"} for status, _ in results)

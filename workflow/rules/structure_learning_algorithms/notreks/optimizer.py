@@ -364,15 +364,13 @@ def _stage_objective_value_grad(
         return float("inf"), np.full_like(W, np.nan), score_value, dag_value, trek_value, reg_value
 
     grad = (
-        float(mu) * (score_grad + cfg.regularizer_scale * reg_grad)
-        + cfg.trek_reg * trek_grad
+        float(mu) * (score_grad + cfg.regularizer_scale * reg_grad + cfg.trek_reg * trek_grad)
         + cfg.dag_reg * dag_grad
     )
     np.fill_diagonal(grad, 0.0)
 
     objective = (
-        float(mu) * (score_value + cfg.regularizer_scale * reg_value)
-        + cfg.trek_reg * trek_value
+        float(mu) * (score_value + cfg.regularizer_scale * reg_value + cfg.trek_reg * trek_value)
         + cfg.dag_reg * dag_value
     )
     return float(objective), grad, score_value, dag_value, trek_value, reg_value

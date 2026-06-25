@@ -131,6 +131,54 @@ def _standardize(data: np.ndarray) -> np.ndarray:
     return centered / scale
 
 
+def _expected_fixed_data(
+    spec: FixedDataSpec,
+) -> tuple[np.ndarray, np.ndarray, list[str], list[tuple[int, int, np.ndarray, str]]]:
+    adjacency = _generate_dag(spec.d, spec.expected_degree, spec.graph_seed, spec.graph)
+    weights = _sample_weights(adjacency, spec.weight_seed)
+    columns = [f"X{index}" for index in range(spec.d)]
+    datasets = []
+    for n in spec.n_values:
+        for seed in spec.seeds:
+            data = _sample_linear_gaussian(weights, n, seed)
+            if spec.standardized:
+                data = _standardize(data)
+            filename = f"n{n}s{seed}.csv" if len(spec.n_values) > 1 else f"s{seed}.csv"
+            datasets.append((n, seed, data, filename))
+    return adjacency, weights, columns, datasets
+
+
+def _existing_fixed_data_matches(
+    data_dir: Path,
+    graph_path: Path,
+    adjacency: np.ndarray,
+    datasets: list[tuple[int, int, np.ndarray, str]],
+) -> bool:
+    if not data_dir.is_dir() or not graph_path.is_file():
+        return False
+    try:
+        existing_graph = pd.read_csv(graph_path).to_numpy(dtype=int)
+    except Exception:
+        return False
+    if existing_graph.shape != adjacency.shape or not np.array_equal(existing_graph, adjacency):
+        return False
+
+    expected_names = {filename for _, _, _, filename in datasets}
+    existing_names = {path.name for path in data_dir.glob("*.csv")}
+    if existing_names != expected_names:
+        return False
+
+    for _, _, data, filename in datasets:
+        path = data_dir / filename
+        try:
+            existing = pd.read_csv(path).to_numpy(dtype=float)
+        except Exception:
+            return False
+        if existing.shape != data.shape or not np.allclose(existing, data, rtol=1e-10, atol=1e-10):
+            return False
+    return True
+
+
 def prepare_fixed_data(
     repo_root: Path,
     run_dir: Path,
@@ -144,27 +192,22 @@ def prepare_fixed_data(
     data_dir = repo_root / "resources/data/mydatasets" / data_id
     graph_path = repo_root / "resources/adjmat/myadjmats" / graph_id
     metadata_path = run_dir / "fixed_data/metadata.json"
-    if data_dir.exists():
-        shutil.rmtree(data_dir)
-    data_dir.mkdir(parents=True, exist_ok=False)
     graph_path.parent.mkdir(parents=True, exist_ok=True)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
-    adjacency = _generate_dag(spec.d, spec.expected_degree, spec.graph_seed, spec.graph)
-    weights = _sample_weights(adjacency, spec.weight_seed)
-    columns = [f"X{index}" for index in range(spec.d)]
-    pd.DataFrame(adjacency, columns=columns).to_csv(graph_path, index=False)
-
+    adjacency, _weights, columns, datasets = _expected_fixed_data(spec)
     files = []
-    for n in spec.n_values:
-        for seed in spec.seeds:
-            data = _sample_linear_gaussian(weights, n, seed)
-            if spec.standardized:
-                data = _standardize(data)
-            filename = f"n{n}s{seed}.csv" if len(spec.n_values) > 1 else f"s{seed}.csv"
+    if not _existing_fixed_data_matches(data_dir, graph_path, adjacency, datasets):
+        if data_dir.exists():
+            shutil.rmtree(data_dir)
+        data_dir.mkdir(parents=True, exist_ok=False)
+        pd.DataFrame(adjacency, columns=columns).to_csv(graph_path, index=False)
+        for _, _, data, filename in datasets:
             path = data_dir / filename
             pd.DataFrame(data, columns=columns).to_csv(path, index=False)
-            files.append(str(path.relative_to(repo_root)))
+
+    for _, _, _, filename in datasets:
+        files.append(str((data_dir / filename).relative_to(repo_root)))
 
     payload = {
         "spec": asdict(spec),

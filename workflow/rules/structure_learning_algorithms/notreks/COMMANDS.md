@@ -9,6 +9,18 @@ Apptainer/Singularity compatibility.
 Validation grids tune/select methods. Selected benchmarks use fresh benchmark
 frames and selected methods only.
 
+Pipeline:
+
+```text
+validation grid JSON -> expand-grid -> validation config + manifest
+  -> local dry-run or SLURM run -> select-validation-best -> selection JSON
+  -> build-selected-benchmark + fresh benchmark frame
+  -> selected benchmark config + manifest -> local dry-run or SLURM run
+```
+
+Local dry-runs use `snakemake -n` to validate the DAG and do not run jobs.
+SLURM runs actually execute the benchmark on LRZ.
+
 ## 0. Cluster setup
 
 ```bash
@@ -33,10 +45,7 @@ python workflow/rules/structure_learning_algorithms/notreks/tests/manual_notreks
 ## 2. Smoke validation grid
 
 ```bash
-python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py expand-grid \
-  --grid configs/notreks/grids/smoke_grid.json \
-  --out-config configs/notreks/expanded/smoke_config.json \
-  --out-manifest configs/notreks/expanded/smoke_manifest.csv
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py expand-grid --tag smoke
 ```
 
 ```bash
@@ -63,22 +72,15 @@ sbatch --clusters=serial \
 ## 3. Select best methods from smoke validation
 
 ```bash
-python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py select-validation-best \
-  --config configs/notreks/expanded/smoke_config.json \
-  --manifest configs/notreks/expanded/smoke_manifest.csv \
-  --out-dir configs/notreks/selected \
-  --tag smoke \
-  --primary-metric SHD_cpdag
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  select-validation-best --tag smoke --primary-metric SHD_cpdag
 ```
 
 ## 4. Smoke selected benchmark
 
 ```bash
-python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py build-selected-benchmark \
-  --frame configs/notreks/benchmarks/smoke_benchmark_frame.json \
-  --selection configs/notreks/selected/smoke_best_by_method_family.json \
-  --out-config configs/notreks/expanded/selected_smoke_benchmark_config.json \
-  --out-manifest configs/notreks/expanded/selected_smoke_benchmark_manifest.csv
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  build-selected-benchmark --tag smoke
 ```
 
 ```bash
@@ -102,13 +104,10 @@ sbatch --clusters=serial \
   workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_smoke.sh
 ```
 
-## 5. Full validation grid
+## 5. Hyperparameter validation grid
 
 ```bash
-python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py expand-grid \
-  --grid configs/notreks/grids/full_benchmark_grid.json \
-  --out-config configs/notreks/expanded/full_benchmark_config.json \
-  --out-manifest configs/notreks/expanded/full_benchmark_manifest.csv
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py expand-grid --tag hyperparam
 ```
 
 ```bash
@@ -116,41 +115,39 @@ snakemake -n \
   --cores 1 \
   --use-singularity \
   --snakefile workflow/Snakefile \
-  --configfile configs/notreks/expanded/full_benchmark_config.json
+  --configfile configs/notreks/expanded/hyperparam_config.json
 ```
 
 ```bash
-mkdir -p results/notreks/full_benchmark/logs/slurm
+mkdir -p results/notreks/hyperparam/logs/slurm
 
-RUN_DIR=results/notreks/full_benchmark \
-CONFIG=configs/notreks/expanded/full_benchmark_config.json \
+RUN_DIR=results/notreks/hyperparam \
+CONFIG=configs/notreks/expanded/hyperparam_config.json \
 SNAKEMAKE_CORES=16 \
 sbatch --clusters=serial \
-  --export=ALL,RUN_DIR=results/notreks/full_benchmark,CONFIG=configs/notreks/expanded/full_benchmark_config.json,SNAKEMAKE_CORES=16 \
-  -o results/notreks/full_benchmark/logs/slurm/%x-%j.out \
-  -e results/notreks/full_benchmark/logs/slurm/%x-%j.err \
+  --export=ALL,RUN_DIR=results/notreks/hyperparam,CONFIG=configs/notreks/expanded/hyperparam_config.json,SNAKEMAKE_CORES=16 \
+  -o results/notreks/hyperparam/logs/slurm/%x-%j.out \
+  -e results/notreks/hyperparam/logs/slurm/%x-%j.err \
   workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh
 ```
 
-## 6. Select best methods from full validation
+## 6. Select best methods from hyperparameter validation
 
 ```bash
-python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py select-validation-best \
-  --config configs/notreks/expanded/full_benchmark_config.json \
-  --manifest configs/notreks/expanded/full_benchmark_manifest.csv \
-  --out-dir configs/notreks/selected \
-  --tag full_benchmark \
-  --primary-metric SHD_cpdag
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  select-validation-best --tag hyperparam --primary-metric SHD_cpdag
+```
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py \
+  --tag hyperparam
 ```
 
 ## 7. Full selected benchmark
 
 ```bash
-python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py build-selected-benchmark \
-  --frame configs/notreks/benchmarks/full_benchmark_frame.json \
-  --selection configs/notreks/selected/full_benchmark_best_by_method_family.json \
-  --out-config configs/notreks/expanded/selected_full_benchmark_config.json \
-  --out-manifest configs/notreks/expanded/selected_full_benchmark_manifest.csv
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  build-selected-benchmark --tag full_benchmark
 ```
 
 ```bash

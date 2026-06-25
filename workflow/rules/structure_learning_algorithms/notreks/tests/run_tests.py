@@ -43,6 +43,8 @@ def main() -> None:
         independence_tests.test_gcastle_raw_cache_reused_for_alpha_and_correction(path / "gcastle-cache")
         independence_tests.test_no_trek_ground_truth_diagnostic_tiny_graph()
         independence_tests.test_repeated_independence_settings_reuse_cache(path / "reuse")
+        independence_tests.test_malformed_cache_entry_is_ignored_and_recomputed(path / "malformed")
+        independence_tests.test_parallel_cache_access_does_not_crash(path / "parallel-cache")
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp)
@@ -74,7 +76,9 @@ def main() -> None:
         selection_tests.test_selection_uses_secondary_tie_breaker(path / "selection-tie")
         selection_tests.test_selection_works_after_moving_run_folder(path / "selection-move")
         selection_tests.test_inject_best_preserves_non_notreks_algorithms(path / "inject")
+        validation_tests.test_tag_derived_paths_are_standardized()
         validation_tests.test_prepare_validation_tiny_writes_one_config_and_manifest(path / "validation-tiny")
+        validation_tests.test_prepare_validation_reuses_matching_fixed_data_files(path / "validation-reuse-fixed")
         validation_tests.test_default_benchmark_frames_use_fresh_seeds()
         validation_tests.test_validation_tiny_expected_run_counts(path / "validation-counts")
         validation_tests.test_prepare_validation_local10_avoids_logdet_power_iter_duplicates(path / "validation-local10")

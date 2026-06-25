@@ -15,6 +15,15 @@ from validation import (
     select_best_by_method_family,
     write_final_benchmark_config,
 )
+from cli import (  # noqa: E402
+    _tag_benchmark_frame_path,
+    _tag_config_path,
+    _tag_grid_path,
+    _tag_manifest_path,
+    _tag_selected_benchmark_config_path,
+    _tag_selected_benchmark_manifest_path,
+    _tag_selected_dir,
+)
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -83,6 +92,22 @@ def _simple_cartesian_grid(repo: Path) -> Path:
     return grid_path
 
 
+def test_tag_derived_paths_are_standardized() -> None:
+    assert _tag_grid_path("hyperparam") == Path("configs/notreks/grids/hyperparam_grid.json")
+    assert _tag_config_path("hyperparam") == Path("configs/notreks/expanded/hyperparam_config.json")
+    assert _tag_manifest_path("hyperparam") == Path("configs/notreks/expanded/hyperparam_manifest.csv")
+    assert _tag_selected_dir() == Path("configs/notreks/selected")
+    assert _tag_benchmark_frame_path("full_benchmark") == Path(
+        "configs/notreks/benchmarks/full_benchmark_frame.json"
+    )
+    assert _tag_selected_benchmark_config_path("full_benchmark") == Path(
+        "configs/notreks/expanded/selected_full_benchmark_config.json"
+    )
+    assert _tag_selected_benchmark_manifest_path("full_benchmark") == Path(
+        "configs/notreks/expanded/selected_full_benchmark_manifest.csv"
+    )
+
+
 def test_expand_grid_writes_top_level_config_and_manifest(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     grid_path = _simple_cartesian_grid(repo)
@@ -125,10 +150,10 @@ def test_expand_grid_writes_top_level_config_and_manifest(tmp_path: Path) -> Non
 
 def test_default_benchmark_frames_use_fresh_seeds() -> None:
     repo = Path(__file__).resolve().parents[5]
-    for tag in ("smoke", "full_benchmark"):
+    for tag in ("smoke", "hyperparam"):
         grid = json.loads((repo / f"configs/notreks/grids/{tag}_grid.json").read_text())
-        frame_name = "smoke" if tag == "smoke" else "full"
-        frame = json.loads((repo / f"configs/notreks/benchmarks/{frame_name}_benchmark_frame.json").read_text())
+        frame_file = "smoke_benchmark_frame.json" if tag == "smoke" else "full_benchmark_frame.json"
+        frame = json.loads((repo / "configs/notreks/benchmarks" / frame_file).read_text())
         assert set(grid["data"]["seeds"]).isdisjoint(set(frame["data"]["seeds"]))
 
 
@@ -175,6 +200,23 @@ def test_prepare_validation_tiny_writes_one_config_and_manifest(tmp_path: Path) 
     assert notreks_full["hyperparameters"]["independence_test"] == "gcastle_fisherz"
     assert notreks_full["hyperparameters"]["dag_seq"] == "logdet"
     assert notreks_full["hyperparameters"]["independence_cache_dir"].endswith("independence_cache")
+
+
+def test_prepare_validation_reuses_matching_fixed_data_files(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    run_dir = repo / "results/reuse-fixed-data"
+    prepared = prepare_validation_run(repo, run_dir, "tiny")
+    config = json.loads(prepared.validation_config_path.read_text())
+    data_id = config["benchmark_setup"][0]["data"][0]["data_id"]
+    data_path = repo / "resources/data/mydatasets" / data_id
+    graph_id = config["benchmark_setup"][0]["data"][0]["graph_id"]
+    graph_path = repo / "resources/adjmat/myadjmats" / graph_id
+    before = (data_path.stat().st_mtime_ns, graph_path.stat().st_mtime_ns)
+
+    prepare_validation_run(repo, run_dir, "tiny")
+
+    after = (data_path.stat().st_mtime_ns, graph_path.stat().st_mtime_ns)
+    assert after == before
 
 
 def test_validation_tiny_expected_run_counts(tmp_path: Path) -> None:

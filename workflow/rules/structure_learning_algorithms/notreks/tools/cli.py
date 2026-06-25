@@ -50,6 +50,46 @@ def _repo_relative(path: Path) -> str:
         return str(path)
 
 
+def _tag_grid_path(tag: str) -> Path:
+    return Path("configs/notreks/grids") / f"{tag}_grid.json"
+
+
+def _tag_config_path(tag: str) -> Path:
+    return Path("configs/notreks/expanded") / f"{tag}_config.json"
+
+
+def _tag_manifest_path(tag: str) -> Path:
+    return Path("configs/notreks/expanded") / f"{tag}_manifest.csv"
+
+
+def _tag_selected_dir() -> Path:
+    return Path("configs/notreks/selected")
+
+
+def _tag_benchmark_frame_path(tag: str) -> Path:
+    base = Path("configs/notreks/benchmarks")
+    preferred = base / f"{tag}_frame.json"
+    if preferred.exists():
+        return preferred
+    return base / f"{tag}_benchmark_frame.json"
+
+
+def _tag_selected_benchmark_config_path(tag: str) -> Path:
+    if tag.endswith("_benchmark"):
+        return Path("configs/notreks/expanded") / f"selected_{tag}_config.json"
+    return Path("configs/notreks/expanded") / f"selected_{tag}_benchmark_config.json"
+
+
+def _tag_selected_benchmark_manifest_path(tag: str) -> Path:
+    if tag.endswith("_benchmark"):
+        return Path("configs/notreks/expanded") / f"selected_{tag}_manifest.csv"
+    return Path("configs/notreks/expanded") / f"selected_{tag}_benchmark_manifest.csv"
+
+
+def _tag_selection_path(tag: str) -> Path:
+    return _tag_selected_dir() / f"{tag}_best_by_method_family.json"
+
+
 def _write_validation_cmd(run_dir: Path, validation_config: Path, *, cores: str = "1") -> Path:
     cmd_path = run_dir / "cmd.txt"
     config_arg = _repo_relative(validation_config)
@@ -311,6 +351,12 @@ def prepare_experiment_command(args: argparse.Namespace) -> None:
 
 
 def expand_grid_command(args: argparse.Namespace) -> None:
+    if args.tag:
+        args.grid = args.grid or _tag_grid_path(args.tag)
+        args.out_config = args.out_config or _tag_config_path(args.tag)
+        args.out_manifest = args.out_manifest or _tag_manifest_path(args.tag)
+    if args.grid is None or args.out_config is None or args.out_manifest is None:
+        raise ValueError("Provide --tag, or provide --grid, --out-config, and --out-manifest")
     expanded = expand_grid_config(
         REPO_ROOT,
         _resolve(args.grid),
@@ -325,6 +371,27 @@ def expand_grid_command(args: argparse.Namespace) -> None:
 
 
 def build_selected_benchmark_command(args: argparse.Namespace) -> None:
+    if args.tag:
+        args.frame = args.frame or _tag_benchmark_frame_path(args.tag)
+        if args.selection is None and args.frame is not None:
+            frame_path = _resolve(args.frame)
+            if frame_path.is_file():
+                frame = json.loads(frame_path.read_text())
+                source = frame.get("selection", {}).get("source")
+                if source:
+                    args.selection = Path(source)
+        args.selection = args.selection or _tag_selection_path(args.tag)
+        args.out_config = args.out_config or _tag_selected_benchmark_config_path(args.tag)
+        args.out_manifest = args.out_manifest or _tag_selected_benchmark_manifest_path(args.tag)
+    if (
+        args.frame is None
+        or args.selection is None
+        or args.out_config is None
+        or args.out_manifest is None
+    ):
+        raise ValueError(
+            "Provide --tag, or provide --frame, --selection, --out-config, and --out-manifest"
+        )
     built = build_selected_benchmark_config(
         REPO_ROOT,
         _resolve(args.frame),
@@ -368,6 +435,10 @@ def print_slurm_launch_command(args: argparse.Namespace) -> None:
 
 
 def select_validation_command(args: argparse.Namespace) -> None:
+    if args.tag and args.config is None and args.manifest is None and args.out_dir is None:
+        args.config = _tag_config_path(args.tag)
+        args.manifest = _tag_manifest_path(args.tag)
+        args.out_dir = _tag_selected_dir()
     if args.config is not None or args.manifest is not None:
         if args.config is None or args.manifest is None or args.out_dir is None:
             raise ValueError("--config, --manifest, and --out-dir must be provided together")
@@ -493,16 +564,18 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_experiment.set_defaults(func=prepare_experiment_command)
 
     expand_grid = subparsers.add_parser("expand-grid")
-    expand_grid.add_argument("--grid", type=Path, required=True)
-    expand_grid.add_argument("--out-config", type=Path, required=True)
-    expand_grid.add_argument("--out-manifest", type=Path, required=True)
+    expand_grid.add_argument("--tag", default=None)
+    expand_grid.add_argument("--grid", type=Path, default=None)
+    expand_grid.add_argument("--out-config", type=Path, default=None)
+    expand_grid.add_argument("--out-manifest", type=Path, default=None)
     expand_grid.set_defaults(func=expand_grid_command)
 
     selected_benchmark = subparsers.add_parser("build-selected-benchmark")
-    selected_benchmark.add_argument("--frame", type=Path, required=True)
-    selected_benchmark.add_argument("--selection", type=Path, required=True)
-    selected_benchmark.add_argument("--out-config", type=Path, required=True)
-    selected_benchmark.add_argument("--out-manifest", type=Path, required=True)
+    selected_benchmark.add_argument("--tag", default=None)
+    selected_benchmark.add_argument("--frame", type=Path, default=None)
+    selected_benchmark.add_argument("--selection", type=Path, default=None)
+    selected_benchmark.add_argument("--out-config", type=Path, default=None)
+    selected_benchmark.add_argument("--out-manifest", type=Path, default=None)
     selected_benchmark.set_defaults(func=build_selected_benchmark_command)
 
     slurm_launch = subparsers.add_parser("print-slurm-launch")

@@ -140,19 +140,6 @@ def _print_config_sanity(cfg: NotreksConfig) -> None:
         f"power_iter_steps={cfg.power_iter_steps}, scc_threshold={cfg.scc_threshold}, "
         f"independence_cache_dir={cfg.independence_cache_dir}"
     )
-    name = cfg.algorithm_id.lower()
-    threshold_tags = {
-        "threshold008": 0.08,
-        "th008": 0.08,
-        "threshold030": 0.30,
-        "th030": 0.30,
-    }
-    for tag, expected in threshold_tags.items():
-        if tag in name and abs(cfg.threshold - expected) > 1e-12:
-            print(
-                "WARNING: NOTREKS algorithm id appears to encode "
-                f"{tag}, but configured threshold is {cfg.threshold}."
-            )
 
 
 def _write_diagnostics(path: Path, cfg: NotreksConfig, diagnostics) -> None:

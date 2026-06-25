@@ -145,7 +145,7 @@ def test_stage_gradient_with_trek_inside_mu():
     _assert_stage_grad_matches_finite_difference(cfg, pairs=[(0, 2), (1, 3)])
 
 
-def test_stage_trek_scaling_is_inside_mu():
+def test_stage_trek_scaling_matches_current_objective():
     X = _fixed_data()
     W = _fixed_W()
     cfg_no_trek = _cfg(trek_seq="exp", trek_reg=0.0, regularizer="none")
@@ -157,7 +157,7 @@ def test_stage_trek_scaling_is_inside_mu():
     _, _, _, _, trek_value, _ = _stage_objective_value_grad(W, X, cfg_with_trek, pairs, mu=1.0, s=1.0)
 
     observed = value_with_trek - value_no_trek
-    expected = 0.1 * cfg_with_trek.trek_reg * trek_value
+    expected = cfg_with_trek.trek_reg * trek_value
     assert abs(observed - expected) < 1e-8
 
 
@@ -350,10 +350,11 @@ def test_invalid_trek_pairs_raise_value_error():
             raise AssertionError(f"expected ValueError for pairs={pairs}")
 
 
-def test_threshold_name_warning_is_present():
+def test_legacy_threshold_name_warning_is_removed():
     text = (Path(__file__).resolve().parents[1] / "script.py").read_text()
-    assert "threshold008" in text
-    assert "configured threshold" in text
+    assert "threshold008" not in text
+    assert "configured threshold" not in text
+    assert "_config_value(\"threshold\")" in text
 
 
 def test_optimizer_no_trek_sanity():

@@ -1,6 +1,8 @@
 import csv
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,6 +136,38 @@ def _file_sha256(path: Path) -> Optional[str]:
     return digest.hexdigest()
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def _atomic_write_csv(path: Path, fieldnames: Sequence[str], rows: Sequence[Dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
 def dataset_sha256(X: np.ndarray) -> str:
     X = np.ascontiguousarray(np.asarray(X, dtype=np.float64))
     digest = hashlib.sha256()
@@ -224,27 +258,37 @@ def _load_cache_entry(entry_dir: Path, payload: Dict[str, object]) -> Optional[L
     results_path = entry_dir / "all_test_results.csv"
     if not metadata_path.is_file() or not results_path.is_file():
         return None
-    metadata = json.loads(metadata_path.read_text())
-    if metadata.get("payload") != payload:
-        return None
+    try:
+        metadata = json.loads(metadata_path.read_text())
+        if metadata.get("payload") != payload:
+            return None
 
-    rows: List[Dict[str, object]] = []
-    with results_path.open(newline="") as handle:
-        for raw in csv.DictReader(handle):
-            row = {
-                "i": int(raw["i"]),
-                "j": int(raw["j"]),
-                "pair_key": raw["pair_key"],
-                "statistic": float(raw["statistic"]) if raw["statistic"] else float("nan"),
-                "p_value": float(raw["p_value"]) if raw["p_value"] else float("nan"),
-                "dof": float(raw["dof"]) if raw.get("dof") else float("nan"),
-                "raw_test_name": raw.get("raw_test_name", str(payload["independence_test"])),
-                "adjusted_p_value": float(raw["adjusted_p_value"]) if raw.get("adjusted_p_value") else float("nan"),
-                "alpha_used": float(raw["alpha_used"]),
-                "accepted_independence": raw["accepted_independence"].lower() == "true",
-            }
-            rows.append(row)
-    return rows
+        rows: List[Dict[str, object]] = []
+        with results_path.open(newline="") as handle:
+            reader = csv.DictReader(handle)
+            required = {"i", "j", "pair_key", "statistic", "p_value", "dof", "raw_test_name"}
+            if reader.fieldnames is None or not required.issubset(set(reader.fieldnames)):
+                return None
+            for raw in reader:
+                p_value = float(raw["p_value"])
+                if not np.isfinite(p_value):
+                    return None
+                row = {
+                    "i": int(raw["i"]),
+                    "j": int(raw["j"]),
+                    "pair_key": raw["pair_key"],
+                    "statistic": float(raw["statistic"]) if raw["statistic"] else float("nan"),
+                    "p_value": p_value,
+                    "dof": float(raw["dof"]) if raw.get("dof") else float("nan"),
+                    "raw_test_name": raw.get("raw_test_name") or str(payload["independence_test"]),
+                }
+                rows.append(row)
+        expected = int(payload["d"]) * (int(payload["d"]) - 1) // 2
+        if len(rows) != expected:
+            return None
+        return rows
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, csv.Error):
+        return None
 
 
 def _write_cache_entry(
@@ -266,16 +310,16 @@ def _write_cache_entry(
         "alpha_used",
         "accepted_independence",
     ]
-    with (entry_dir / "all_test_results.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(field) for field in fields})
-    with (entry_dir / "accepted_pairs.csv").open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["i", "j"])
-        writer.writeheader()
-        for i, j in result.pairs:
-            writer.writerow({"i": i, "j": j})
+    _atomic_write_csv(
+        entry_dir / "all_test_results.csv",
+        fields,
+        [{field: row.get(field) for field in fields} for row in rows],
+    )
+    _atomic_write_csv(
+        entry_dir / "accepted_pairs.csv",
+        ["i", "j"],
+        [{"i": i, "j": j} for i, j in result.pairs],
+    )
 
     metadata = {
         "cache_key": result.cache_key,
@@ -291,7 +335,7 @@ def _write_cache_entry(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "implementation_version": INDEPENDENCE_CACHE_VERSION,
     }
-    (entry_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    _atomic_write_text(entry_dir / "metadata.json", json.dumps(metadata, indent=2) + "\n")
 
 
 def _compute_result_from_pvalues(
@@ -432,7 +476,6 @@ def pairwise_independence_candidates(
                 cache_key=cache_key,
                 cache_dir=cache_entry_dir,
             )
-            _write_cache_entry(cache_entry_dir, payload, result)
             return result
 
     raw_pairs: List[Pair] = []

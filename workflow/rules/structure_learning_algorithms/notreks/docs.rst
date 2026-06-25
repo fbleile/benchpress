@@ -3,122 +3,113 @@ NOTREKS
 
 NOTREKS is a Benchpress structure-learning module with a linear optimizer,
 optional no-trek regularization, cached marginal-independence tests, and a
-small hyperparameter-selection workflow.
+small validation/selection workflow.  The concise copy-paste command sheet is
+``workflow/rules/structure_learning_algorithms/notreks/COMMANDS.md``.
 
-Experiment layout
------------------
+NOTREKS experiment workflow
+---------------------------
 
-Human-edited grids live under::
+There are two phases.
 
-  configs/notreks/grids/
+1. Validation / selection phase
+   Expand a Cartesian hyperparameter grid, run it, then select one best
+   configuration per method family.
 
-Selected-method benchmark frames live under::
+2. Selected benchmark phase
+   Combine fresh benchmark data with the selected methods and run the final
+   benchmark.  This phase does not rerun the full hyperparameter grid.
 
-  configs/notreks/benchmarks/
+::
 
-Expanded Benchpress configs and manifests are written under::
+  Validation grid JSON
+        |
+        v
+  expand-grid
+        |
+        v
+  expanded validation Benchpress config + manifest
+        |
+        v
+  local dry-run or SLURM run
+        |
+        v
+  select-validation-best
+        |
+        v
+  selection JSON
+        |
+        v
+  build-selected-benchmark + benchmark frame
+        |
+        v
+  selected benchmark Benchpress config + manifest
+        |
+        v
+  local dry-run or SLURM run
 
-  configs/notreks/expanded/
-
-Selection outputs that define the next run are written under::
-
-  configs/notreks/selected/
-
-Benchmark outputs remain in Benchpress's normal ``results/`` tree.  Generated
-NOTREKS fixed-data resources are reproducible and are ignored by git.
-
-Validation phase
-----------------
-
-Smoke grid::
-
-  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
-    expand-grid \
-    --grid configs/notreks/grids/smoke_grid.json \
-    --out-config configs/notreks/expanded/smoke_config.json \
-    --out-manifest configs/notreks/expanded/smoke_manifest.csv
-
-Full validation grid::
-
-  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
-    expand-grid \
-    --grid configs/notreks/grids/full_benchmark_grid.json \
-    --out-config configs/notreks/expanded/full_benchmark_config.json \
-    --out-manifest configs/notreks/expanded/full_benchmark_manifest.csv
-
-The grid format is intentionally simple: each enabled method has a ``grid``
-dictionary, and list-valued entries are expanded by Cartesian product.  The
-manifest maps compact ids such as ``notreks__grid000`` back to full
-hyperparameters, keeping Snakemake output paths short.
-
-After validation finishes, select one setting per method family::
-
-  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
-    select-validation-best \
-    --config configs/notreks/expanded/smoke_config.json \
-    --manifest configs/notreks/expanded/smoke_manifest.csv \
-    --out-dir configs/notreks/selected \
-    --tag smoke \
-    --primary-metric SHD_cpdag
-
-Benchmark phase
+Tag-based paths
 ---------------
 
-Selected-method benchmark configs combine fresh benchmark data with a selection
-JSON.  They do not rerun the whole hyperparameter grid.
+The normal CLI interface is driven by ``--tag``.  For example,
+``--tag hyperparam`` derives:
 
-Smoke selected benchmark::
+* grid: ``configs/notreks/grids/hyperparam_grid.json``
+* expanded config: ``configs/notreks/expanded/hyperparam_config.json``
+* manifest CSV/JSON: ``configs/notreks/expanded/hyperparam_manifest.csv/json``
+* selection outputs: ``configs/notreks/selected/hyperparam_*``
+* run directory: ``results/notreks/hyperparam``
 
-  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
-    build-selected-benchmark \
-    --frame configs/notreks/benchmarks/smoke_benchmark_frame.json \
-    --selection configs/notreks/selected/smoke_best_by_method_family.json \
-    --out-config configs/notreks/expanded/selected_smoke_benchmark_config.json \
-    --out-manifest configs/notreks/expanded/selected_smoke_benchmark_manifest.csv
+Explicit path arguments remain available for debugging and unusual runs.
 
-Full selected benchmark::
+Local dry-run vs SLURM run
+--------------------------
 
-  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
-    build-selected-benchmark \
-    --frame configs/notreks/benchmarks/full_benchmark_frame.json \
-    --selection configs/notreks/selected/full_benchmark_best_by_method_family.json \
-    --out-config configs/notreks/expanded/selected_full_benchmark_config.json \
-    --out-manifest configs/notreks/expanded/selected_full_benchmark_manifest.csv
+A local dry-run only checks that the generated Benchpress/Snakemake config
+produces a valid DAG.  It does not run the benchmark.
 
-Local dry-run
+Use local dry-runs before submitting to SLURM.
+
+A SLURM run actually executes the jobs on LRZ.  Snakemake 7 is used for
+compatibility with the Python-3.7 gCastle containers, so the flag is
+``--use-singularity``.  The LRZ driver loads Apptainer and creates a
+``singularity -> apptainer`` shim if needed.
+
+Dry-run template::
+
+  snakemake -n \
+    --cores 1 \
+    --use-singularity \
+    --snakefile workflow/Snakefile \
+    --configfile <CONFIG>
+
+Cluster setup
 -------------
 
-Benchpress currently uses Snakemake 7 for Python-3.7 gCastle container
-compatibility, so use ``--use-singularity`` locally and on LRZ::
+::
+
+  cd ~/benchpress
+  git pull --ff-only origin add-notreks-module
+
+  eval "$(~/bin/micromamba shell hook -s bash)"
+  micromamba activate benchpress-notreks
+
+  module load apptainer/1.3.4
+  module load squashfs/4.6.1
+
+  export PYTHONPATH="$PWD:${PYTHONPATH:-}"
+
+Four canonical workflows
+------------------------
+
+1. Smoke validation + selection::
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py expand-grid --tag smoke
 
   snakemake -n \
     --cores 1 \
     --use-singularity \
     --snakefile workflow/Snakefile \
     --configfile configs/notreks/expanded/smoke_config.json
-
-Manual NOTREKS example
-----------------------
-
-A tiny direct Python example can be run without Snakemake::
-
-  python workflow/rules/structure_learning_algorithms/notreks/tests/manual_notreks_example.py
-
-SLURM modes
------------
-
-There are only two user-facing SLURM scripts:
-
-* ``notreks_driver_smoke.sh``: ``serial_std``, 8 cores, short walltime.
-* ``notreks_driver_heavy.sh``: ``serial_std``, 16 cores, 24 hour walltime.
-
-Both use the same common Snakemake driver.  Smoke is smaller only in datasets,
-variants, and resources.  On LRZ the driver loads ``apptainer/1.3.4`` and
-``squashfs/4.6.1`` because Apptainer image pulls need ``mksquashfs``.  With
-Snakemake 7 the driver chooses ``--use-singularity`` and creates a local
-``singularity -> apptainer`` shim when needed.
-
-Smoke submit::
 
   mkdir -p results/notreks/smoke/logs/slurm
   RUN_DIR=results/notreks/smoke \
@@ -130,47 +121,139 @@ Smoke submit::
     -e results/notreks/smoke/logs/slurm/%x-%j.err \
     workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_smoke.sh
 
-Heavy validation or selected-benchmark submit on ``serial_std``::
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    select-validation-best --tag smoke --primary-metric SHD_cpdag
 
-  mkdir -p results/notreks/full_benchmark/logs/slurm
-  RUN_DIR=results/notreks/full_benchmark \
-  CONFIG=configs/notreks/expanded/full_benchmark_config.json \
+2. Smoke selected benchmark::
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    build-selected-benchmark --tag smoke
+
+  snakemake -n \
+    --cores 1 \
+    --use-singularity \
+    --snakefile workflow/Snakefile \
+    --configfile configs/notreks/expanded/selected_smoke_benchmark_config.json
+
+  mkdir -p results/notreks/benchmark_smoke/logs/slurm
+  RUN_DIR=results/notreks/benchmark_smoke \
+  CONFIG=configs/notreks/expanded/selected_smoke_benchmark_config.json \
+  SNAKEMAKE_CORES=8 \
+  sbatch --clusters=serial \
+    --export=ALL,RUN_DIR=results/notreks/benchmark_smoke,CONFIG=configs/notreks/expanded/selected_smoke_benchmark_config.json,SNAKEMAKE_CORES=8 \
+    -o results/notreks/benchmark_smoke/logs/slurm/%x-%j.out \
+    -e results/notreks/benchmark_smoke/logs/slurm/%x-%j.err \
+    workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_smoke.sh
+
+3. Hyperparameter validation + selection::
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py expand-grid --tag hyperparam
+
+  snakemake -n \
+    --cores 1 \
+    --use-singularity \
+    --snakefile workflow/Snakefile \
+    --configfile configs/notreks/expanded/hyperparam_config.json
+
+  mkdir -p results/notreks/hyperparam/logs/slurm
+  RUN_DIR=results/notreks/hyperparam \
+  CONFIG=configs/notreks/expanded/hyperparam_config.json \
   SNAKEMAKE_CORES=16 \
   sbatch --clusters=serial \
-    --export=ALL,RUN_DIR=results/notreks/full_benchmark,CONFIG=configs/notreks/expanded/full_benchmark_config.json,SNAKEMAKE_CORES=16 \
-    -o results/notreks/full_benchmark/logs/slurm/%x-%j.out \
-    -e results/notreks/full_benchmark/logs/slurm/%x-%j.err \
+    --export=ALL,RUN_DIR=results/notreks/hyperparam,CONFIG=configs/notreks/expanded/hyperparam_config.json,SNAKEMAKE_CORES=16 \
+    -o results/notreks/hyperparam/logs/slurm/%x-%j.out \
+    -e results/notreks/hyperparam/logs/slurm/%x-%j.err \
     workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    select-validation-best --tag hyperparam --primary-metric SHD_cpdag
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py \
+    --tag hyperparam
+
+4. Full selected benchmark::
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    build-selected-benchmark --tag full_benchmark
+
+  snakemake -n \
+    --cores 1 \
+    --use-singularity \
+    --snakefile workflow/Snakefile \
+    --configfile configs/notreks/expanded/selected_full_benchmark_config.json
+
+  mkdir -p results/notreks/benchmark_full/logs/slurm
+  RUN_DIR=results/notreks/benchmark_full \
+  CONFIG=configs/notreks/expanded/selected_full_benchmark_config.json \
+  SNAKEMAKE_CORES=16 \
+  sbatch --clusters=serial \
+    --export=ALL,RUN_DIR=results/notreks/benchmark_full,CONFIG=configs/notreks/expanded/selected_full_benchmark_config.json,SNAKEMAKE_CORES=16 \
+    -o results/notreks/benchmark_full/logs/slurm/%x-%j.out \
+    -e results/notreks/benchmark_full/logs/slurm/%x-%j.err \
+    workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh
+
+Manual NOTREKS example
+----------------------
+
+This is independent of Snakemake and intended as a small direct NOTREKS
+example::
+
+  python workflow/rules/structure_learning_algorithms/notreks/tests/manual_notreks_example.py
+
+Monitoring and cleanup
+----------------------
+
+::
+
+  squeue -u $USER --clusters=serial,cm4
+  tail -f "$(ls -t results/notreks/smoke/logs/slurm/*.out | head -1)"
+  tail -f "$(ls -t results/notreks/benchmark_full/logs/slurm/*.out | head -1)"
+
+  sacct -M serial \
+    --starttime="$(date -d '1 day ago' '+%Y-%m-%dT%H:%M:%S')" \
+    --endtime=now \
+    --user=$USER \
+    --format=JobID,JobName,State,ExitCode,Elapsed,Start,End,MaxRSS,ReqCPUS,ReqMem
+
+Cleanup warning: this deletes benchmark outputs and Snakemake state.  Do not
+delete ``configs/notreks`` unless intentionally resetting experiment configs.::
+
+  rm -rf results
+  rm -rf .snakemake
+  mkdir -p results
+
+Thresholds
+----------
+
+NOTREKS uses the canonical config parameter ``threshold`` to turn fitted
+weights into ``adjmat.csv``.  Benchpress ROC output, when present, uses
+``thresh`` for evaluation rows.  gCastle DirectLiNGAM also has its own wrapper
+parameter named ``thresh``.  Internally, NOTREKS does not infer thresholds from
+algorithm ids.
 
 DAG constraints
 ---------------
 
 Implemented names:
 
-* ``dag_seq="exp"``: NOTEARS exponential-trace acyclicity constraint from
-  Zheng et al. (2018), code reference https://github.com/xunzheng/notears.
-* ``dag_seq="logdet"``: DAGMA log-det acyclicity barrier from Bello et al.
-  (2022), code reference https://github.com/kevinsbello/dagma.
+* ``dag_seq="exp"``: NOTEARS exponential-trace acyclicity constraint.
+  Reference: Zheng et al. (2018).
+* ``dag_seq="logdet"``: DAGMA log-det acyclicity barrier.
+  Reference: Bello et al. (2022).
 * ``dag_seq="scc_power_iteration"``: experimental SCC-blockwise SDCD-style
-  detached Perron-gradient surrogate inspired by Nazaret et al. (2023), code
-  reference https://github.com/azizilab/sdcd/tree/master.
+  detached Perron-gradient surrogate using ``A = W * W`` with zero diagonal.
+  Reference: Nazaret et al. (2023).
 
-For ``scc_power_iteration``, NOTREKS uses the smooth NOTEARS-style nonnegative
-proxy ``A = W * W`` with a zero diagonal, computes SCCs from the support of
-``A``, and applies blockwise power iteration inside nontrivial SCCs.  The old
-aliases ``power_iteration`` and ``spectral_radius`` are intentionally rejected.
+The old aliases ``power_iteration`` and ``spectral_radius`` are intentionally
+rejected.
 
-Independence tests and cache
-----------------------------
-
-NOTREKS supports ``none``, ``pearson``, ``spearman``, ``hsic``, ``dcor``,
-``gcastle_fisherz``, ``gcastle_g2``, and ``gcastle_chi2``.  The gCastle-backed
-tests call the low-level CI test with an empty conditioning set; this is not a
-full PC run.  Multiple-testing correction remains in NOTREKS.
+Independence cache
+------------------
 
 When ``independence_cache_dir`` is present in the manifest-resolved
-hyperparameters, raw test statistics and p-values are cached.  Changing alpha
-or correction reuses the raw cache and recomputes accepted pairs.  Diagnostics
-can compare accepted pairs with graph-implied no-trek marginal independence;
-that phrase is structural and should not be read as all statistical marginal
-independencies in every nonlinear or non-Gaussian regime.
+hyperparameters, NOTREKS caches raw marginal-independence test statistics and
+p-values.  Changing alpha or correction reuses the raw cache and recomputes
+accepted pairs.  Diagnostics can compare accepted pairs with graph-implied no-trek
+marginal independence; that phrase is structural and should not be read
+as all statistical marginal independencies in every nonlinear or non-Gaussian
+regime.
