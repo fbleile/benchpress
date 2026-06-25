@@ -332,19 +332,76 @@ def select_best_thresholds(
     primary_metric: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Aggregate ROC rows by algorithm_id × thresh and select the best threshold
-    per algorithm_id according to the primary validation metric.
+    Aggregate validation rows and select/report thresholds per algorithm.
+
+    If ROC_data.csv contains a 'thresh' column:
+        choose the best threshold per algorithm_id by primary_metric.
+
+    If ROC_data.csv has no 'thresh' column:
+        use the configured threshold from the manifest, i.e.
+        param.threshold or param.thresh. In this case no threshold optimization
+        is possible; the table reports the threshold that was evaluated.
     """
-    if "thresh" not in rows.columns:
-        raise ValueError("Cannot select thresholds: ROC_data.csv has no 'thresh' column.")
 
     if primary_metric not in rows.columns:
         raise ValueError(f"Primary metric '{primary_metric}' not found in merged rows.")
 
+    # Case 1: no ROC threshold column. Use manifest threshold.
+    if "thresh" not in rows.columns:
+        temp = rows.copy()
+        temp["thresh"] = temp.apply(get_config_threshold, axis=1)
+
+        group_cols = ["method_family", "base_method", "algorithm_id", "thresh"]
+        weight_col = "n_seeds" if "n_seeds" in temp.columns else None
+
+        records: list[dict[str, Any]] = []
+
+        for keys, group in temp.groupby(group_cols, dropna=False):
+            if not isinstance(keys, tuple):
+                keys = (keys,)
+
+            record = dict(zip(group_cols, keys))
+            record["n_rows"] = int(len(group))
+
+            if weight_col is not None:
+                weights = group[weight_col]
+                record["n_weight"] = float(
+                    pd.to_numeric(weights, errors="coerce").fillna(0).sum()
+                )
+            else:
+                weights = None
+                record["n_weight"] = float(len(group))
+
+            for metric in metrics:
+                if metric in group.columns:
+                    record[metric] = weighted_mean(group[metric], weights)
+
+            record["selected_primary_metric"] = primary_metric
+            record["selected_primary_value"] = record.get(primary_metric, np.nan)
+            record["lower_is_better"] = lower_is_better(primary_metric)
+            record["n_thresholds_considered"] = 1
+            record["threshold_source"] = "manifest_param_threshold"
+
+            records.append(record)
+
+        threshold_curve = pd.DataFrame(records)
+
+        if threshold_curve.empty:
+            raise ValueError("Threshold table is empty after grouping.")
+
+        primary_lower = lower_is_better(primary_metric)
+        best_thresholds = threshold_curve.sort_values(
+            ["method_family", primary_metric],
+            ascending=[True, primary_lower],
+        ).copy()
+
+        return threshold_curve, best_thresholds
+
+    # Case 2: ROC_data.csv has threshold curve rows.
     group_cols = ["method_family", "base_method", "algorithm_id", "thresh"]
 
     temp = rows.copy()
-    temp["threshold"] = pd.to_numeric(temp["thresh"], errors="coerce")
+    temp["thresh"] = pd.to_numeric(temp["thresh"], errors="coerce")
 
     weight_col = "n_seeds" if "n_seeds" in temp.columns else None
 
@@ -359,7 +416,9 @@ def select_best_thresholds(
 
         if weight_col is not None:
             weights = group[weight_col]
-            record["n_weight"] = float(pd.to_numeric(weights, errors="coerce").fillna(0).sum())
+            record["n_weight"] = float(
+                pd.to_numeric(weights, errors="coerce").fillna(0).sum()
+            )
         else:
             weights = None
             record["n_weight"] = float(len(group))
@@ -395,6 +454,7 @@ def select_best_thresholds(
         chosen["selected_primary_value"] = chosen[primary_metric]
         chosen["lower_is_better"] = primary_lower
         chosen["n_thresholds_considered"] = int(group["thresh"].nunique(dropna=True))
+        chosen["threshold_source"] = "roc_curve_best_threshold"
 
         best_records.append(chosen)
 
@@ -418,22 +478,22 @@ def collapse_rows_for_analysis(
     """
     Returns the row table used for algorithm summaries/effects.
 
-    best:
-      Keep only ROC rows whose threshold is selected as best per algorithm.
-    config:
-      Keep ROC rows closest to manifest threshold/thresh if available,
-      otherwise best threshold.
-    all:
-      Keep all ROC rows.
+    If ROC_data.csv has no thresh column, there is nothing to collapse.
+    We attach the manifest threshold and continue.
     """
+
     if threshold_mode == "all":
         out = rows.copy()
         out["_threshold_selection"] = "all"
+        if "thresh" not in out.columns:
+            out["_selected_threshold"] = out.apply(get_config_threshold, axis=1)
         return out
 
+    # No ROC threshold column: use manifest threshold.
     if "thresh" not in rows.columns:
         out = rows.copy()
-        out["_threshold_selection"] = "no_thresh_column"
+        out["_selected_threshold"] = out.apply(get_config_threshold, axis=1)
+        out["_threshold_selection"] = "manifest_param_threshold_no_roc_curve"
         return out
 
     temp = rows.copy()
@@ -445,7 +505,8 @@ def collapse_rows_for_analysis(
     best_lookup = {}
     if not best_thresholds.empty:
         for _, r in best_thresholds.iterrows():
-            best_lookup[str(r["algorithm_id"])] = float(r["thresh"])
+            if pd.notna(r["thresh"]):
+                best_lookup[str(r["algorithm_id"])] = float(r["thresh"])
 
     for algorithm_id, group in temp.groupby("algorithm_id", dropna=False):
         algorithm_id = str(algorithm_id)
@@ -458,7 +519,10 @@ def collapse_rows_for_analysis(
             target = get_config_threshold(group.iloc[0])
             if target is not None and group["thresh_numeric"].notna().any():
                 selected_threshold = float(
-                    group.loc[(group["thresh_numeric"] - target).abs().idxmin(), "thresh_numeric"]
+                    group.loc[
+                        (group["thresh_numeric"] - target).abs().idxmin(),
+                        "thresh_numeric",
+                    ]
                 )
                 selection_reason = "closest_to_config_threshold"
 
