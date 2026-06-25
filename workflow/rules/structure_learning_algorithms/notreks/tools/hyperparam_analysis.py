@@ -344,7 +344,7 @@ def select_best_thresholds(
     group_cols = ["method_family", "base_method", "algorithm_id", "thresh"]
 
     temp = rows.copy()
-    temp["thresh"] = pd.to_numeric(temp["thresh"], errors="coerce")
+    temp["threshold"] = pd.to_numeric(temp["thresh"], errors="coerce")
 
     weight_col = "n_seeds" if "n_seeds" in temp.columns else None
 
