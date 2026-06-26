@@ -19,7 +19,7 @@
   },
   "selection": {
     "source": "configs/notreks/selected/smoke_best_by_method_family.json",
-    "include_method_families": ["gcastle_pc", "gcastle_lingam", "notreks"]
+    "include_method_families": ["gcastle_pc", "gcastle_lingam", "marginal_trek_graph", "notreks"]
   },
   "evaluation": {
     "primary_metric": "SHD_cpdag",

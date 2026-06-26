@@ -36,8 +36,16 @@ class NotreksConfig:
     power_iter_steps: int = 5
     scc_threshold: float = 1e-8
     independence_cache_dir: Optional[str] = None
+    trek_penalty_mu_mode: str = "hard_outside_mu"
     # Compatibility field. The current optimizer uses max_iter for every stage.
     warm_iter: Optional[int] = None
+
+
+def canonical_dag_seq(value: object) -> str:
+    text = str(value)
+    if text in {"None", "none", "null", ""}:
+        return "none"
+    return text
 
 
 def _soft_threshold(values: np.ndarray, scale: float) -> np.ndarray:

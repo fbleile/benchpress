@@ -192,6 +192,16 @@ Four canonical workflows
     -e results/notreks/benchmark_full/logs/slurm/%x-%j.err \
     workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh
 
+Marginal trek graph baseline
+----------------------------
+
+``marginal_trek_graph`` is a standalone Benchpress structure-learning method.
+It tests only marginal pairs ``X_i`` and ``X_j`` with no conditioning set,
+starts from a complete undirected graph, and removes an edge when marginal
+independence is accepted.  The output ``adjmat.csv`` is symmetric with a zero
+diagonal.  Interpret it mainly through pattern/skeleton metrics such as
+``SHD_pattern`` and skeleton FPR/FNR.
+
 Manual NOTREKS example
 ----------------------
 
@@ -236,6 +246,7 @@ DAG constraints
 
 Implemented names:
 
+* ``dag_seq="None"`` or ``dag_seq="none"``: no DAG penalty.
 * ``dag_seq="exp"``: NOTEARS exponential-trace acyclicity constraint.
   Reference: Zheng et al. (2018).
 * ``dag_seq="logdet"``: DAGMA log-det acyclicity barrier.
@@ -247,13 +258,32 @@ Implemented names:
 The old aliases ``power_iteration`` and ``spectral_radius`` are intentionally
 rejected.
 
+Trek penalty placement
+----------------------
+
+``trek_penalty_mu_mode`` controls the no-trek penalty scaling.
+
+* ``hard_outside_mu`` (default):
+  ``mu * (score + regularizer_scale * R) + dag_reg * h + trek_reg * T``.
+* ``soft_inside_mu``:
+  ``mu * (score + regularizer_scale * R + trek_reg * T) + dag_reg * h``.
+
 Independence cache
 ------------------
 
 When ``independence_cache_dir`` is present in the manifest-resolved
-hyperparameters, NOTREKS caches raw marginal-independence test statistics and
-p-values.  Changing alpha or correction reuses the raw cache and recomputes
-accepted pairs.  Diagnostics can compare accepted pairs with graph-implied no-trek
+hyperparameters, NOTREKS caches marginal-independence test statistics and
+p-values in a parameter-specific entry.  Cache writes use atomic temporary-file
+replacement, and malformed cache entries are ignored and recomputed instead of
+crashing a run.  Diagnostics can compare accepted pairs with graph-implied no-trek
 marginal independence; that phrase is structural and should not be read
 as all statistical marginal independencies in every nonlinear or non-Gaussian
 regime.
+
+Hyperparameter analysis
+-----------------------
+
+``tools/hyperparam_analysis.py`` reads Benchpress ``joint_benchmarks.csv`` and
+joins it to ``configs/notreks/expanded/<tag>_manifest.json`` by algorithm id.
+It no longer reads ``ROC_data.csv``.  If no evaluated threshold column is
+present, the report uses the configured ``threshold`` from the manifest.

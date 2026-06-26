@@ -196,6 +196,8 @@ def _cache_payload(
         "d": int(X.shape[1]),
         "columns": list(columns) if columns is not None else None,
         "independence_test": method,
+        "independence_alpha": float(alpha),
+        "independence_correction": correction,
         "extra_params": extra_params or {},
     }
 

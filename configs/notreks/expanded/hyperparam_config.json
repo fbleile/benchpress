@@ -76,6 +76,8 @@
           "ids": [
             "gcastle_pc__grid000",
             "gcastle_pc__grid001",
+            "gcastle_lingam__grid000",
+            "gcastle_lingam__grid001",
             "notreks__grid000",
             "notreks__grid001",
             "notreks__grid002",
@@ -130,60 +132,8 @@
             "notreks__grid051",
             "notreks__grid052",
             "notreks__grid053",
-            "notreks__grid054",
-            "notreks__grid055",
-            "notreks__grid056",
-            "notreks__grid057",
-            "notreks__grid058",
-            "notreks__grid059",
-            "notreks__grid060",
-            "notreks__grid061",
-            "notreks__grid062",
-            "notreks__grid063",
-            "notreks__grid064",
-            "notreks__grid065",
-            "notreks__grid066",
-            "notreks__grid067",
-            "notreks__grid068",
-            "notreks__grid069",
-            "notreks__grid070",
-            "notreks__grid071",
-            "notreks__grid072",
-            "notreks__grid073",
-            "notreks__grid074",
-            "notreks__grid075",
-            "notreks__grid076",
-            "notreks__grid077",
-            "notreks__grid078",
-            "notreks__grid079",
-            "notreks__grid080",
-            "notreks__grid081",
-            "notreks__grid082",
-            "notreks__grid083",
-            "notreks__grid084",
-            "notreks__grid085",
-            "notreks__grid086",
-            "notreks__grid087",
-            "notreks__grid088",
-            "notreks__grid089",
-            "notreks__grid090",
-            "notreks__grid091",
-            "notreks__grid092",
-            "notreks__grid093",
-            "notreks__grid094",
-            "notreks__grid095",
-            "notreks__grid096",
-            "notreks__grid097",
-            "notreks__grid098",
-            "notreks__grid099",
-            "notreks__grid100",
-            "notreks__grid101",
-            "notreks__grid102",
-            "notreks__grid103",
-            "notreks__grid104",
-            "notreks__grid105",
-            "notreks__grid106",
-            "notreks__grid107"
+            "marginal_trek_graph__grid000",
+            "marginal_trek_graph__grid001"
           ]
         },
         "graph_true_plots": false,
@@ -211,6 +161,20 @@
           "ci_test": "fisherz",
           "timeout": null,
           "id": "gcastle_pc__grid001"
+        }
+      ],
+      "gcastle_direct_lingam": [
+        {
+          "measure": "pwling",
+          "thresh": 0.3,
+          "timeout": null,
+          "id": "gcastle_lingam__grid000"
+        },
+        {
+          "measure": "kernel",
+          "thresh": 0.3,
+          "timeout": null,
+          "id": "gcastle_lingam__grid001"
         }
       ],
       "notreks": [
@@ -483,276 +447,24 @@
           "id": "notreks__grid053",
           "alg_id": "n053",
           "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
+        }
+      ],
+      "marginal_trek_graph": [
+        {
+          "independence_test": "gcastle_fisherz",
+          "independence_alpha": 0.05,
+          "independence_correction": "benjamini-hochberg",
+          "independence_cache_dir": null,
+          "timeout": null,
+          "id": "marginal_trek_graph__grid000"
         },
         {
-          "id": "notreks__grid054",
-          "alg_id": "n054",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid055",
-          "alg_id": "n055",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid056",
-          "alg_id": "n056",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid057",
-          "alg_id": "n057",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid058",
-          "alg_id": "n058",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid059",
-          "alg_id": "n059",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid060",
-          "alg_id": "n060",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid061",
-          "alg_id": "n061",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid062",
-          "alg_id": "n062",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid063",
-          "alg_id": "n063",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid064",
-          "alg_id": "n064",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid065",
-          "alg_id": "n065",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid066",
-          "alg_id": "n066",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid067",
-          "alg_id": "n067",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid068",
-          "alg_id": "n068",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid069",
-          "alg_id": "n069",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid070",
-          "alg_id": "n070",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid071",
-          "alg_id": "n071",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid072",
-          "alg_id": "n072",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid073",
-          "alg_id": "n073",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid074",
-          "alg_id": "n074",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid075",
-          "alg_id": "n075",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid076",
-          "alg_id": "n076",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid077",
-          "alg_id": "n077",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid078",
-          "alg_id": "n078",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid079",
-          "alg_id": "n079",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid080",
-          "alg_id": "n080",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid081",
-          "alg_id": "n081",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid082",
-          "alg_id": "n082",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid083",
-          "alg_id": "n083",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid084",
-          "alg_id": "n084",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid085",
-          "alg_id": "n085",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid086",
-          "alg_id": "n086",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid087",
-          "alg_id": "n087",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid088",
-          "alg_id": "n088",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid089",
-          "alg_id": "n089",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid090",
-          "alg_id": "n090",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid091",
-          "alg_id": "n091",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid092",
-          "alg_id": "n092",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid093",
-          "alg_id": "n093",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid094",
-          "alg_id": "n094",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid095",
-          "alg_id": "n095",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid096",
-          "alg_id": "n096",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid097",
-          "alg_id": "n097",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid098",
-          "alg_id": "n098",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid099",
-          "alg_id": "n099",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid100",
-          "alg_id": "n100",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid101",
-          "alg_id": "n101",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid102",
-          "alg_id": "n102",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid103",
-          "alg_id": "n103",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid104",
-          "alg_id": "n104",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid105",
-          "alg_id": "n105",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid106",
-          "alg_id": "n106",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
-        },
-        {
-          "id": "notreks__grid107",
-          "alg_id": "n107",
-          "params_manifest": "configs/notreks/expanded/hyperparam_manifest.json"
+          "independence_test": "spearman",
+          "independence_alpha": 0.05,
+          "independence_correction": "benjamini-hochberg",
+          "independence_cache_dir": null,
+          "timeout": null,
+          "id": "marginal_trek_graph__grid001"
         }
       ]
     }

@@ -29,13 +29,24 @@
         "timeout": [null]
       }
     },
+    "marginal_trek_graph": {
+      "enabled": true,
+      "grid": {
+        "independence_test": ["gcastle_fisherz"],
+        "independence_alpha": [0.05],
+        "independence_correction": ["benjamini-hochberg"],
+        "independence_cache_dir": [null],
+        "timeout": [null]
+      }
+    },
     "notreks": {
       "enabled": true,
       "grid": {
         "score": ["least_squares"],
-        "dag_seq": ["logdet", "scc_power_iteration"],
+        "dag_seq": ["None", "logdet", "scc_power_iteration"],
         "trek_seq": ["exp"],
         "trek_reg": [1.0],
+        "trek_penalty_mu_mode": ["hard_outside_mu"],
         "regularizer": ["l1"],
         "regularizer_scale": [0.01],
         "independence_test": ["spearman", "gcastle_fisherz"],

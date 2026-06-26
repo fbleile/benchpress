@@ -65,6 +65,16 @@ def _simple_cartesian_grid(repo: Path) -> Path:
                         "enabled": True,
                         "grid": {"measure": ["pwling"], "thresh": [0.3], "timeout": [None]},
                     },
+                    "marginal_trek_graph": {
+                        "enabled": True,
+                        "grid": {
+                            "independence_test": ["spearman"],
+                            "independence_alpha": [0.05],
+                            "independence_correction": ["benjamini-hochberg"],
+                            "independence_cache_dir": [None],
+                            "timeout": [None],
+                        },
+                    },
                     "notreks": {
                         "enabled": True,
                         "grid": {
@@ -72,6 +82,7 @@ def _simple_cartesian_grid(repo: Path) -> Path:
                             "dag_seq": ["logdet"],
                             "trek_seq": ["exp"],
                             "trek_reg": [1.0],
+                            "trek_penalty_mu_mode": ["hard_outside_mu"],
                             "regularizer": ["l1"],
                             "regularizer_scale": [0.01],
                             "independence_test": ["spearman", "gcastle_fisherz"],
@@ -121,6 +132,7 @@ def test_expand_grid_writes_top_level_config_and_manifest(tmp_path: Path) -> Non
     assert expanded.algorithm_counts == {
         "gcastle_pc": 1,
         "gcastle_lingam": 1,
+        "marginal_trek_graph": 1,
         "notreks": 2,
     }
     assert "results/" not in str(out_config)
@@ -131,18 +143,24 @@ def test_expand_grid_writes_top_level_config_and_manifest(tmp_path: Path) -> Non
     assert len(config["benchmark_setup"][0]["data"]) == 2
     assert len(resources["gcastle_pc"]) == 1
     assert len(resources["gcastle_direct_lingam"]) == 1
+    assert len(resources["marginal_trek_graph"]) == 1
     assert len(resources["notreks"]) == 2
     assert resources["notreks"][0] == {
         "id": "notreks__grid000",
         "alg_id": "n000",
         "params_manifest": "configs/notreks/expanded/smoke_manifest.json",
     }
-    text = out_config.read_text()
+    text = json.dumps(resources["notreks"])
     assert "independence_cache_dir" not in text
     assert "function_class" not in json.dumps(resources["notreks"])
 
     manifest = pd.read_csv(out_manifest)
-    assert set(manifest["method_family"]) == {"gcastle_pc", "gcastle_lingam", "notreks"}
+    assert set(manifest["method_family"]) == {
+        "gcastle_pc",
+        "gcastle_lingam",
+        "marginal_trek_graph",
+        "notreks",
+    }
     assert manifest["algorithm_id"].is_unique
     assert set(manifest.loc[manifest["base_method"] == "notreks", "path_id"]) == {"n000", "n001"}
     assert set(manifest["config_path"]) == {"configs/notreks/expanded/smoke_config.json"}
@@ -234,6 +252,7 @@ def test_validation_tiny_expected_run_counts(tmp_path: Path) -> None:
         "copy_fixed_data": 2,
         "gcastle_pc": 2,
         "gcastle_direct_lingam": 2,
+        "marginal_trek_graph": 0,
         "notreks": 4,
     }
 

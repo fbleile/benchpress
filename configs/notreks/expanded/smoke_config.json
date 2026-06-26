@@ -31,7 +31,10 @@
             "notreks__grid000",
             "notreks__grid001",
             "notreks__grid002",
-            "notreks__grid003"
+            "notreks__grid003",
+            "notreks__grid004",
+            "notreks__grid005",
+            "marginal_trek_graph__grid000"
           ]
         },
         "graph_true_plots": false,
@@ -82,6 +85,26 @@
           "id": "notreks__grid003",
           "alg_id": "n003",
           "params_manifest": "configs/notreks/expanded/smoke_manifest.json"
+        },
+        {
+          "id": "notreks__grid004",
+          "alg_id": "n004",
+          "params_manifest": "configs/notreks/expanded/smoke_manifest.json"
+        },
+        {
+          "id": "notreks__grid005",
+          "alg_id": "n005",
+          "params_manifest": "configs/notreks/expanded/smoke_manifest.json"
+        }
+      ],
+      "marginal_trek_graph": [
+        {
+          "independence_test": "gcastle_fisherz",
+          "independence_alpha": 0.05,
+          "independence_correction": "benjamini-hochberg",
+          "independence_cache_dir": null,
+          "timeout": null,
+          "id": "marginal_trek_graph__grid000"
         }
       ]
     }

@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
-Hyperparameter + threshold analysis for NOTREKS validation runs.
+Hyperparameter analysis for NOTREKS validation runs.
 
 Expected inputs for tag <tag>:
   configs/notreks/expanded/<tag>_manifest.json
-  results/output/notreks_<tag>_validation/benchmarks/notreks/<tag>/validation/ROC_data.csv
+  results/output/notreks_<tag>_validation/benchmarks/notreks/<tag>/validation/joint_benchmarks.csv
 
 Main outputs:
   results/notreks/hyperparam_analysis/<tag>/report.md
-  results/notreks/hyperparam_analysis/<tag>/best_threshold_by_algorithm.csv
-  results/notreks/hyperparam_analysis/<tag>/threshold_curve_by_algorithm.csv
   results/notreks/hyperparam_analysis/<tag>/algorithm_summary.csv
   results/notreks/hyperparam_analysis/<tag>/hyperparam_main_effects.csv
   results/notreks/hyperparam_analysis/<tag>/numeric_correlations.csv
@@ -61,7 +59,7 @@ HIGHER_IS_BETTER_HINTS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Analyze validation hyperparameters and select best thresholds."
+        description="Analyze validation hyperparameters from joint_benchmarks.csv."
     )
     parser.add_argument(
         "--tag",
@@ -79,12 +77,9 @@ def parse_args() -> argparse.Namespace:
         help="Optional manifest JSON path. Default: configs/notreks/expanded/<tag>_manifest.json.",
     )
     parser.add_argument(
-        "--roc-data",
+        "--joint-benchmarks",
         default=None,
-        help=(
-            "Optional ROC_data.csv path. Default: "
-            "results/output/notreks_<tag>_validation/benchmarks/notreks/<tag>/validation/ROC_data.csv"
-        ),
+        help="Optional joint_benchmarks.csv path. Default is inferred from the tag.",
     )
     parser.add_argument(
         "--out-dir",
@@ -119,9 +114,8 @@ def parse_args() -> argparse.Namespace:
         choices=["best", "config", "all"],
         default="best",
         help=(
-            "best: choose best threshold per algorithm by primary metric. "
-            "config: use threshold/thresh from manifest if available, otherwise best. "
-            "all: do not collapse ROC rows for hyperparam summaries."
+            "best/config: use configured manifest threshold unless joint_benchmarks has threshold rows. "
+            "all: do not collapse threshold rows for hyperparam summaries."
         ),
     )
     return parser.parse_args()
@@ -224,19 +218,24 @@ def load_manifest(path: Path) -> pd.DataFrame:
     return df
 
 
-def load_roc(path: Path) -> pd.DataFrame:
+def load_joint_benchmarks(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
 
     unnamed = [c for c in df.columns if c.startswith("Unnamed:")]
     if unnamed:
         df = df.drop(columns=unnamed)
 
-    if "alg_id" not in df.columns:
+    id_column = None
+    for candidate in ("alg_id", "algorithm_id", "id"):
+        if candidate in df.columns:
+            id_column = candidate
+            break
+    if id_column is None:
         raise ValueError(
-            f"ROC_data.csv must contain column 'alg_id'. Found columns: {list(df.columns)}"
+            f"joint_benchmarks.csv must contain an algorithm id column. Found columns: {list(df.columns)}"
         )
 
-    df["alg_id"] = df["alg_id"].astype(str)
+    df["algorithm_id"] = df[id_column].astype(str)
 
     return df
 
@@ -270,7 +269,7 @@ def resolve_metric_columns(df: pd.DataFrame, requested: list[str]) -> dict[str, 
                 break
 
         if found is None:
-            print(f"[warning] metric '{metric}' not found in ROC_data.csv")
+            print(f"[warning] metric '{metric}' not found in joint_benchmarks.csv")
         else:
             public_name = metric.removesuffix("_mean")
             out[public_name] = found
@@ -334,10 +333,10 @@ def select_best_thresholds(
     """
     Aggregate validation rows and select/report thresholds per algorithm.
 
-    If ROC_data.csv contains a 'thresh' column:
+    If joint_benchmarks.csv contains a 'thresh' column:
         choose the best threshold per algorithm_id by primary_metric.
 
-    If ROC_data.csv has no 'thresh' column:
+    If joint_benchmarks.csv has no 'thresh' column:
         use the configured threshold from the manifest, i.e.
         param.threshold or param.thresh. In this case no threshold optimization
         is possible; the table reports the threshold that was evaluated.
@@ -346,7 +345,7 @@ def select_best_thresholds(
     if primary_metric not in rows.columns:
         raise ValueError(f"Primary metric '{primary_metric}' not found in merged rows.")
 
-    # Case 1: no ROC threshold column. Use manifest threshold.
+    # Case 1: no evaluated threshold column. Use manifest threshold.
     if "thresh" not in rows.columns:
         temp = rows.copy()
         temp["thresh"] = temp.apply(get_config_threshold, axis=1)
@@ -397,7 +396,7 @@ def select_best_thresholds(
 
         return threshold_curve, best_thresholds
 
-    # Case 2: ROC_data.csv has threshold curve rows.
+    # Case 2: joint_benchmarks.csv has threshold curve rows.
     group_cols = ["method_family", "base_method", "algorithm_id", "thresh"]
 
     temp = rows.copy()
@@ -454,7 +453,7 @@ def select_best_thresholds(
         chosen["selected_primary_value"] = chosen[primary_metric]
         chosen["lower_is_better"] = primary_lower
         chosen["n_thresholds_considered"] = int(group["thresh"].nunique(dropna=True))
-        chosen["threshold_source"] = "roc_curve_best_threshold"
+        chosen["threshold_source"] = "joint_benchmarks_best_threshold"
 
         best_records.append(chosen)
 
@@ -478,7 +477,7 @@ def collapse_rows_for_analysis(
     """
     Returns the row table used for algorithm summaries/effects.
 
-    If ROC_data.csv has no thresh column, there is nothing to collapse.
+    If joint_benchmarks.csv has no thresh column, there is nothing to collapse.
     We attach the manifest threshold and continue.
     """
 
@@ -489,11 +488,11 @@ def collapse_rows_for_analysis(
             out["_selected_threshold"] = out.apply(get_config_threshold, axis=1)
         return out
 
-    # No ROC threshold column: use manifest threshold.
+    # No evaluated threshold column: use manifest threshold.
     if "thresh" not in rows.columns:
         out = rows.copy()
         out["_selected_threshold"] = out.apply(get_config_threshold, axis=1)
-        out["_threshold_selection"] = "manifest_param_threshold_no_roc_curve"
+        out["_threshold_selection"] = "manifest_param_threshold_no_threshold_curve"
         return out
 
     temp = rows.copy()
@@ -758,7 +757,7 @@ def write_report(
     path: Path,
     tag: str,
     manifest_path: Path,
-    roc_path: Path,
+    joint_path: Path,
     all_rows: pd.DataFrame,
     analysis_rows: pd.DataFrame,
     threshold_curve: pd.DataFrame,
@@ -780,8 +779,8 @@ def write_report(
     lines.append("## Inputs")
     lines.append("")
     lines.append(f"- Manifest: `{manifest_path}`")
-    lines.append(f"- ROC data: `{roc_path}`")
-    lines.append(f"- Raw merged ROC rows: `{len(all_rows)}`")
+    lines.append(f"- Joint benchmarks: `{joint_path}`")
+    lines.append(f"- Raw merged joint benchmark rows: `{len(all_rows)}`")
     lines.append(f"- Rows used for hyperparam analysis: `{len(analysis_rows)}`")
     lines.append(f"- Metrics: `{', '.join(metrics)}`")
     lines.append(f"- Primary metric: `{primary_metric}`")
@@ -906,9 +905,9 @@ def main() -> None:
         else repo_root / "configs" / "notreks" / "expanded" / f"{tag}_manifest.json"
     )
 
-    roc_path = (
-        Path(args.roc_data)
-        if args.roc_data
+    joint_path = (
+        Path(args.joint_benchmarks)
+        if args.joint_benchmarks
         else repo_root
         / "results"
         / "output"
@@ -917,7 +916,7 @@ def main() -> None:
         / "notreks"
         / tag
         / "validation"
-        / "ROC_data.csv"
+        / "joint_benchmarks.csv"
     )
 
     out_dir = (
@@ -931,31 +930,31 @@ def main() -> None:
     if not manifest_path.exists():
         raise FileNotFoundError(f"Manifest not found: {manifest_path}")
 
-    if not roc_path.exists():
-        raise FileNotFoundError(f"ROC_data.csv not found: {roc_path}")
+    if not joint_path.exists():
+        raise FileNotFoundError(f"joint_benchmarks.csv not found: {joint_path}")
 
     manifest = load_manifest(manifest_path)
-    roc = load_roc(roc_path)
+    joint = load_joint_benchmarks(joint_path)
 
-    merged = roc.merge(
+    merged = joint.merge(
         manifest,
-        left_on="id",
+        left_on="algorithm_id",
         right_on="algorithm_id",
         how="inner",
     )
 
     if merged.empty:
-        roc_ids = set(roc["alg_id"].astype(str))
+        joint_ids = set(joint["algorithm_id"].astype(str))
         manifest_ids = set(manifest["algorithm_id"].astype(str))
 
         raise ValueError(
-            "No rows after joining ROC_data.csv with manifest.json using "
-            "ROC_data.alg_id == manifest.algorithm_id.\n"
-            f"ROC ids: {len(roc_ids)}\n"
+            "No rows after joining joint_benchmarks.csv with manifest.json using "
+            "joint_benchmarks algorithm id == manifest.algorithm_id.\n"
+            f"Joint benchmark ids: {len(joint_ids)}\n"
             f"Manifest ids: {len(manifest_ids)}\n"
-            f"Matched ids: {len(roc_ids & manifest_ids)}\n"
-            f"Example ROC-only ids: {sorted(roc_ids - manifest_ids)[:10]}\n"
-            f"Example manifest-only ids: {sorted(manifest_ids - roc_ids)[:10]}"
+            f"Matched ids: {len(joint_ids & manifest_ids)}\n"
+            f"Example joint-only ids: {sorted(joint_ids - manifest_ids)[:10]}\n"
+            f"Example manifest-only ids: {sorted(manifest_ids - joint_ids)[:10]}"
         )
 
     metric_map = resolve_metric_columns(merged, args.metrics)
@@ -994,7 +993,7 @@ def main() -> None:
     )
     correlations = compute_numeric_correlations(analysis_rows, metrics)
 
-    merged.to_csv(out_dir / "all_merged_roc_rows.csv", index=False)
+    merged.to_csv(out_dir / "all_merged_joint_rows.csv", index=False)
     analysis_rows.to_csv(out_dir / "analysis_rows.csv", index=False)
     threshold_curve.to_csv(out_dir / "threshold_curve_by_algorithm.csv", index=False)
     best_thresholds.to_csv(out_dir / "best_threshold_by_algorithm.csv", index=False)
@@ -1007,7 +1006,7 @@ def main() -> None:
         path=report_path,
         tag=tag,
         manifest_path=manifest_path,
-        roc_path=roc_path,
+        joint_path=joint_path,
         all_rows=merged,
         analysis_rows=analysis_rows,
         threshold_curve=threshold_curve,
@@ -1022,7 +1021,7 @@ def main() -> None:
     )
 
     print(f"Read manifest: {manifest_path}")
-    print(f"Read ROC data: {roc_path}")
+    print(f"Read joint benchmarks: {joint_path}")
     print(f"Wrote output directory: {out_dir}")
     print("")
     print("Key files:")

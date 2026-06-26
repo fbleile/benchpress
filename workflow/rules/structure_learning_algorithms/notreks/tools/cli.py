@@ -66,6 +66,10 @@ def _tag_selected_dir() -> Path:
     return Path("configs/notreks/selected")
 
 
+def _tag_run_dir(tag: str) -> Path:
+    return Path("results/notreks") / tag
+
+
 def _tag_benchmark_frame_path(tag: str) -> Path:
     base = Path("configs/notreks/benchmarks")
     preferred = base / f"{tag}_frame.json"
@@ -408,15 +412,19 @@ def build_selected_benchmark_command(args: argparse.Namespace) -> None:
 
 
 def print_slurm_launch_command(args: argparse.Namespace) -> None:
+    if args.tag and args.run_dir is None:
+        args.run_dir = _tag_run_dir(args.tag)
+    if args.run_dir is None:
+        raise ValueError("Provide --tag or --run-dir")
     run_dir = args.run_dir
     if args.preset == "smoke":
         script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_smoke.sh")
-        config = args.config or Path("configs/notreks/expanded/smoke_config.json")
+        config = args.config or (_tag_config_path(args.tag) if args.tag else Path("configs/notreks/expanded/smoke_config.json"))
         cores = 8
         cluster = "serial"
     elif args.preset == "heavy":
         script = Path("workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh")
-        config = args.config or Path("configs/notreks/expanded/full_benchmark_config.json")
+        config = args.config or (_tag_config_path(args.tag) if args.tag else Path("configs/notreks/expanded/full_benchmark_config.json"))
         cores = 16
         cluster = "serial"
     else:
@@ -579,7 +587,8 @@ def build_parser() -> argparse.ArgumentParser:
     selected_benchmark.set_defaults(func=build_selected_benchmark_command)
 
     slurm_launch = subparsers.add_parser("print-slurm-launch")
-    slurm_launch.add_argument("--run-dir", type=Path, required=True)
+    slurm_launch.add_argument("--tag", default=None)
+    slurm_launch.add_argument("--run-dir", type=Path, default=None)
     slurm_launch.add_argument("--config", type=Path, default=None)
     slurm_launch.add_argument(
         "--preset",

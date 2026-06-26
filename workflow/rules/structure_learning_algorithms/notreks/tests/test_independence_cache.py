@@ -53,7 +53,7 @@ def test_independence_cache_key_changes_with_parameters(tmp_path: Path) -> None:
     changed_data = dict(base)
     changed_data["dataset_hash"] = "different"
 
-    assert independence_cache_key(base) == independence_cache_key(changed_alpha)
+    assert independence_cache_key(base) != independence_cache_key(changed_alpha)
     assert independence_cache_key(base) != independence_cache_key(changed_method)
     assert independence_cache_key(base) != independence_cache_key(changed_data)
 
@@ -141,7 +141,7 @@ def test_gcastle_fisherz_runs_empty_conditioning_set() -> None:
     assert rows[(0, 2)]["raw_test_name"] == "fisherz"
 
 
-def test_gcastle_raw_cache_reused_for_alpha_and_correction(tmp_path: Path) -> None:
+def test_gcastle_cache_key_changes_for_alpha_and_correction(tmp_path: Path) -> None:
     tmp_path.mkdir(parents=True, exist_ok=True)
     df = _data()
     data_path = tmp_path / "data.csv"
@@ -167,9 +167,9 @@ def test_gcastle_raw_cache_reused_for_alpha_and_correction(tmp_path: Path) -> No
         cache_dir=cache_dir,
         dataset_path=data_path,
     )
-    assert first.cache_key == second.cache_key
+    assert first.cache_key != second.cache_key
     assert first.cache_status == "miss"
-    assert second.cache_status == "hit"
+    assert second.cache_status == "miss"
     assert len(second.pairs) <= len(first.pairs)
     metadata = (cache_dir / str(first.cache_key) / "metadata.json").read_text()
     assert "gcastle_fisherz" in metadata

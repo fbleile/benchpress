@@ -48,6 +48,7 @@ def _cfg(**overrides):
         checkpoint=5,
         power_iter_steps=5,
         scc_threshold=1e-8,
+        trek_penalty_mu_mode="hard_outside_mu",
     )
     return replace(base, **overrides)
 
@@ -140,12 +141,12 @@ def test_stage_gradient_without_trek():
     _assert_stage_grad_matches_finite_difference(cfg, pairs=[])
 
 
-def test_stage_gradient_with_trek_inside_mu():
+def test_stage_gradient_with_trek_hard_outside_mu():
     cfg = _cfg(trek_seq="exp", trek_reg=0.8, regularizer="none")
     _assert_stage_grad_matches_finite_difference(cfg, pairs=[(0, 2), (1, 3)])
 
 
-def test_stage_trek_scaling_matches_current_objective():
+def test_stage_trek_scaling_hard_outside_mu_default():
     X = _fixed_data()
     W = _fixed_W()
     cfg_no_trek = _cfg(trek_seq="exp", trek_reg=0.0, regularizer="none")
@@ -158,6 +159,32 @@ def test_stage_trek_scaling_matches_current_objective():
 
     observed = value_with_trek - value_no_trek
     expected = cfg_with_trek.trek_reg * trek_value
+    assert abs(observed - expected) < 1e-8
+
+
+def test_stage_trek_scaling_soft_inside_mu_option():
+    X = _fixed_data()
+    W = _fixed_W()
+    cfg_no_trek = _cfg(
+        trek_seq="exp",
+        trek_reg=0.0,
+        regularizer="none",
+        trek_penalty_mu_mode="soft_inside_mu",
+    )
+    cfg_with_trek = _cfg(
+        trek_seq="exp",
+        trek_reg=0.8,
+        regularizer="none",
+        trek_penalty_mu_mode="soft_inside_mu",
+    )
+    pairs = [(0, 2), (1, 3)]
+
+    value_no_trek, *_ = _stage_objective_value_grad(W, X, cfg_no_trek, pairs, mu=0.1, s=1.0)
+    value_with_trek, *_ = _stage_objective_value_grad(W, X, cfg_with_trek, pairs, mu=0.1, s=1.0)
+    _, _, _, _, trek_value, _ = _stage_objective_value_grad(W, X, cfg_with_trek, pairs, mu=1.0, s=1.0)
+
+    observed = value_with_trek - value_no_trek
+    expected = 0.1 * cfg_with_trek.trek_reg * trek_value
     assert abs(observed - expected) < 1e-8
 
 
@@ -180,6 +207,14 @@ def test_dag_gradient_exp():
 
 def test_dag_gradient_logdet():
     _assert_dag_grad_matches_finite_difference("logdet", s=1.0)
+
+
+def test_dag_seq_None_is_no_penalty():
+    W = _fixed_W()
+    for seq in ("None", "none"):
+        value, grad = _dag_value_grad(W, seq, s=1.0)
+        assert value == 0.0
+        assert np.array_equal(grad, np.zeros_like(W))
 
 
 def test_dag_scc_power_iteration_small_for_acyclic_matrix():
@@ -382,15 +417,35 @@ def test_optimizer_no_trek_sanity():
     assert objectives[-1] <= objectives[0]
 
 
+def test_optimizer_runs_with_dag_seq_None():
+    X = _fixed_data()
+    cfg = _cfg(
+        dag_seq="None",
+        dag_reg=0.0,
+        trek_seq="none",
+        trek_reg=0.0,
+        regularizer="none",
+        regularizer_scale=0.0,
+        max_iter=10,
+        path_steps=1,
+    )
+    W, diagnostics = fit_notreks_optimizer(X, cfg, independence_pairs=[])
+    assert np.all(np.isfinite(W))
+    assert np.allclose(np.diag(W), 0.0)
+    assert diagnostics.raw_dag_penalty == 0.0
+
+
 if __name__ == "__main__":
     test_stage_gradient_without_trek()
-    test_stage_gradient_with_trek_inside_mu()
-    test_stage_trek_scaling_is_inside_mu()
+    test_stage_gradient_with_trek_hard_outside_mu()
+    test_stage_trek_scaling_hard_outside_mu_default()
+    test_stage_trek_scaling_soft_inside_mu_option()
     test_stage_gradient_with_nonsmooth_l1_away_from_zero()
     test_score_gradient_least_squares()
     test_score_gradient_gaussian_likelihood()
     test_dag_gradient_exp()
     test_dag_gradient_logdet()
+    test_dag_seq_None_is_no_penalty()
     test_dag_scc_power_iteration_small_for_acyclic_matrix()
     test_dag_scc_power_iteration_positive_for_cycle()
     test_dag_scc_power_iteration_diagonal_does_not_contribute()
@@ -405,6 +460,7 @@ if __name__ == "__main__":
     test_regularizer_is_raw_not_dimension_averaged()
     test_dag_penalties_are_raw_not_dimension_averaged()
     test_invalid_trek_pairs_raise_value_error()
-    test_threshold_name_warning_is_present()
+    test_legacy_threshold_name_warning_is_removed()
     test_optimizer_no_trek_sanity()
+    test_optimizer_runs_with_dag_seq_None()
     print("optimizer tests passed")

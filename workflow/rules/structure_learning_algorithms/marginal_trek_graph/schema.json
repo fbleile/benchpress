@@ -1,0 +1,42 @@
+{
+  "title": "marginal_trek_graph",
+  "description": "Marginal-independence-only undirected trek/dependence graph baseline.",
+  "type": "array",
+  "items": {
+    "title": "marginal_trek_graph configuration",
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "independence_test": {
+        "type": "string",
+        "enum": ["pearson", "spearman", "hsic", "dcor", "gcastle_fisherz", "gcastle_g2", "gcastle_chi2"]
+      },
+      "independence_alpha": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "exclusiveMaximum": 1
+      },
+      "independence_correction": {
+        "type": "string",
+        "enum": ["none", "bonferroni", "benjamini-hochberg"]
+      },
+      "independence_cache_dir": {
+        "type": ["string", "null"]
+      },
+      "timeout": {
+        "$ref": "#/$defs/flexnonnegnumnull"
+      }
+    },
+    "required": [
+      "id",
+      "independence_test",
+      "independence_alpha",
+      "independence_correction",
+      "timeout"
+    ],
+    "additionalProperties": false
+  },
+  "uniqueItems": true
+}

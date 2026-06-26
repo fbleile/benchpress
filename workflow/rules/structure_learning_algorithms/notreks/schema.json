@@ -32,7 +32,7 @@
       "dag_seq": {
         "description": "DAG penalty sequence.",
         "type": "string",
-        "enum": ["none", "exp", "log", "inv", "logdet", "scc_power_iteration"]
+        "enum": ["None", "none", "exp", "log", "inv", "logdet", "scc_power_iteration"]
       },
       "dag_reg": {
         "description": "Non-negative scaling factor for the DAG penalty.",
@@ -147,6 +147,12 @@
       "independence_cache_dir": {
         "description": "Optional directory for parameter-specific cached pairwise independence-test results.",
         "type": ["string", "null"]
+      },
+      "trek_penalty_mu_mode": {
+        "description": "Controls whether the no-trek penalty is hard outside the central-path multiplier or soft inside it.",
+        "type": "string",
+        "enum": ["hard_outside_mu", "soft_inside_mu"],
+        "default": "hard_outside_mu"
       }
     },
     "anyOf": [
@@ -215,7 +221,8 @@
         "checkpoint": 100,
         "power_iter_steps": 5,
         "scc_threshold": 1e-8,
-        "independence_cache_dir": null
+        "independence_cache_dir": null,
+        "trek_penalty_mu_mode": "hard_outside_mu"
       }
     ]
   },

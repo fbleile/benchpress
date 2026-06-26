@@ -11,7 +11,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 
 from add_timeout import timeoutf
 from independence_tests import pairwise_independence_candidates
-from notreks_core import NotreksConfig, fit_linear_baseline, threshold_adjacency
+from notreks_core import NotreksConfig, canonical_dag_seq, fit_linear_baseline, threshold_adjacency
 from optimizer import fit_notreks_optimizer
 
 
@@ -98,7 +98,7 @@ def _read_config():
         algorithm_id=str(_config_value("id", "notreks")),
         function_class=str(_config_value("function_class")),
         score=str(_config_value("score")),
-        dag_seq=str(_config_value("dag_seq")),
+        dag_seq=canonical_dag_seq(_config_value("dag_seq")),
         dag_reg=float(_config_value("dag_reg")),
         dag_s=float(_config_value("dag_s")),
         trek_seq=str(_config_value("trek_seq")),
@@ -124,10 +124,13 @@ def _read_config():
         independence_cache_dir=None
         if _optional_config_value("independence_cache_dir", None) in {None, "", "None", "none", "null"}
         else str(_optional_config_value("independence_cache_dir")),
+        trek_penalty_mu_mode=str(_config_value("trek_penalty_mu_mode", "hard_outside_mu")),
         warm_iter=int(_config_value("warm_iter", _config_value("max_iter"))),
     )
     if cfg.init not in {"zero", "linear_baseline"}:
         raise ValueError("init must be one of {'zero', 'linear_baseline'}")
+    if cfg.trek_penalty_mu_mode not in {"hard_outside_mu", "soft_inside_mu"}:
+        raise ValueError("trek_penalty_mu_mode must be 'hard_outside_mu' or 'soft_inside_mu'")
     return cfg
 
 
@@ -136,6 +139,7 @@ def _print_config_sanity(cfg: NotreksConfig) -> None:
         "NOTREKS run config: "
         f"id={cfg.algorithm_id}, threshold={cfg.threshold}, init={cfg.init}, "
         f"score={cfg.score}, dag_reg={cfg.dag_reg}, trek_seq={cfg.trek_seq}, trek_reg={cfg.trek_reg}, "
+        f"trek_penalty_mu_mode={cfg.trek_penalty_mu_mode}, "
         f"stage_iter_policy=max_every_stage, max_iter={cfg.max_iter}, path_steps={cfg.path_steps}, "
         f"power_iter_steps={cfg.power_iter_steps}, scc_threshold={cfg.scc_threshold}, "
         f"independence_cache_dir={cfg.independence_cache_dir}"

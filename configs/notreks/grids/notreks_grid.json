@@ -1,14 +1,14 @@
 {
-  "experiment_id": "notreks_hyperparam",
-  "benchmark_name": "notreks_hyperparam_validation",
-  "filename_prefix": "notreks/hyperparam/validation/",
+  "experiment_id": "notreks_notreks",
+  "benchmark_name": "notreks_notreks_validation",
+  "filename_prefix": "notreks/notreks/validation/",
   "data": {
     "type": "fixed",
-    "seeds": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "seeds": [1, 2, 3],
     "d": 20,
     "n": 500,
     "graph": "er",
-    "expected_degree": 3,
+    "expected_degree": 2,
     "standardized": true
   },
   "methods": {
@@ -16,24 +16,16 @@
       "enabled": true,
       "grid": {
         "variant": ["stable"],
-        "alpha": [0.01, 0.05],
+        "alpha": [0.01],
         "ci_test": ["fisherz"],
-        "timeout": [null]
-      }
-    },
-    "gcastle_direct_lingam": {
-      "enabled": true,
-      "grid": {
-        "measure": ["pwling", "kernel"],
-        "thresh": [0.3],
         "timeout": [null]
       }
     },
     "marginal_trek_graph": {
       "enabled": true,
       "grid": {
-        "independence_test": ["gcastle_fisherz", "spearman"],
-        "independence_alpha": [0.05],
+        "independence_test": ["gcastle_fisherz"],
+        "independence_alpha": [0.05, 0.1, 0.2, 0.5, 0.8],
         "independence_correction": ["benjamini-hochberg"],
         "independence_cache_dir": [null],
         "timeout": [null]
@@ -50,7 +42,7 @@
         "regularizer": ["l1"],
         "regularizer_scale": [0.01],
         "independence_test": ["gcastle_fisherz"],
-        "independence_alpha": [0.1, 0.2, 0.5],
+        "independence_alpha": [0.05, 0.1, 0.2, 0.5, 0.8],
         "independence_correction": ["none", "benjamini-hochberg"],
         "threshold": [0.1, 0.2, 0.3],
         "max_iter": [60000],
@@ -61,7 +53,7 @@
     }
   },
   "selection": {
-    "primary_metric": "SHD_pattern",
+    "primary_metric": "SHD_cpdag",
     "mode": "minimize",
     "group_by": "method_family"
   }

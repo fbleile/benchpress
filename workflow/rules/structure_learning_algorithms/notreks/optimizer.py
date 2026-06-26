@@ -112,6 +112,8 @@ def _dag_value_grad(
     scc_threshold: float = SCC_THRESHOLD,
 ) -> Tuple[float, np.ndarray]:
     d = W.shape[0]
+    if str(seq) in {"None", "none", "null", ""}:
+        seq = "none"
     if seq == "none":
         return 0.0, np.zeros_like(W)
     if seq == "logdet":
@@ -333,6 +335,17 @@ def _regularizer_value_grad(W: np.ndarray, regularizer: str) -> Tuple[float, np.
     raise NotImplementedError(f"regularizer='{regularizer}' is not supported by the optimizer")
 
 
+def _trek_penalty_scale(cfg, mu: float) -> float:
+    mode = getattr(cfg, "trek_penalty_mu_mode", "hard_outside_mu")
+    if mode == "hard_outside_mu":
+        return float(cfg.trek_reg)
+    if mode == "soft_inside_mu":
+        return float(mu) * float(cfg.trek_reg)
+    raise ValueError(
+        "trek_penalty_mu_mode must be one of {'hard_outside_mu', 'soft_inside_mu'}"
+    )
+
+
 def _stage_objective_value_grad(
     W: np.ndarray,
     X: np.ndarray,
@@ -363,14 +376,13 @@ def _stage_objective_value_grad(
     ):
         return float("inf"), np.full_like(W, np.nan), score_value, dag_value, trek_value, reg_value
 
-    grad = (
-        float(mu) * (score_grad + cfg.regularizer_scale * reg_grad + cfg.trek_reg * trek_grad)
-        + cfg.dag_reg * dag_grad
-    )
+    trek_scale = _trek_penalty_scale(cfg, mu)
+    grad = float(mu) * (score_grad + cfg.regularizer_scale * reg_grad) + trek_scale * trek_grad + cfg.dag_reg * dag_grad
     np.fill_diagonal(grad, 0.0)
 
     objective = (
-        float(mu) * (score_value + cfg.regularizer_scale * reg_value + cfg.trek_reg * trek_value)
+        float(mu) * (score_value + cfg.regularizer_scale * reg_value)
+        + trek_scale * trek_value
         + cfg.dag_reg * dag_value
     )
     return float(objective), grad, score_value, dag_value, trek_value, reg_value
@@ -409,16 +421,13 @@ def _stage_diagnostics(
         scc_threshold=scc_threshold,
     )
     trek_value, trek_grad = _trek_value_grad(W, cfg.trek_seq, independence_pairs)
-    total_grad = (
-        float(mu)
-        * (score_grad + cfg.regularizer_scale * reg_grad + cfg.trek_reg * trek_grad)
-        + cfg.dag_reg * dag_grad
-    )
+    trek_scale = _trek_penalty_scale(cfg, mu)
+    total_grad = float(mu) * (score_grad + cfg.regularizer_scale * reg_grad) + trek_scale * trek_grad + cfg.dag_reg * dag_grad
     np.fill_diagonal(total_grad, 0.0)
     return {
         "score": float(score_value),
         "dag_penalty": float(cfg.dag_reg * dag_value),
-        "trek_penalty": float(float(mu) * cfg.trek_reg * trek_value),
+        "trek_penalty": float(trek_scale * trek_value),
         "regularizer": float(float(mu) * cfg.regularizer_scale * reg_value),
         "raw_score": float(score_value),
         "raw_dag_penalty": float(dag_value),
@@ -426,12 +435,12 @@ def _stage_diagnostics(
         "raw_regularizer": float(reg_value),
         "scaled_score": float(float(mu) * score_value),
         "scaled_dag_penalty": float(cfg.dag_reg * dag_value),
-        "scaled_trek_penalty": float(float(mu) * cfg.trek_reg * trek_value),
+        "scaled_trek_penalty": float(trek_scale * trek_value),
         "scaled_regularizer": float(float(mu) * cfg.regularizer_scale * reg_value),
         "grad_norm": float(np.linalg.norm(total_grad)),
         "grad_score_norm": float(np.linalg.norm(float(mu) * score_grad)),
         "grad_dag_norm": float(np.linalg.norm(cfg.dag_reg * dag_grad)),
-        "grad_trek_norm": float(np.linalg.norm(float(mu) * cfg.trek_reg * trek_grad)),
+        "grad_trek_norm": float(np.linalg.norm(trek_scale * trek_grad)),
         "grad_regularizer_norm": float(np.linalg.norm(float(mu) * cfg.regularizer_scale * reg_grad)),
         "n_samples": int(n),
         "n_variables": int(d),

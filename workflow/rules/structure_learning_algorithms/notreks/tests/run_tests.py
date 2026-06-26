@@ -16,6 +16,7 @@ for path in (TESTS_DIR, MODULE_DIR, TOOLS_DIR):
 import test_grid_expansion as grid_tests  # noqa: E402
 import test_independence_cache as independence_tests  # noqa: E402
 import test_jobfarm_manifest as jobfarm_tests  # noqa: E402
+import test_marginal_trek_graph as marginal_trek_graph_tests  # noqa: E402
 import test_optimizer as optimizer_tests  # noqa: E402
 import test_paths as path_tests  # noqa: E402
 import test_selection as selection_tests  # noqa: E402
@@ -40,11 +41,14 @@ def main() -> None:
         independence_tests.test_independence_cache_hit_miss_and_metadata(path / "hit")
         independence_tests.test_cached_accepted_pairs_match_fresh_result(path / "fresh")
         independence_tests.test_gcastle_fisherz_runs_empty_conditioning_set()
-        independence_tests.test_gcastle_raw_cache_reused_for_alpha_and_correction(path / "gcastle-cache")
+        independence_tests.test_gcastle_cache_key_changes_for_alpha_and_correction(path / "gcastle-cache")
         independence_tests.test_no_trek_ground_truth_diagnostic_tiny_graph()
         independence_tests.test_repeated_independence_settings_reuse_cache(path / "reuse")
         independence_tests.test_malformed_cache_entry_is_ignored_and_recomputed(path / "malformed")
         independence_tests.test_parallel_cache_access_does_not_crash(path / "parallel-cache")
+        marginal_trek_graph_tests.test_marginal_trek_graph_outputs_undirected_contract(
+            path / "marginal-trek-graph"
+        )
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp)
@@ -77,6 +81,7 @@ def main() -> None:
         selection_tests.test_selection_works_after_moving_run_folder(path / "selection-move")
         selection_tests.test_inject_best_preserves_non_notreks_algorithms(path / "inject")
         validation_tests.test_tag_derived_paths_are_standardized()
+        validation_tests.test_expand_grid_writes_top_level_config_and_manifest(path / "expand-grid")
         validation_tests.test_prepare_validation_tiny_writes_one_config_and_manifest(path / "validation-tiny")
         validation_tests.test_prepare_validation_reuses_matching_fixed_data_files(path / "validation-reuse-fixed")
         validation_tests.test_default_benchmark_frames_use_fresh_seeds()

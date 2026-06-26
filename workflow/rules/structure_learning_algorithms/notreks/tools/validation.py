@@ -175,8 +175,11 @@ def _notreks_defaults(entry: dict[str, Any], experiment_id: str) -> dict[str, An
         "power_iter_steps": 5,
         "scc_threshold": 1e-8,
         "independence_cache_dir": f"results/notreks_cache/{safe_name(experiment_id)}",
+        "trek_penalty_mu_mode": "hard_outside_mu",
     }
     item.update(entry)
+    if str(item.get("dag_seq")) in {"None", "none", "null", ""}:
+        item["dag_seq"] = "None"
     item["warm_iter"] = int(item["max_iter"])
     item["checkpoint"] = int(item.get("checkpoint", max(int(item["max_iter"]) // 10, 1)))
     item.pop("algorithm_id", None)
@@ -204,6 +207,13 @@ def _method_families_from_grid(grid: dict[str, Any], experiment_id: str) -> dict
         raw_entries = [_notreks_defaults(entry, experiment_id) for entry in _cartesian_grid(methods["notreks"].get("grid", {}))]
         entries = _with_ids("notreks", "notreks", raw_entries)
         families["notreks"] = ("notreks", entries)
+    if methods.get("marginal_trek_graph", {}).get("enabled", False):
+        entries = _with_ids(
+            "marginal_trek_graph",
+            "marginal_trek_graph",
+            _cartesian_grid(methods["marginal_trek_graph"].get("grid", {})),
+        )
+        families["marginal_trek_graph"] = ("marginal_trek_graph", entries)
     return families
 
 
@@ -486,6 +496,8 @@ def expand_grid_config(
             manifest_json,
             repo_root,
         )
+    if "marginal_trek_graph" in families:
+        resources["marginal_trek_graph"] = families["marginal_trek_graph"][1]
     out_config.parent.mkdir(parents=True, exist_ok=True)
     out_config.write_text(json.dumps(config, indent=2) + "\n")
     joint_path = repo_root / "results/output" / benchmark_name / "benchmarks" / prefix / "joint_benchmarks.csv"
@@ -612,6 +624,8 @@ def build_selected_benchmark_config(
         resources["gcastle_direct_lingam"] = [selected["gcastle_lingam"][1]]
     if "notreks" in selected:
         resources["notreks"] = _short_notreks_entries([selected["notreks"][1]], manifest_json, repo_root)
+    if "marginal_trek_graph" in selected:
+        resources["marginal_trek_graph"] = [selected["marginal_trek_graph"][1]]
 
     out_config.parent.mkdir(parents=True, exist_ok=True)
     out_config.write_text(json.dumps(config, indent=2) + "\n")
@@ -645,6 +659,7 @@ def expected_algorithm_run_counts(config: dict[str, Any]) -> dict[str, int]:
         "copy_fixed_data": num_data,
         "gcastle_pc": len(algorithms.get("gcastle_pc", [])) * num_data,
         "gcastle_direct_lingam": len(algorithms.get("gcastle_direct_lingam", [])) * num_data,
+        "marginal_trek_graph": len(algorithms.get("marginal_trek_graph", [])) * num_data,
         "notreks": len(algorithms.get("notreks", [])) * num_data,
     }
 
