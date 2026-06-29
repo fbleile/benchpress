@@ -938,7 +938,7 @@ def main() -> None:
 
     merged = joint.merge(
         manifest,
-        left_on="algorithm_id",
+        left_on="id",
         right_on="algorithm_id",
         how="inner",
     )
