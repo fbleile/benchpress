@@ -21,28 +21,6 @@
         "timeout": [null]
       }
     },
-    "empty_graph": {
-      "enabled": true,
-      "grid": {
-        "timeout": [null]
-      }
-    },
-    "complete_undirected_graph": {
-      "enabled": true,
-      "grid": {
-        "timeout": [null]
-      }
-    },
-    "marginal_trek_graph": {
-      "enabled": true,
-      "grid": {
-        "independence_test": ["gcastle_fisherz"],
-        "independence_alpha": [0.05, 0.1, 0.2],
-        "independence_correction": ["benjamini-hochberg"],
-        "independence_cache_dir": [null],
-        "timeout": [null]
-      }
-    },
     "notreks": {
       "enabled": true,
       "grid": {
@@ -57,7 +35,7 @@
         "independence_alpha": [0.05, 0.1, 0.2],
         "independence_correction": ["none", "benjamini-hochberg"],
         "threshold": [0.0, 0.1, 0.2],
-        "max_iter": [3000],
+        "max_iter": [10000],
         "path_steps": [5],
         "power_iter_steps": [7],
         "timeout": [null]
