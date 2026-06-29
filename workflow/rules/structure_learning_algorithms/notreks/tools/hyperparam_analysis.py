@@ -197,6 +197,7 @@ def load_manifest(path: Path) -> pd.DataFrame:
             "base_method": item.get("base_method"),
             "phase": item.get("phase"),
             "config_path": item.get("config_path"),
+            "hyperparameters": hyperparams,
         }
 
         for key, value in flatten_dict(hyperparams).items():
@@ -225,19 +226,95 @@ def load_joint_benchmarks(path: Path) -> pd.DataFrame:
     if unnamed:
         df = df.drop(columns=unnamed)
 
-    id_column = None
-    for candidate in ("alg_id", "algorithm_id", "id"):
-        if candidate in df.columns:
-            id_column = candidate
-            break
-    if id_column is None:
+    if not any(candidate in df.columns for candidate in ("id", "alg_id", "algorithm_id")):
         raise ValueError(
             f"joint_benchmarks.csv must contain an algorithm id column. Found columns: {list(df.columns)}"
         )
 
-    df["algorithm_id"] = df[id_column].astype(str)
-
     return df
+
+
+def _first_values(df: pd.DataFrame, column: str) -> list[str]:
+    if column not in df.columns:
+        return []
+    return df[column].dropna().astype(str).unique().tolist()[:10]
+
+
+def _normalize_key(series: pd.Series) -> pd.Series:
+    return series.astype("string").fillna("").str.strip()
+
+
+def join_joint_to_manifest(
+    joint: pd.DataFrame,
+    manifest: pd.DataFrame,
+    *,
+    joint_path: Path,
+    manifest_path: Path,
+) -> pd.DataFrame:
+    candidates = [
+        ("id", "algorithm_id"),
+        ("alg_id", "algorithm_id"),
+        ("id", "path_id"),
+        ("alg_id", "path_id"),
+        ("algorithm_id", "algorithm_id"),
+    ]
+    best: tuple[int, int, str, str, pd.DataFrame] | None = None
+    for priority, (left_key, right_key) in enumerate(candidates):
+        if left_key not in joint.columns or right_key not in manifest.columns:
+            continue
+        left = joint.copy()
+        right = manifest.copy()
+        left["_joint_join_key"] = _normalize_key(left[left_key])
+        right["_manifest_join_key"] = _normalize_key(right[right_key])
+        merged = left.merge(
+            right,
+            left_on="_joint_join_key",
+            right_on="_manifest_join_key",
+            how="inner",
+            suffixes=("_joint", "_manifest"),
+        )
+        matches = len(merged)
+        if best is None or matches > best[0] or (matches == best[0] and priority < best[1]):
+            best = (matches, priority, left_key, right_key, merged)
+
+    if best is None or best[0] == 0:
+        raise ValueError(
+            "\n".join(
+                [
+                    "Could not join joint_benchmarks.csv to manifest.",
+                    f"joint path: {joint_path}",
+                    f"manifest path: {manifest_path}",
+                    f"joint columns: {list(joint.columns)}",
+                    f"manifest columns: {list(manifest.columns)}",
+                    f"joint.id first values: {_first_values(joint, 'id')}",
+                    f"joint.alg_id first values: {_first_values(joint, 'alg_id')}",
+                    f"manifest.algorithm_id first values: {_first_values(manifest, 'algorithm_id')}",
+                    f"manifest.path_id first values: {_first_values(manifest, 'path_id')}",
+                ]
+            )
+        )
+
+    matches, _, left_key, right_key, merged = best
+    print(
+        "Joined joint_benchmarks with manifest using "
+        f"joint_benchmarks.{left_key} == manifest.{right_key} ({matches} rows)."
+    )
+    result_source = left_key if left_key in merged.columns else f"{left_key}_joint"
+    merged["result_id"] = merged.get(result_source, merged["_joint_join_key"]).astype("string")
+    merged["manifest_join_key"] = merged["_manifest_join_key"].astype("string")
+
+    if "algorithm_id_manifest" in merged.columns:
+        merged["algorithm_id"] = merged["algorithm_id_manifest"].astype(str)
+    elif "algorithm_id" in merged.columns:
+        merged["algorithm_id"] = merged["algorithm_id"].astype(str)
+    elif f"{right_key}_manifest" in merged.columns:
+        merged["algorithm_id"] = merged[f"{right_key}_manifest"].astype(str)
+    else:
+        raise ValueError("Joined table has no recoverable manifest algorithm_id column.")
+
+    if "path_id_manifest" in merged.columns and "path_id" not in merged.columns:
+        merged["path_id"] = merged["path_id_manifest"]
+    return merged
 
 
 def resolve_metric_columns(df: pd.DataFrame, requested: list[str]) -> dict[str, str]:
@@ -325,6 +402,25 @@ def get_config_threshold(row: pd.Series) -> float | None:
     return None
 
 
+def add_evaluated_threshold(rows: pd.DataFrame) -> pd.DataFrame:
+    out = rows.copy()
+    if "thresh" in out.columns:
+        out["_threshold_source_row"] = np.where(
+            pd.to_numeric(out["thresh"], errors="coerce").notna(),
+            "joint_benchmarks_threshold",
+            None,
+        )
+        return out
+    out["_threshold_source_row"] = None
+    if "curve_param" in out.columns and "curve_value" in out.columns:
+        curve_param = out["curve_param"].astype("string").str.lower()
+        mask = curve_param.isin(["threshold", "thresh"])
+        out["thresh"] = np.nan
+        out.loc[mask, "thresh"] = pd.to_numeric(out.loc[mask, "curve_value"], errors="coerce")
+        out.loc[mask & out["thresh"].notna(), "_threshold_source_row"] = "joint_benchmarks_threshold"
+    return out
+
+
 def select_best_thresholds(
     rows: pd.DataFrame,
     metrics: list[str],
@@ -333,7 +429,7 @@ def select_best_thresholds(
     """
     Aggregate validation rows and select/report thresholds per algorithm.
 
-    If joint_benchmarks.csv contains a 'thresh' column:
+    If joint_benchmarks.csv contains threshold rows:
         choose the best threshold per algorithm_id by primary_metric.
 
     If joint_benchmarks.csv has no 'thresh' column:
@@ -345,9 +441,16 @@ def select_best_thresholds(
     if primary_metric not in rows.columns:
         raise ValueError(f"Primary metric '{primary_metric}' not found in merged rows.")
 
+    temp = add_evaluated_threshold(rows)
+    if "thresh" in temp.columns:
+        manifest_thresholds = temp.apply(get_config_threshold, axis=1)
+        temp["thresh"] = pd.to_numeric(temp["thresh"], errors="coerce")
+        missing_threshold = temp["thresh"].isna()
+        temp.loc[missing_threshold, "thresh"] = manifest_thresholds[missing_threshold]
+        temp.loc[missing_threshold & temp["thresh"].notna(), "_threshold_source_row"] = "manifest_config_threshold"
+
     # Case 1: no evaluated threshold column. Use manifest threshold.
-    if "thresh" not in rows.columns:
-        temp = rows.copy()
+    if "thresh" not in temp.columns or temp["thresh"].notna().sum() == 0:
         temp["thresh"] = temp.apply(get_config_threshold, axis=1)
 
         group_cols = ["method_family", "base_method", "algorithm_id", "thresh"]
@@ -379,7 +482,7 @@ def select_best_thresholds(
             record["selected_primary_value"] = record.get(primary_metric, np.nan)
             record["lower_is_better"] = lower_is_better(primary_metric)
             record["n_thresholds_considered"] = 1
-            record["threshold_source"] = "manifest_param_threshold"
+            record["threshold_source"] = "manifest_config_threshold"
 
             records.append(record)
 
@@ -397,10 +500,8 @@ def select_best_thresholds(
         return threshold_curve, best_thresholds
 
     # Case 2: joint_benchmarks.csv has threshold curve rows.
+    temp = temp[temp["thresh"].notna()].copy()
     group_cols = ["method_family", "base_method", "algorithm_id", "thresh"]
-
-    temp = rows.copy()
-    temp["thresh"] = pd.to_numeric(temp["thresh"], errors="coerce")
 
     weight_col = "n_seeds" if "n_seeds" in temp.columns else None
 
@@ -425,6 +526,10 @@ def select_best_thresholds(
         for metric in metrics:
             if metric in group.columns:
                 record[metric] = weighted_mean(group[metric], weights)
+        sources = set(str(value) for value in group.get("_threshold_source_row", pd.Series()).dropna())
+        record["threshold_source"] = (
+            "joint_benchmarks_threshold" if "joint_benchmarks_threshold" in sources else "manifest_config_threshold"
+        )
 
         records.append(record)
 
@@ -453,7 +558,11 @@ def select_best_thresholds(
         chosen["selected_primary_value"] = chosen[primary_metric]
         chosen["lower_is_better"] = primary_lower
         chosen["n_thresholds_considered"] = int(group["thresh"].nunique(dropna=True))
-        chosen["threshold_source"] = "joint_benchmarks_best_threshold"
+        chosen["threshold_source"] = (
+            "joint_benchmarks_best_threshold"
+            if chosen.get("threshold_source") == "joint_benchmarks_threshold"
+            else "manifest_config_threshold"
+        )
 
         best_records.append(chosen)
 
@@ -482,14 +591,22 @@ def collapse_rows_for_analysis(
     """
 
     if threshold_mode == "all":
-        out = rows.copy()
+        out = add_evaluated_threshold(rows)
         out["_threshold_selection"] = "all"
         if "thresh" not in out.columns:
             out["_selected_threshold"] = out.apply(get_config_threshold, axis=1)
         return out
 
+    rows = add_evaluated_threshold(rows)
+    if "thresh" in rows.columns:
+        manifest_thresholds = rows.apply(get_config_threshold, axis=1)
+        rows["thresh"] = pd.to_numeric(rows["thresh"], errors="coerce")
+        missing_threshold = rows["thresh"].isna()
+        rows.loc[missing_threshold, "thresh"] = manifest_thresholds[missing_threshold]
+        rows.loc[missing_threshold & rows["thresh"].notna(), "_threshold_source_row"] = "manifest_config_threshold"
+
     # No evaluated threshold column: use manifest threshold.
-    if "thresh" not in rows.columns:
+    if "thresh" not in rows.columns or rows["thresh"].notna().sum() == 0:
         out = rows.copy()
         out["_selected_threshold"] = out.apply(get_config_threshold, axis=1)
         out["_threshold_selection"] = "manifest_param_threshold_no_threshold_curve"
@@ -497,6 +614,7 @@ def collapse_rows_for_analysis(
 
     temp = rows.copy()
     temp["thresh_numeric"] = pd.to_numeric(temp["thresh"], errors="coerce")
+    temp = temp[temp["thresh_numeric"].notna()].copy()
 
     chosen_rows = []
     primary_lower = lower_is_better(primary_metric)
@@ -936,26 +1054,12 @@ def main() -> None:
     manifest = load_manifest(manifest_path)
     joint = load_joint_benchmarks(joint_path)
 
-    merged = joint.merge(
+    merged = join_joint_to_manifest(
+        joint,
         manifest,
-        left_on="id",
-        right_on="path_id",
-        how="inner",
+        joint_path=joint_path,
+        manifest_path=manifest_path,
     )
-
-    if merged.empty:
-        joint_ids = set(joint["algorithm_id"].astype(str))
-        manifest_ids = set(manifest["algorithm_id"].astype(str))
-
-        raise ValueError(
-            "No rows after joining joint_benchmarks.csv with manifest.json using "
-            "joint_benchmarks algorithm id == manifest.algorithm_id.\n"
-            f"Joint benchmark ids: {len(joint_ids)}\n"
-            f"Manifest ids: {len(manifest_ids)}\n"
-            f"Matched ids: {len(joint_ids & manifest_ids)}\n"
-            f"Example joint-only ids: {sorted(joint_ids - manifest_ids)[:10]}\n"
-            f"Example manifest-only ids: {sorted(manifest_ids - joint_ids)[:10]}"
-        )
 
     metric_map = resolve_metric_columns(merged, args.metrics)
     merged = coerce_metric_columns(merged, metric_map)

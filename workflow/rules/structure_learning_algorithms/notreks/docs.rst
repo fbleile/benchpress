@@ -284,6 +284,7 @@ Hyperparameter analysis
 -----------------------
 
 ``tools/hyperparam_analysis.py`` reads Benchpress ``joint_benchmarks.csv`` and
-joins it to ``configs/notreks/expanded/<tag>_manifest.json`` by algorithm id.
-It no longer reads ``ROC_data.csv``.  If no evaluated threshold column is
-present, the report uses the configured ``threshold`` from the manifest.
+joins it to ``configs/notreks/expanded/<tag>_manifest.json`` by resolving
+Benchpress result ids against manifest ``algorithm_id`` and short ``path_id``
+fields.  It no longer reads ``ROC_data.csv``.  If no evaluated threshold column
+is present, the report uses the configured ``threshold`` from the manifest.

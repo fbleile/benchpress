@@ -14,6 +14,7 @@ for path in (TESTS_DIR, MODULE_DIR, TOOLS_DIR):
     sys.path.insert(0, str(path))
 
 import test_grid_expansion as grid_tests  # noqa: E402
+import test_hyperparam_analysis as hyperparam_analysis_tests  # noqa: E402
 import test_independence_cache as independence_tests  # noqa: E402
 import test_jobfarm_manifest as jobfarm_tests  # noqa: E402
 import test_marginal_trek_graph as marginal_trek_graph_tests  # noqa: E402
@@ -35,6 +36,9 @@ def main() -> None:
     grid_tests.test_cartesian_grid_expansion()
     grid_tests.test_zip_grid_expansion()
     grid_tests.test_zip_grid_rejects_inconsistent_lengths()
+    hyperparam_analysis_tests.test_joint_manifest_join_uses_full_algorithm_id()
+    hyperparam_analysis_tests.test_joint_manifest_join_uses_short_path_id()
+    hyperparam_analysis_tests.test_thresholds_use_curve_param_or_manifest_threshold()
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp)
         independence_tests.test_independence_cache_key_changes_with_parameters(path / "key")
