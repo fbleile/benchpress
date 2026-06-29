@@ -939,7 +939,7 @@ def main() -> None:
     merged = joint.merge(
         manifest,
         left_on="id",
-        right_on="algorithm_id",
+        right_on="path_id",
         how="inner",
     )
 
