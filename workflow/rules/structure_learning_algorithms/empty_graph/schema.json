@@ -1,0 +1,19 @@
+{
+  "title": "empty_graph",
+  "description": "Trivial all-zero graph baseline.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "timeout": {
+        "$ref": "#/$defs/flexnonnegnumnull"
+      }
+    },
+    "required": ["id", "timeout"],
+    "additionalProperties": false
+  },
+  "uniqueItems": true
+}

@@ -214,6 +214,20 @@ def _method_families_from_grid(grid: dict[str, Any], experiment_id: str) -> dict
             _cartesian_grid(methods["marginal_trek_graph"].get("grid", {})),
         )
         families["marginal_trek_graph"] = ("marginal_trek_graph", entries)
+    if methods.get("empty_graph", {}).get("enabled", False):
+        entries = _with_ids(
+            "empty_graph",
+            "empty_graph",
+            _cartesian_grid(methods["empty_graph"].get("grid", {})),
+        )
+        families["empty_graph"] = ("empty_graph", entries)
+    if methods.get("complete_undirected_graph", {}).get("enabled", False):
+        entries = _with_ids(
+            "complete_undirected_graph",
+            "complete_undirected_graph",
+            _cartesian_grid(methods["complete_undirected_graph"].get("grid", {})),
+        )
+        families["complete_undirected_graph"] = ("complete_undirected_graph", entries)
     return families
 
 
@@ -498,6 +512,10 @@ def expand_grid_config(
         )
     if "marginal_trek_graph" in families:
         resources["marginal_trek_graph"] = families["marginal_trek_graph"][1]
+    if "empty_graph" in families:
+        resources["empty_graph"] = families["empty_graph"][1]
+    if "complete_undirected_graph" in families:
+        resources["complete_undirected_graph"] = families["complete_undirected_graph"][1]
     out_config.parent.mkdir(parents=True, exist_ok=True)
     out_config.write_text(json.dumps(config, indent=2) + "\n")
     joint_path = repo_root / "results/output" / benchmark_name / "benchmarks" / prefix / "joint_benchmarks.csv"
@@ -660,6 +678,8 @@ def expected_algorithm_run_counts(config: dict[str, Any]) -> dict[str, int]:
         "gcastle_pc": len(algorithms.get("gcastle_pc", [])) * num_data,
         "gcastle_direct_lingam": len(algorithms.get("gcastle_direct_lingam", [])) * num_data,
         "marginal_trek_graph": len(algorithms.get("marginal_trek_graph", [])) * num_data,
+        "empty_graph": len(algorithms.get("empty_graph", [])) * num_data,
+        "complete_undirected_graph": len(algorithms.get("complete_undirected_graph", [])) * num_data,
         "notreks": len(algorithms.get("notreks", [])) * num_data,
     }
 

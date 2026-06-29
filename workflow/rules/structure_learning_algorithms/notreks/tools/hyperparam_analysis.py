@@ -9,8 +9,7 @@ Expected inputs for tag <tag>:
 Main outputs:
   results/notreks/hyperparam_analysis/<tag>/report.md
   results/notreks/hyperparam_analysis/<tag>/algorithm_summary.csv
-  results/notreks/hyperparam_analysis/<tag>/hyperparam_main_effects.csv
-  results/notreks/hyperparam_analysis/<tag>/numeric_correlations.csv
+  results/notreks/hyperparam_analysis/<tag>/best_configs.csv
 
 Example:
   python workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py \
@@ -34,6 +33,43 @@ import pandas as pd
 
 DEFAULT_METRICS = ["SHD_pattern", "time"]
 DEFAULT_PRIMARY_METRIC = "SHD_pattern"
+KEY_HYPERPARAMS = [
+    "dag_seq",
+    "independence_alpha",
+    "independence_correction",
+    "threshold",
+    "trek_reg",
+    "trek_penalty_mu_mode",
+    "lr",
+    "regularizer_scale",
+    "max_iter",
+    "path_steps",
+    "dag_reg",
+    "mu_init",
+    "mu_factor",
+]
+REPORT_METRICS = [
+    "SHD_pattern",
+    "precision_skel",
+    "recall_skel",
+    "F1_skel",
+    "precision_pattern",
+    "recall_pattern",
+    "F1_pattern",
+    "FPR_skel",
+    "FNR_skel",
+    "TPR_pattern",
+    "FPR_pattern",
+    "time",
+]
+EFFECT_HYPERPARAMS = [
+    "independence_alpha",
+    "threshold",
+    "dag_seq",
+    "independence_correction",
+    "trek_reg",
+    "trek_penalty_mu_mode",
+]
 
 LOWER_IS_BETTER_HINTS = [
     "shd",
@@ -369,6 +405,34 @@ def coerce_metric_columns(df: pd.DataFrame, metric_map: dict[str, str]) -> pd.Da
     for public_name, source_col in metric_map.items():
         out[public_name] = pd.to_numeric(out[source_col], errors="coerce")
 
+    return out
+
+
+def _safe_ratio(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
+    numerator = pd.to_numeric(numerator, errors="coerce")
+    denominator = pd.to_numeric(denominator, errors="coerce")
+    out = numerator / denominator
+    out = out.where(denominator != 0)
+    return out
+
+
+def add_derived_precision_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    metric_specs = [
+        ("pattern", "TP_pattern", "FP_pattern", "FN_pattern"),
+        ("skel", "TP_skel", "FP_skel", "FN_skel"),
+    ]
+    for suffix, tp_col, fp_col, fn_col in metric_specs:
+        if {tp_col, fp_col, fn_col}.issubset(out.columns):
+            tp = pd.to_numeric(out[tp_col], errors="coerce")
+            fp = pd.to_numeric(out[fp_col], errors="coerce")
+            fn = pd.to_numeric(out[fn_col], errors="coerce")
+            precision = _safe_ratio(tp, tp + fp)
+            recall = _safe_ratio(tp, tp + fn)
+            f1 = _safe_ratio(2.0 * precision * recall, precision + recall)
+            out[f"precision_{suffix}"] = precision
+            out[f"recall_{suffix}"] = recall
+            out[f"F1_{suffix}"] = f1
     return out
 
 
@@ -871,21 +935,260 @@ def markdown_table(df: pd.DataFrame, max_rows: int = 20) -> str:
     return "\n".join([header, separator] + body)
 
 
+def _metric_mean_col(metric: str) -> str:
+    return f"{metric}_mean"
+
+
+def _metric_std_col(metric: str) -> str:
+    return f"{metric}_std"
+
+
+def available_report_metrics(rows: pd.DataFrame, requested: list[str]) -> list[str]:
+    metrics = []
+    for metric in list(requested) + REPORT_METRICS:
+        if metric in rows.columns and metric not in metrics:
+            metrics.append(metric)
+    return metrics
+
+
+def _first_nonnull(series: pd.Series):
+    valid = series.dropna()
+    return valid.iloc[0] if not valid.empty else np.nan
+
+
+def build_best_configs(
+    rows: pd.DataFrame,
+    metrics: list[str],
+    primary_metric: str,
+    top_k: int,
+) -> pd.DataFrame:
+    group_cols = ["method_family", "base_method", "algorithm_id"]
+    agg: dict[str, list[str] | str] = {}
+    for metric in metrics:
+        if metric in rows.columns:
+            agg[metric] = ["mean", "std", "count"]
+    for col in ["path_id", "result_id"]:
+        if col in rows.columns:
+            agg[col] = "first"
+    hp_cols = [col for col in rows.columns if col.startswith("param.")]
+    for col in hp_cols:
+        agg[col] = "first"
+
+    summary = rows.groupby(group_cols, dropna=False).agg(agg).reset_index()
+    flat_cols = []
+    for col in summary.columns:
+        if isinstance(col, tuple):
+            if col[1] in {"mean", "std", "count"}:
+                flat_cols.append(f"{col[0]}_{col[1]}")
+            else:
+                flat_cols.append(col[0])
+        else:
+            flat_cols.append(col)
+    summary.columns = flat_cols
+    for col in hp_cols:
+        if col in summary.columns:
+            summary = summary.rename(columns={col: "hp." + col.removeprefix("param.")})
+
+    primary_col = _metric_mean_col(primary_metric)
+    if primary_col not in summary.columns:
+        raise ValueError(f"Primary metric mean column not found after summarizing: {primary_col}")
+    time_col = _metric_mean_col("time")
+    sort_cols = [primary_col]
+    ascending = [lower_is_better(primary_metric)]
+    if time_col in summary.columns:
+        sort_cols.append(time_col)
+        ascending.append(True)
+    sort_cols.append("algorithm_id")
+    ascending.append(True)
+    summary = summary.sort_values(sort_cols, ascending=ascending, kind="mergesort").reset_index(drop=True)
+    summary.insert(0, "rank", np.arange(1, len(summary) + 1))
+    count_col = f"{primary_metric}_count"
+    if count_col in summary.columns:
+        summary["n_datasets"] = summary[count_col]
+    return summary
+
+
+def important_hp_columns(df: pd.DataFrame) -> list[str]:
+    cols = []
+    for key in KEY_HYPERPARAMS:
+        col = f"hp.{key}"
+        if col in df.columns:
+            cols.append(col)
+    return cols
+
+
+def _format_value(value) -> str:
+    if pd.isna(value):
+        return "NA"
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    return str(value)
+
+
+def common_settings(top_configs: pd.DataFrame, *, dominant_fraction: float = 0.7) -> tuple[list[str], list[str], pd.DataFrame]:
+    hp_cols = [col for col in top_configs.columns if col.startswith("hp.")]
+    n = len(top_configs)
+    constants: list[str] = []
+    dominant: list[str] = []
+    count_rows = []
+    if n == 0:
+        return constants, dominant, pd.DataFrame()
+    for col in hp_cols:
+        counts = top_configs[col].fillna("<missing>").astype(str).value_counts(dropna=False)
+        if counts.empty:
+            continue
+        value_counts = ", ".join(f"{value}: {count}" for value, count in counts.items())
+        count_rows.append({"hyperparameter": col.removeprefix("hp."), "value counts among top configs": value_counts})
+        top_value = counts.index[0]
+        top_count = int(counts.iloc[0])
+        label = f"{col.removeprefix('hp.')} = {top_value} ({top_count}/{n})"
+        if top_count == n:
+            constants.append(label)
+        elif top_count / max(n, 1) >= dominant_fraction:
+            dominant.append(label)
+    return constants, dominant, pd.DataFrame(count_rows)
+
+
+def compact_effect_table(configs: pd.DataFrame, metrics: list[str]) -> pd.DataFrame:
+    rows = []
+    wanted_metrics = [metric for metric in ["SHD_pattern", "FPR_skel", "FNR_skel", "time"] if _metric_mean_col(metric) in configs.columns]
+    for hp in EFFECT_HYPERPARAMS:
+        col = f"hp.{hp}"
+        if col not in configs.columns:
+            continue
+        for value, group in configs.groupby(col, dropna=False):
+            row = {
+                "hyperparameter": hp,
+                "value": _format_value(value),
+                "n_configs": int(len(group)),
+            }
+            for metric in wanted_metrics:
+                row[f"mean_{metric}"] = float(pd.to_numeric(group[_metric_mean_col(metric)], errors="coerce").mean())
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def interaction_table(configs: pd.DataFrame, left: str, right: str) -> pd.DataFrame:
+    left_col = f"hp.{left}"
+    right_col = f"hp.{right}"
+    if left_col not in configs.columns or right_col not in configs.columns:
+        return pd.DataFrame()
+    metric_cols = [col for col in [_metric_mean_col("SHD_pattern"), _metric_mean_col("time")] if col in configs.columns]
+    if not metric_cols:
+        return pd.DataFrame()
+    records = []
+    for keys, group in configs.groupby([left_col, right_col], dropna=False):
+        row = {
+            left: _format_value(keys[0]),
+            right: _format_value(keys[1]),
+            "n_configs": int(len(group)),
+        }
+        for col in metric_cols:
+            row[col] = float(pd.to_numeric(group[col], errors="coerce").mean())
+        records.append(row)
+    return pd.DataFrame(records).sort_values(metric_cols[0], ascending=True) if records else pd.DataFrame()
+
+
+def baseline_comparison(best_configs: pd.DataFrame, primary_metric: str) -> tuple[pd.DataFrame, list[str]]:
+    primary_col = _metric_mean_col(primary_metric)
+    rows = []
+
+    def pick(label: str, mask: pd.Series):
+        subset = best_configs[mask].copy()
+        if subset.empty:
+            return
+        subset = subset.sort_values([primary_col, _metric_mean_col("time") if _metric_mean_col("time") in subset else primary_col])
+        row = subset.iloc[0]
+        out = {"method": label, f"mean_{primary_metric}": row.get(primary_col, np.nan)}
+        for metric in ["FPR_skel", "FNR_skel", "precision_skel", "recall_skel", "F1_skel", "time"]:
+            col = _metric_mean_col(metric)
+            if col in row:
+                out[f"mean_{metric}"] = row[col]
+        rows.append(out)
+
+    pick("empty_graph", best_configs["method_family"].astype(str).eq("empty_graph"))
+    pick("complete_undirected_graph", best_configs["method_family"].astype(str).eq("complete_undirected_graph"))
+    pick("gcastle_pc", best_configs["method_family"].astype(str).eq("gcastle_pc"))
+    pick("marginal_trek_graph", best_configs["method_family"].astype(str).eq("marginal_trek_graph"))
+    pick("best_NOTREKS", best_configs["method_family"].astype(str).eq("notreks"))
+
+    table = pd.DataFrame(rows)
+    notes = []
+    if table.empty or f"mean_{primary_metric}" not in table:
+        return table, notes
+    values = dict(zip(table["method"], table[f"mean_{primary_metric}"]))
+    best = values.get("best_NOTREKS")
+    if best is not None and pd.notna(best):
+        trivial = [values.get("empty_graph"), values.get("complete_undirected_graph")]
+        if all(value is not None and pd.notna(value) and best < value for value in trivial):
+            notes.append("NOTREKS beats trivial baselines.")
+        elif any(value is not None and pd.notna(value) and best >= value for value in trivial):
+            notes.append("NOTREKS not meaningful: it does not beat at least one trivial baseline.")
+        pc = values.get("gcastle_pc")
+        if pc is not None and pd.notna(pc):
+            gap = best - pc
+            if best < pc:
+                notes.append("NOTREKS beats PC.")
+            elif abs(gap) <= 2:
+                notes.append("NOTREKS close to PC.")
+            else:
+                notes.append("NOTREKS does not beat PC.")
+    return table, notes
+
+
+def propose_next_grid(top_notreks: pd.DataFrame) -> dict[str, list[Any]]:
+    proposal: dict[str, list[Any]] = {}
+    if top_notreks.empty:
+        return proposal
+    for key in KEY_HYPERPARAMS:
+        col = f"hp.{key}"
+        if col not in top_notreks.columns:
+            continue
+        values = top_notreks[col].dropna().tolist()
+        if not values:
+            continue
+        counts = pd.Series(values).astype(str).value_counts()
+        chosen = counts.index[:2].tolist()
+        parsed = []
+        for value in chosen:
+            sample = next((item for item in values if str(item) == value), value)
+            parsed.append(sample)
+        proposal[key] = parsed
+
+    if "independence_alpha" in proposal:
+        alphas = sorted({float(value) for value in proposal["independence_alpha"]})
+        expanded = set(alphas)
+        for alpha in alphas:
+            expanded.update([max(0.001, alpha / 2.0), min(0.95, alpha * 1.75)])
+        proposal["independence_alpha"] = sorted(round(value, 6) for value in expanded)[:5]
+    if "threshold" in proposal:
+        thresholds = sorted({float(value) for value in proposal["threshold"]})
+        expanded = set(thresholds)
+        for threshold in thresholds:
+            expanded.update([max(0.0, threshold - 0.1), threshold + 0.1])
+        proposal["threshold"] = sorted(round(value, 6) for value in expanded)[:5]
+    proposal.setdefault("independence_cache_dir", [None])
+    return proposal
+
+
 def write_report(
     path: Path,
     tag: str,
     manifest_path: Path,
     joint_path: Path,
-    all_rows: pd.DataFrame,
-    analysis_rows: pd.DataFrame,
-    threshold_curve: pd.DataFrame,
-    best_thresholds: pd.DataFrame,
+    merged_rows: pd.DataFrame,
+    best_configs: pd.DataFrame,
+    top_configs: pd.DataFrame,
+    top_notreks: pd.DataFrame,
     summary: pd.DataFrame,
     effects: pd.DataFrame,
-    correlations: pd.DataFrame,
+    interaction_alpha_threshold: pd.DataFrame,
+    interaction_alpha_dag: pd.DataFrame,
+    baseline_table: pd.DataFrame,
+    baseline_notes: list[str],
+    next_grid: dict[str, list[Any]],
     metrics: list[str],
     primary_metric: str,
-    threshold_mode: str,
     top_k: int,
 ) -> None:
     primary_lower = lower_is_better(primary_metric)
@@ -898,45 +1201,71 @@ def write_report(
     lines.append("")
     lines.append(f"- Manifest: `{manifest_path}`")
     lines.append(f"- Joint benchmarks: `{joint_path}`")
-    lines.append(f"- Raw merged joint benchmark rows: `{len(all_rows)}`")
-    lines.append(f"- Rows used for hyperparam analysis: `{len(analysis_rows)}`")
+    lines.append(f"- Raw merged joint benchmark rows: `{len(merged_rows)}`")
     lines.append(f"- Metrics: `{', '.join(metrics)}`")
     lines.append(f"- Primary metric: `{primary_metric}`")
-    lines.append(f"- Threshold mode: `{threshold_mode}`")
-    lines.append("")
-    lines.append("## Threshold selection")
-    lines.append("")
     lines.append(
-        f"For each `algorithm_id`, thresholds are selected by the validation metric `{primary_metric}`. "
-        "Lower is better for error-like metrics such as SHD/time/FPR; higher is better for TPR/precision/recall."
+        "- Precision is important because FPR can look small in sparse graphs due to many true non-edges. "
+        "A useful method should have a good precision/recall tradeoff, not merely low FPR."
     )
     lines.append("")
 
-    threshold_cols = [
-        c for c in [
-            "method_family",
-            "base_method",
-            "algorithm_id",
-            "thresh",
-            primary_metric,
-            "time",
-            "n_rows",
-            "n_weight",
-            "n_thresholds_considered",
-        ]
-        if c in best_thresholds.columns
-    ]
-
-    lines.append("### Best threshold per algorithm")
+    lines.append("## Best configs")
     lines.append("")
-    if not best_thresholds.empty:
-        best_thresholds_sorted = best_thresholds.sort_values(
-            ["method_family", primary_metric],
-            ascending=[True, primary_lower],
-        )
-        lines.append(markdown_table(best_thresholds_sorted[threshold_cols], max_rows=100))
+    for _, row in top_configs.iterrows():
+        lines.append(f"Rank {int(row['rank'])}: {row['algorithm_id']}")
+        lines.append(f"  method: {row['method_family']} / {row['base_method']}")
+        if "path_id" in row and pd.notna(row["path_id"]):
+            lines.append(f"  path_id: {row['path_id']}")
+        for metric in [primary_metric, "SHD_pattern", "precision_skel", "recall_skel", "F1_skel", "precision_pattern", "recall_pattern", "F1_pattern", "FPR_skel", "FNR_skel", "TPR_pattern", "FPR_pattern", "time"]:
+            mean_col = _metric_mean_col(metric)
+            std_col = _metric_std_col(metric)
+            if mean_col in row and pd.notna(row[mean_col]):
+                text = f"  mean {metric}: {_format_value(row[mean_col])}"
+                if std_col in row and pd.notna(row[std_col]):
+                    text += f" (std {_format_value(row[std_col])})"
+                lines.append(text)
+        if "n_datasets" in row:
+            lines.append(f"  number of datasets: {_format_value(row['n_datasets'])}")
+        hp_cols = important_hp_columns(top_configs)
+        if hp_cols:
+            lines.append("  hyperparameters:")
+            for col in hp_cols:
+                if col in row and pd.notna(row[col]):
+                    lines.append(f"    {col.removeprefix('hp.')}: {_format_value(row[col])}")
+        lines.append("")
+
+    lines.append("## Common settings among top configs")
+    lines.append("")
+    common_base = top_notreks if not top_notreks.empty else top_configs
+    constants, dominant, counts = common_settings(common_base)
+    lines.append("### Constant across top configs")
+    lines.append("")
+    lines.extend([f"- {item}" for item in constants] or ["_No constants._"])
+    lines.append("")
+    lines.append("### Dominant values among top configs")
+    lines.append("")
+    lines.extend([f"- {item}" for item in dominant] or ["_No dominant values at the 70% threshold._"])
+    lines.append("")
+    important_counts = counts[counts["hyperparameter"].isin(KEY_HYPERPARAMS)] if not counts.empty else counts
+    lines.append(markdown_table(important_counts, max_rows=50))
+    lines.append("")
+
+    lines.append("## Trivial baseline comparison")
+    lines.append("")
+    if not baseline_table.empty:
+        lines.append(markdown_table(baseline_table, max_rows=20))
+        lines.append("")
+        values = dict(zip(baseline_table["method"], baseline_table[f"mean_{primary_metric}"]))
+        best = values.get("best_NOTREKS")
+        if best is not None and pd.notna(best):
+            for method in ["empty_graph", "complete_undirected_graph", "gcastle_pc"]:
+                value = values.get(method)
+                if value is not None and pd.notna(value):
+                    lines.append(f"- best_NOTREKS - {method}: {_format_value(best - value)}")
+        lines.extend([f"- {note}" for note in baseline_notes])
     else:
-        lines.append("_No threshold rows._")
+        lines.append("_No baseline rows available._")
     lines.append("")
 
     lines.append("## Overall algorithm summary")
@@ -952,47 +1281,27 @@ def write_report(
     lines.append(markdown_table(summary_sorted, max_rows=50))
     lines.append("")
 
-    for family in sorted(analysis_rows["method_family"].dropna().astype(str).unique()):
-        lines.append(f"## `{family}`")
+    lines.append("## Compact hyperparameter effects")
+    lines.append("")
+    lines.append(markdown_table(effects, max_rows=80))
+    lines.append("")
+    if not interaction_alpha_threshold.empty:
+        lines.append("### independence_alpha x threshold")
+        lines.append("")
+        lines.append(markdown_table(interaction_alpha_threshold, max_rows=30))
+        lines.append("")
+    if not interaction_alpha_dag.empty:
+        lines.append("### independence_alpha x dag_seq")
+        lines.append("")
+        lines.append(markdown_table(interaction_alpha_dag, max_rows=30))
         lines.append("")
 
-        fam_summary = summary_sorted[summary_sorted["method_family"].astype(str) == family]
-
-        lines.append("### Best configurations")
-        lines.append("")
-        lines.append(markdown_table(fam_summary, max_rows=top_k))
-        lines.append("")
-
-        lines.append("### Worst configurations")
-        lines.append("")
-        lines.append(markdown_table(fam_summary.tail(top_k), max_rows=top_k))
-        lines.append("")
-
-        lines.append("### Largest main effects")
-        lines.append("")
-        if not effects.empty:
-            fam_effects = effects[
-                (effects["method_family"].astype(str) == family)
-                & (effects["metric"] == primary_metric)
-            ].sort_values("effect_range", ascending=False)
-
-            lines.append(markdown_table(fam_effects, max_rows=top_k))
-        else:
-            lines.append("_No varying hyperparameters with enough observations._")
-        lines.append("")
-
-        lines.append("### Numeric correlations")
-        lines.append("")
-        if not correlations.empty:
-            fam_corr = correlations[
-                (correlations["method_family"].astype(str) == family)
-                & (correlations["metric"] == primary_metric)
-            ].sort_values("abs_spearman", ascending=False)
-
-            lines.append(markdown_table(fam_corr, max_rows=top_k))
-        else:
-            lines.append("_No numeric hyperparameters with enough variation._")
-        lines.append("")
+    lines.append("## Suggested next grid")
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(next_grid, indent=2, default=str))
+    lines.append("```")
+    lines.append("")
 
     lines.append("## Notes")
     lines.append("")
@@ -1002,9 +1311,6 @@ def write_report(
     )
     lines.append(
         "- Main effects are descriptive. They are useful hints, not causal claims, because hyperparameter interactions can matter."
-    )
-    lines.append(
-        "- Pareto analysis is intentionally not included here; selection is by the primary validation metric."
     )
     lines.append("")
 
@@ -1044,6 +1350,15 @@ def main() -> None:
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
+    for obsolete in [
+        "all_merged_joint_rows.csv",
+        "analysis_rows.csv",
+        "threshold_curve_by_algorithm.csv",
+        "best_threshold_by_algorithm.csv",
+        "hyperparam_main_effects.csv",
+        "numeric_correlations.csv",
+    ]:
+        (out_dir / obsolete).unlink(missing_ok=True)
 
     if not manifest_path.exists():
         raise FileNotFoundError(f"Manifest not found: {manifest_path}")
@@ -1060,8 +1375,10 @@ def main() -> None:
         joint_path=joint_path,
         manifest_path=manifest_path,
     )
+    merged = add_derived_precision_metrics(merged)
 
-    metric_map = resolve_metric_columns(merged, args.metrics)
+    requested_metrics = available_report_metrics(merged, args.metrics)
+    metric_map = resolve_metric_columns(merged, requested_metrics)
     merged = coerce_metric_columns(merged, metric_map)
     metrics = metric_list_from_map(metric_map)
 
@@ -1090,20 +1407,32 @@ def main() -> None:
     )
 
     summary = algorithm_summary(analysis_rows, metrics)
-    effects = compute_main_effects(
-        analysis_rows,
-        metrics=metrics,
-        max_levels=args.max_levels,
+    best_configs = build_best_configs(analysis_rows, metrics, primary_metric, args.top_k)
+    top_configs = best_configs.head(args.top_k).copy()
+    top_notreks = best_configs[best_configs["method_family"].astype(str) == "notreks"].head(args.top_k).copy()
+    effects = compact_effect_table(
+        best_configs[best_configs["method_family"].astype(str) == "notreks"],
+        metrics,
     )
-    correlations = compute_numeric_correlations(analysis_rows, metrics)
+    interaction_alpha_threshold = interaction_table(
+        best_configs[best_configs["method_family"].astype(str) == "notreks"],
+        "independence_alpha",
+        "threshold",
+    )
+    interaction_alpha_dag = interaction_table(
+        best_configs[best_configs["method_family"].astype(str) == "notreks"],
+        "independence_alpha",
+        "dag_seq",
+    )
+    baseline_table, baseline_notes = baseline_comparison(best_configs, primary_metric)
+    next_grid = propose_next_grid(top_notreks)
 
-    merged.to_csv(out_dir / "all_merged_joint_rows.csv", index=False)
-    analysis_rows.to_csv(out_dir / "analysis_rows.csv", index=False)
-    threshold_curve.to_csv(out_dir / "threshold_curve_by_algorithm.csv", index=False)
-    best_thresholds.to_csv(out_dir / "best_threshold_by_algorithm.csv", index=False)
     summary.to_csv(out_dir / "algorithm_summary.csv", index=False)
-    effects.to_csv(out_dir / "hyperparam_main_effects.csv", index=False)
-    correlations.to_csv(out_dir / "numeric_correlations.csv", index=False)
+    best_configs.to_csv(out_dir / "best_configs.csv", index=False)
+    if next_grid:
+        (out_dir / "proposed_next_grid.json").write_text(
+            json.dumps(next_grid, indent=2, default=str) + "\n"
+        )
 
     report_path = out_dir / "report.md"
     write_report(
@@ -1111,16 +1440,19 @@ def main() -> None:
         tag=tag,
         manifest_path=manifest_path,
         joint_path=joint_path,
-        all_rows=merged,
-        analysis_rows=analysis_rows,
-        threshold_curve=threshold_curve,
-        best_thresholds=best_thresholds,
+        merged_rows=merged,
+        best_configs=best_configs,
+        top_configs=top_configs,
+        top_notreks=top_notreks,
         summary=summary,
         effects=effects,
-        correlations=correlations,
+        interaction_alpha_threshold=interaction_alpha_threshold,
+        interaction_alpha_dag=interaction_alpha_dag,
+        baseline_table=baseline_table,
+        baseline_notes=baseline_notes,
+        next_grid=next_grid,
         metrics=metrics,
         primary_metric=primary_metric,
-        threshold_mode=args.threshold_mode,
         top_k=args.top_k,
     )
 
@@ -1130,9 +1462,10 @@ def main() -> None:
     print("")
     print("Key files:")
     print(f"  {out_dir / 'report.md'}")
-    print(f"  {out_dir / 'best_threshold_by_algorithm.csv'}")
-    print(f"  {out_dir / 'threshold_curve_by_algorithm.csv'}")
     print(f"  {out_dir / 'algorithm_summary.csv'}")
+    print(f"  {out_dir / 'best_configs.csv'}")
+    if next_grid:
+        print(f"  {out_dir / 'proposed_next_grid.json'}")
     print("")
     print("Open report:")
     print(f"  less {report_path}")

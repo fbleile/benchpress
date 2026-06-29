@@ -29,6 +29,18 @@
         "timeout": [null]
       }
     },
+    "empty_graph": {
+      "enabled": true,
+      "grid": {
+        "timeout": [null]
+      }
+    },
+    "complete_undirected_graph": {
+      "enabled": true,
+      "grid": {
+        "timeout": [null]
+      }
+    },
     "marginal_trek_graph": {
       "enabled": true,
       "grid": {

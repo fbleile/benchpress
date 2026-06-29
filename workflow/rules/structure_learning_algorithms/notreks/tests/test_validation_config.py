@@ -252,6 +252,8 @@ def test_validation_tiny_expected_run_counts(tmp_path: Path) -> None:
         "copy_fixed_data": 2,
         "gcastle_pc": 2,
         "gcastle_direct_lingam": 2,
+        "empty_graph": 0,
+        "complete_undirected_graph": 0,
         "marginal_trek_graph": 0,
         "notreks": 4,
     }

@@ -1,0 +1,19 @@
+{
+  "title": "complete_undirected_graph",
+  "description": "Trivial complete undirected graph baseline.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "timeout": {
+        "$ref": "#/$defs/flexnonnegnumnull"
+      }
+    },
+    "required": ["id", "timeout"],
+    "additionalProperties": false
+  },
+  "uniqueItems": true
+}

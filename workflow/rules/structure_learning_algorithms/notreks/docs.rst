@@ -171,6 +171,15 @@ Four canonical workflows
   python workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py \
     --tag hyperparam
 
+Hyperparameter analysis reads Benchpress ``joint_benchmarks.csv`` and joins
+Benchpress result ids to ``configs/notreks/expanded/<tag>_manifest.json``.
+It automatically resolves either full algorithm ids such as
+``notreks__grid044`` or compact path ids such as ``n044``.  The report includes
+the best configs with their hyperparameters, common settings among the top
+configs, compact hyperparameter effects, trivial-baseline comparison, and a
+small suggested next grid.  It does not use ``ROC_data.csv`` and does not load
+adjacency matrices.
+
 4. Full selected benchmark::
 
   python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
@@ -201,6 +210,22 @@ starts from a complete undirected graph, and removes an edge when marginal
 independence is accepted.  The output ``adjmat.csv`` is symmetric with a zero
 diagonal.  Interpret it mainly through pattern/skeleton metrics such as
 ``SHD_pattern`` and skeleton FPR/FNR.
+
+Trivial graph baselines
+-----------------------
+
+``empty_graph`` and ``complete_undirected_graph`` are lightweight Benchpress
+methods for sanity checks.  ``empty_graph`` outputs the all-zero adjacency
+matrix.  ``complete_undirected_graph`` outputs a symmetric complete graph with
+a zero diagonal.  Both write standard ``adjmat.csv``, ``time.txt``, and
+``ntests.txt`` outputs and are included in NOTREKS validation grids so the
+hyperparameter report can compare best NOTREKS settings against "choose none"
+and "choose all".
+
+The hyperparameter report derives precision, recall, and F1 metrics from
+Benchpress count columns when available.  Precision is important because FPR
+can look small in sparse graphs due to many true non-edges; useful methods
+need a good precision/recall tradeoff, not merely low FPR.
 
 Manual NOTREKS example
 ----------------------

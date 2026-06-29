@@ -21,6 +21,7 @@ import test_marginal_trek_graph as marginal_trek_graph_tests  # noqa: E402
 import test_optimizer as optimizer_tests  # noqa: E402
 import test_paths as path_tests  # noqa: E402
 import test_selection as selection_tests  # noqa: E402
+import test_trivial_graph_baselines as trivial_graph_tests  # noqa: E402
 import test_validation_config as validation_tests  # noqa: E402
 
 
@@ -53,6 +54,8 @@ def main() -> None:
         marginal_trek_graph_tests.test_marginal_trek_graph_outputs_undirected_contract(
             path / "marginal-trek-graph"
         )
+        trivial_graph_tests.test_empty_graph_outputs_zero_adjacency(path / "empty-graph")
+        trivial_graph_tests.test_complete_undirected_graph_outputs_all_offdiag(path / "complete-graph")
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp)

@@ -1,0 +1,18 @@
+{
+  "title": "Empty graph",
+  "version": "0.1.0",
+  "package": {
+    "title": "NOTREKS local baselines",
+    "url": "workflow/rules/structure_learning_algorithms/empty_graph"
+  },
+  "outputs": ["adjmat"],
+  "graph_types": ["CPDAG"],
+  "language": "Python",
+  "title_full": "Empty graph baseline",
+  "meta_description": "All-zero adjacency baseline.",
+  "data_types": ["continuous"],
+  "data_missingness": [],
+  "intervention_types": [],
+  "mcmc": false,
+  "edge_constraints": false
+}
