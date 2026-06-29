@@ -37,7 +37,7 @@
       "enabled": true,
       "grid": {
         "independence_test": ["gcastle_fisherz"],
-        "independence_alpha": [0.05, .1, .2, .5],
+        "independence_alpha": [0.05, 0.1, 0.2],
         "independence_correction": ["benjamini-hochberg"],
         "independence_cache_dir": [null],
         "timeout": [null]
@@ -65,7 +65,7 @@
     }
   },
   "selection": {
-    "primary_metric": "SHD_cpdag",
+    "primary_metric": "SHD_pattern",
     "mode": "minimize",
     "group_by": "method_family"
   }
