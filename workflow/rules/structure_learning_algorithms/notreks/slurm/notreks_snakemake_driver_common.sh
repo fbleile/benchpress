@@ -38,6 +38,7 @@ echo "  PWD=$(pwd)"
 echo "  RUN_DIR=${RUN_DIR:-}"
 echo "  CONFIG=${CONFIG:-}"
 echo "  SNAKEMAKE_CORES=${SNAKEMAKE_CORES:-}"
+echo "  SNAKEMAKE_NOLOCK=${SNAKEMAKE_NOLOCK:-}"
 
 module load "$APPTAINER_MODULE"
 module load "$SQUASHFS_MODULE"
@@ -105,11 +106,24 @@ singularity --version || true
 echo "  RUN_DIR=$RUN_DIR"
 echo "  CONFIG=$CONFIG"
 echo "  SNAKEMAKE_CORES=$SNAKEMAKE_CORES"
+echo "  SNAKEMAKE_NOLOCK=${SNAKEMAKE_NOLOCK:-}"
 echo "  SLURM_JOB_ID=${SLURM_JOB_ID:-local}"
 echo "  log=$RUN_LOG"
 
-snakemake \
-  --cores "$SNAKEMAKE_CORES" \
-  "$CONTAINER_FLAG" \
-  --snakefile workflow/Snakefile \
+SNAKEMAKE_LOCK_ARGS=()
+if [[ "${SNAKEMAKE_NOLOCK:-}" == "1" ]]; then
+  SNAKEMAKE_LOCK_ARGS+=(--nolock)
+fi
+echo "  snakemake_lock_args=${SNAKEMAKE_LOCK_ARGS[*]:-<none>}"
+
+SNAKEMAKE_CMD=(
+  snakemake
+  --cores "$SNAKEMAKE_CORES"
+  "$CONTAINER_FLAG"
+  "${SNAKEMAKE_LOCK_ARGS[@]}"
+  --snakefile workflow/Snakefile
   --configfile "$CONFIG"
+)
+echo "  snakemake_command=${SNAKEMAKE_CMD[*]}"
+
+"${SNAKEMAKE_CMD[@]}"
