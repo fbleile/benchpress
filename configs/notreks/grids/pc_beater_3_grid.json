@@ -28,7 +28,7 @@
         "dag_seq": ["logdet"],
         "trek_seq": ["exp"],
         "trek_reg": [1.0, 3.0],
-        "trek_penalty_mu_mode": ["soft_inside_mu", ],
+        "trek_penalty_mu_mode": ["soft_inside_mu"],
         "regularizer": ["l1"],
         "regularizer_scale": [0.01],
         "independence_test": ["gcastle_fisherz"],
