@@ -1,7 +1,4 @@
 {
-  "experiment_id": "notreks_smoke",
-  "benchmark_name": "notreks_smoke_validation",
-  "filename_prefix": "notreks/smoke/validation/",
   "data": {
     "type": "fixed",
     "seeds": [101, 102],

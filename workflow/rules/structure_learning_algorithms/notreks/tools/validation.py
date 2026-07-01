@@ -15,6 +15,12 @@ import pandas as pd
 
 from fixed_data import FixedDataReference, FixedDataSpec, prepare_fixed_data, safe_name
 from grid import load_json
+from naming import (
+    expected_joint_benchmark_path,
+    normalize_prefix,
+    selected_naming,
+    validation_naming,
+)
 from selection import default_direction, resolve_metric_column
 
 
@@ -35,6 +41,9 @@ class ExpandedGrid:
     manifest_json: Path
     joint_benchmarks_path: Path
     algorithm_counts: dict[str, int]
+    benchmark_name: str = ""
+    filename_prefix: str = ""
+    warnings: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +54,9 @@ class SelectedBenchmark:
     joint_benchmarks_path: Path
     algorithm_counts: dict[str, int]
     dataset_count: int
+    benchmark_name: str = ""
+    filename_prefix: str = ""
+    warnings: list[str] | None = None
 
 
 def _repo_relative(path: Path, repo_root: Path) -> str:
@@ -464,10 +476,13 @@ def expand_grid_config(
     grid_path: Path,
     out_config: Path,
     out_manifest_csv: Path,
+    tag: str | None = None,
 ) -> ExpandedGrid:
     grid = load_json(grid_path)
-    experiment_id = safe_name(str(grid["experiment_id"]))
-    benchmark_name = safe_name(str(grid.get("benchmark_name", f"{experiment_id}_validation")))
+    fallback_tag = grid_path.stem.removesuffix("_grid")
+    naming, warnings = validation_naming(grid, tag, fallback_tag=fallback_tag)
+    experiment_id = safe_name(naming["experiment_id"])
+    benchmark_name = safe_name(naming["benchmark_name"])
     metadata_dir = out_config.parent / "_fixed_data" / experiment_id
     fixed_ref = prepare_fixed_data(
         repo_root,
@@ -478,9 +493,7 @@ def expand_grid_config(
     shutil.rmtree(metadata_dir, ignore_errors=True)
     families = _method_families_from_grid(grid, experiment_id)
     algorithm_ids = [entry["id"] for _, entries in families.values() for entry in entries]
-    prefix = str(grid.get("filename_prefix", f"notreks/{experiment_id}/validation/")).strip("/")
-    if not prefix.endswith("/"):
-        prefix = f"{prefix}/"
+    prefix = normalize_prefix(naming["filename_prefix"])
     config = {
         "benchmark_setup": [
             {
@@ -518,13 +531,16 @@ def expand_grid_config(
         resources["complete_undirected_graph"] = families["complete_undirected_graph"][1]
     out_config.parent.mkdir(parents=True, exist_ok=True)
     out_config.write_text(json.dumps(config, indent=2) + "\n")
-    joint_path = repo_root / "results/output" / benchmark_name / "benchmarks" / prefix / "joint_benchmarks.csv"
+    joint_path = expected_joint_benchmark_path(repo_root, benchmark_name, prefix)
     return ExpandedGrid(
         config_path=out_config,
         manifest_csv=out_manifest_csv,
         manifest_json=manifest_json,
         joint_benchmarks_path=joint_path,
         algorithm_counts={family: len(entries) for family, (_, entries) in families.items()},
+        benchmark_name=benchmark_name,
+        filename_prefix=prefix,
+        warnings=warnings,
     )
 
 
@@ -567,11 +583,14 @@ def build_selected_benchmark_config(
     selection_path: Path,
     out_config: Path,
     out_manifest_csv: Path,
+    tag: str | None = None,
 ) -> SelectedBenchmark:
     frame = load_json(frame_path)
     selection = load_json(selection_path)
-    benchmark_id = safe_name(str(frame["benchmark_id"]))
-    benchmark_name = safe_name(str(frame.get("benchmark_name", benchmark_id)))
+    fallback_tag = frame_path.stem.removesuffix("_benchmark_frame").removesuffix("_frame")
+    naming, warnings = selected_naming(frame, tag, fallback_tag=fallback_tag)
+    benchmark_id = safe_name(naming["benchmark_id"])
+    benchmark_name = safe_name(naming["benchmark_name"])
     data = frame.get("data", {})
     seeds = data.get("seeds", [201, 202])
     if isinstance(seeds, int):
@@ -596,9 +615,7 @@ def build_selected_benchmark_config(
     )
     selected = _selected_methods_from_json(selection, [str(value) for value in requested])
     algorithm_ids = [entry["id"] for _, entry, _ in selected.values()]
-    prefix = str(frame.get("filename_prefix", f"notreks/{benchmark_id}/")).strip("/")
-    if not prefix.endswith("/"):
-        prefix = f"{prefix}/"
+    prefix = normalize_prefix(naming["filename_prefix"])
 
     config = {
         "benchmark_setup": [
@@ -644,10 +661,14 @@ def build_selected_benchmark_config(
         resources["notreks"] = _short_notreks_entries([selected["notreks"][1]], manifest_json, repo_root)
     if "marginal_trek_graph" in selected:
         resources["marginal_trek_graph"] = [selected["marginal_trek_graph"][1]]
+    if "empty_graph" in selected:
+        resources["empty_graph"] = [selected["empty_graph"][1]]
+    if "complete_undirected_graph" in selected:
+        resources["complete_undirected_graph"] = [selected["complete_undirected_graph"][1]]
 
     out_config.parent.mkdir(parents=True, exist_ok=True)
     out_config.write_text(json.dumps(config, indent=2) + "\n")
-    joint_path = repo_root / "results/output" / benchmark_name / "benchmarks" / prefix / "joint_benchmarks.csv"
+    joint_path = expected_joint_benchmark_path(repo_root, benchmark_name, prefix)
     return SelectedBenchmark(
         config_path=out_config,
         manifest_csv=out_manifest_csv,
@@ -655,6 +676,9 @@ def build_selected_benchmark_config(
         joint_benchmarks_path=joint_path,
         algorithm_counts={family: 1 for family in selected},
         dataset_count=len(all_data_entries),
+        benchmark_name=benchmark_name,
+        filename_prefix=prefix,
+        warnings=warnings,
     )
 
 

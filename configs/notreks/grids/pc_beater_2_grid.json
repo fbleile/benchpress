@@ -1,7 +1,4 @@
 {
-  "experiment_id": "notreks_pc_beater_2",
-  "benchmark_name": "notreks_pc_beater_2_validation",
-  "filename_prefix": "notreks/pc_beater_2/validation/",
   "data": {
     "type": "fixed",
     "seeds": [1001,1002, 1003, 1004, 1005],

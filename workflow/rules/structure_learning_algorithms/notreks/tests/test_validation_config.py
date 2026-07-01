@@ -15,6 +15,13 @@ from validation import (
     select_best_by_method_family,
     write_final_benchmark_config,
 )
+from naming import (
+    expected_joint_benchmark_path,
+    selected_benchmark_name,
+    selected_filename_prefix,
+    validation_benchmark_name,
+    validation_filename_prefix,
+)
 from cli import (  # noqa: E402
     _tag_benchmark_frame_path,
     _tag_config_path,
@@ -39,9 +46,6 @@ def _simple_cartesian_grid(repo: Path) -> Path:
     grid_path.write_text(
         json.dumps(
             {
-                "experiment_id": "notreks_smoke",
-                "benchmark_name": "notreks_smoke_validation",
-                "filename_prefix": "notreks/smoke/validation/",
                 "data": {
                     "type": "fixed",
                     "seeds": [101, 102],
@@ -117,6 +121,19 @@ def test_tag_derived_paths_are_standardized() -> None:
     assert _tag_selected_benchmark_manifest_path("full_benchmark") == Path(
         "configs/notreks/expanded/selected_full_benchmark_manifest.csv"
     )
+    repo = Path("/repo")
+    assert validation_benchmark_name("pc_beater_3") == "notreks_pc_beater_3_validation"
+    assert validation_filename_prefix("pc_beater_3") == "notreks/pc_beater_3/validation/"
+    assert expected_joint_benchmark_path(
+        repo,
+        validation_benchmark_name("pc_beater_3"),
+        validation_filename_prefix("pc_beater_3"),
+    ) == Path(
+        "/repo/results/output/notreks_pc_beater_3_validation/benchmarks/notreks/pc_beater_3/validation/joint_benchmarks.csv"
+    )
+    assert selected_benchmark_name("pc_beater_2") == "notreks_selected_pc_beater_2_benchmark"
+    assert selected_filename_prefix("pc_beater_2") == "notreks/selected_pc_beater_2/benchmark/"
+    assert selected_benchmark_name("full_benchmark") == "notreks_selected_full_benchmark"
 
 
 def test_expand_grid_writes_top_level_config_and_manifest(tmp_path: Path) -> None:
@@ -135,6 +152,8 @@ def test_expand_grid_writes_top_level_config_and_manifest(tmp_path: Path) -> Non
         "marginal_trek_graph": 1,
         "notreks": 2,
     }
+    assert expanded.benchmark_name == "notreks_smoke_validation"
+    assert expanded.filename_prefix == "notreks/smoke/validation/"
     assert "results/" not in str(out_config)
     assert "results/" not in str(out_manifest)
 

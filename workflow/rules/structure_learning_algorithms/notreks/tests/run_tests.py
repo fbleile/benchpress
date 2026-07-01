@@ -14,6 +14,7 @@ for path in (TESTS_DIR, MODULE_DIR, TOOLS_DIR):
     sys.path.insert(0, str(path))
 
 import test_grid_expansion as grid_tests  # noqa: E402
+import test_benchmark_analysis as benchmark_analysis_tests  # noqa: E402
 import test_hyperparam_analysis as hyperparam_analysis_tests  # noqa: E402
 import test_independence_cache as independence_tests  # noqa: E402
 import test_jobfarm_manifest as jobfarm_tests  # noqa: E402
@@ -56,6 +57,7 @@ def main() -> None:
         )
         trivial_graph_tests.test_empty_graph_outputs_zero_adjacency(path / "empty-graph")
         trivial_graph_tests.test_complete_undirected_graph_outputs_all_offdiag(path / "complete-graph")
+        benchmark_analysis_tests.test_analyze_benchmark_writes_compact_outputs(path / "benchmark-analysis")
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp)

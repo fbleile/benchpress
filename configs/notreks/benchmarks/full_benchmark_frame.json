@@ -1,7 +1,4 @@
 {
-  "benchmark_id": "notreks_selected_full",
-  "benchmark_name": "notreks_selected_full",
-  "filename_prefix": "notreks/benchmark_full/",
   "data": {
     "type": "synthetic_fresh",
     "seeds": [201, 202, 203, 204, 205, 206, 207, 208, 209, 210],

@@ -1,7 +1,4 @@
 {
-  "experiment_id": "notreks_notreks",
-  "benchmark_name": "notreks_notreks_validation",
-  "filename_prefix": "notreks/notreks/validation/",
   "data": {
     "type": "fixed",
     "seeds": [1, 2, 3],

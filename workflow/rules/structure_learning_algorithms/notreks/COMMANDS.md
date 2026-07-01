@@ -13,9 +13,11 @@ Pipeline:
 
 ```text
 validation grid JSON -> expand-grid -> validation config + manifest
-  -> local dry-run or SLURM run -> select-validation-best -> selection JSON
+  -> local dry-run or SLURM run -> analyze-benchmark
+  -> select-validation-best -> selection JSON
   -> build-selected-benchmark + fresh benchmark frame
   -> selected benchmark config + manifest -> local dry-run or SLURM run
+  -> analyze-benchmark
 ```
 
 Local dry-runs use `snakemake -n` to validate the DAG and do not run jobs.
@@ -69,7 +71,12 @@ sbatch --clusters=serial \
   workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_smoke.sh
 ```
 
-## 3. Select best methods from smoke validation
+## 3. Analyze and select best methods from smoke validation
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  analyze-benchmark --tag smoke
+```
 
 ```bash
 python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
@@ -104,6 +111,14 @@ sbatch --clusters=serial \
   workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_smoke.sh
 ```
 
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  analyze-benchmark \
+  --joint-benchmarks results/output/notreks_selected_smoke_benchmark/benchmarks/notreks/selected_smoke/benchmark/joint_benchmarks.csv \
+  --manifest configs/notreks/expanded/selected_smoke_benchmark_manifest.json \
+  --output-dir results/notreks/benchmark_analysis/selected_smoke_benchmark
+```
+
 ## 5. Hyperparameter validation grid
 
 ```bash
@@ -131,7 +146,12 @@ sbatch --clusters=serial \
   workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh
 ```
 
-## 6. Select best methods from hyperparameter validation
+## 6. Analyze and select best methods from hyperparameter validation
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  analyze-benchmark --tag hyperparam
+```
 
 ```bash
 python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
@@ -169,6 +189,14 @@ sbatch --clusters=serial \
   -o results/notreks/benchmark_full/logs/slurm/%x-%j.out \
   -e results/notreks/benchmark_full/logs/slurm/%x-%j.err \
   workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh
+```
+
+```bash
+python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+  analyze-benchmark \
+  --joint-benchmarks results/output/notreks_selected_full_benchmark/benchmarks/notreks/selected_full_benchmark/benchmark/joint_benchmarks.csv \
+  --manifest configs/notreks/expanded/selected_full_benchmark_manifest.json \
+  --output-dir results/notreks/benchmark_analysis/selected_full_benchmark
 ```
 
 ## 8. Monitoring and logs

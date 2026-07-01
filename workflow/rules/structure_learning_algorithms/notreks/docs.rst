@@ -59,6 +59,13 @@ The normal CLI interface is driven by ``--tag``.  For example,
 * selection outputs: ``configs/notreks/selected/hyperparam_*``
 * run directory: ``results/notreks/hyperparam``
 
+Validation benchmark names and filename prefixes are also tag-derived.  For
+``--tag pc_beater_3``, ``expand-grid`` uses benchmark name
+``notreks_pc_beater_3_validation`` and filename prefix
+``notreks/pc_beater_3/validation/``.  Grid JSONs do not need
+``experiment_id``, ``benchmark_name``, or ``filename_prefix`` unless an
+intentional ``naming_overrides`` block is used.
+
 Explicit path arguments remain available for debugging and unusual runs.
 
 Local dry-run vs SLURM run
@@ -122,6 +129,9 @@ Four canonical workflows
     workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_smoke.sh
 
   python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    analyze-benchmark --tag smoke
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
     select-validation-best --tag smoke --primary-metric SHD_cpdag
 
 2. Smoke selected benchmark::
@@ -166,6 +176,9 @@ Four canonical workflows
     workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh
 
   python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    analyze-benchmark --tag hyperparam
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
     select-validation-best --tag hyperparam --primary-metric SHD_cpdag
 
   python workflow/rules/structure_learning_algorithms/notreks/tools/hyperparam_analysis.py \
@@ -200,6 +213,12 @@ adjacency matrices.
     -o results/notreks/benchmark_full/logs/slurm/%x-%j.out \
     -e results/notreks/benchmark_full/logs/slurm/%x-%j.err \
     workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_heavy.sh
+
+  python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
+    analyze-benchmark \
+    --joint-benchmarks results/output/notreks_selected_full_benchmark/benchmarks/notreks/selected_full_benchmark/benchmark/joint_benchmarks.csv \
+    --manifest configs/notreks/expanded/selected_full_benchmark_manifest.json \
+    --output-dir results/notreks/benchmark_analysis/selected_full_benchmark
 
 Marginal trek graph baseline
 ----------------------------

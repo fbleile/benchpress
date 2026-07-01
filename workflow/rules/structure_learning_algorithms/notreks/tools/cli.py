@@ -16,6 +16,7 @@ REPO_ROOT = MODULE_DIR.parents[3]
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(MODULE_DIR))
 
+from benchmark_analysis import analyze_benchmark  # noqa: E402
 from grid import prepare_hparam_run  # noqa: E402
 from independence_tests import pairwise_independence_candidates  # noqa: E402
 from jobfarm import (  # noqa: E402
@@ -75,7 +76,12 @@ def _tag_benchmark_frame_path(tag: str) -> Path:
     preferred = base / f"{tag}_frame.json"
     if preferred.exists():
         return preferred
-    return base / f"{tag}_benchmark_frame.json"
+    benchmark = base / f"{tag}_benchmark_frame.json"
+    if benchmark.exists():
+        return benchmark
+    if tag == "smoke":
+        return base / "smoke_benchmark_frame.json"
+    return base / "full_benchmark_frame.json"
 
 
 def _tag_selected_benchmark_config_path(tag: str) -> Path:
@@ -366,12 +372,17 @@ def expand_grid_command(args: argparse.Namespace) -> None:
         _resolve(args.grid),
         _resolve(args.out_config),
         _resolve(args.out_manifest),
+        tag=args.tag,
     )
     print(f"Expanded config: {expanded.config_path}")
     print(f"Manifest CSV: {expanded.manifest_csv}")
     print(f"Manifest JSON: {expanded.manifest_json}")
+    print(f"Derived benchmark name: {expanded.benchmark_name}")
+    print(f"Derived filename prefix: {expanded.filename_prefix}")
     print(f"Expected Benchpress joint benchmark: {expanded.joint_benchmarks_path}")
     print(f"Algorithm variant counts: {expanded.algorithm_counts}")
+    for warning in expanded.warnings or []:
+        print(warning)
 
 
 def build_selected_benchmark_command(args: argparse.Namespace) -> None:
@@ -402,13 +413,31 @@ def build_selected_benchmark_command(args: argparse.Namespace) -> None:
         _resolve(args.selection),
         _resolve(args.out_config),
         _resolve(args.out_manifest),
+        tag=args.tag,
     )
     print(f"Selected benchmark config: {built.config_path}")
     print(f"Manifest CSV: {built.manifest_csv}")
     print(f"Manifest JSON: {built.manifest_json}")
+    print(f"Derived benchmark name: {built.benchmark_name}")
+    print(f"Derived filename prefix: {built.filename_prefix}")
     print(f"Expected Benchpress joint benchmark: {built.joint_benchmarks_path}")
     print(f"Dataset count: {built.dataset_count}")
     print(f"Algorithm variant counts: {built.algorithm_counts}")
+    for warning in built.warnings or []:
+        print(warning)
+
+
+def analyze_benchmark_command(args: argparse.Namespace) -> None:
+    outputs = analyze_benchmark(
+        REPO_ROOT,
+        tag=args.tag,
+        joint_benchmarks=_resolve(args.joint_benchmarks) if args.joint_benchmarks else None,
+        manifest=_resolve(args.manifest) if args.manifest else None,
+        output_dir=_resolve(args.output_dir) if args.output_dir else None,
+        primary_metric=args.primary_metric,
+    )
+    for label, path in outputs.items():
+        print(f"{label}: {path}")
 
 
 def print_slurm_launch_command(args: argparse.Namespace) -> None:
@@ -585,6 +614,14 @@ def build_parser() -> argparse.ArgumentParser:
     selected_benchmark.add_argument("--out-config", type=Path, default=None)
     selected_benchmark.add_argument("--out-manifest", type=Path, default=None)
     selected_benchmark.set_defaults(func=build_selected_benchmark_command)
+
+    analyze = subparsers.add_parser("analyze-benchmark")
+    analyze.add_argument("--tag", default=None)
+    analyze.add_argument("--joint-benchmarks", type=Path, default=None)
+    analyze.add_argument("--manifest", type=Path, default=None)
+    analyze.add_argument("--output-dir", type=Path, default=None)
+    analyze.add_argument("--primary-metric", default="SHD_pattern")
+    analyze.set_defaults(func=analyze_benchmark_command)
 
     slurm_launch = subparsers.add_parser("print-slurm-launch")
     slurm_launch.add_argument("--tag", default=None)

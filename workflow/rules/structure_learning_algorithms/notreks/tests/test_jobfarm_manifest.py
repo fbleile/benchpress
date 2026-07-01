@@ -101,14 +101,15 @@ def test_slurm_has_only_smoke_and_heavy_user_facing_drivers() -> None:
 
 def test_snakemake_driver_runs_one_snakemake_process() -> None:
     script = (MODULE_DIR / "slurm/notreks_snakemake_driver_common.sh").read_text()
-    assert script.count("\nsnakemake \\") == 1
+    assert "SNAKEMAKE_CMD=(" in script
+    assert script.count('"${SNAKEMAKE_CMD[@]}"') == 1
     assert '"$CONTAINER_FLAG"' in script
     assert 'CONTAINER_FLAG="--use-apptainer"' in script
     assert 'CONTAINER_FLAG="--use-singularity"' in script
     assert 'SMK_MAJOR="${SMK_VER%%.*}"' in script
     assert 'if [[ "$SMK_MAJOR" -ge 8 ]]' in script
     assert "--use-apptainer \\" not in script
-    assert "--configfile \"$CONFIG\"" in script
+    assert '--configfile "$CONFIG"' in script
     assert "module load \"$APPTAINER_MODULE\"" in script
     assert 'SQUASHFS_MODULE="${SQUASHFS_MODULE:-squashfs/4.6.1}"' in script
     assert "module load \"$SQUASHFS_MODULE\"" in script

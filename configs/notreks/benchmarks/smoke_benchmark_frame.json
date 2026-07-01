@@ -1,7 +1,4 @@
 {
-  "benchmark_id": "notreks_selected_smoke",
-  "benchmark_name": "notreks_selected_smoke",
-  "filename_prefix": "notreks/benchmark_smoke/",
   "data": {
     "type": "synthetic_fresh",
     "seeds": [201, 202],
