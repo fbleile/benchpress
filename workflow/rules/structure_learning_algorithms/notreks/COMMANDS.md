@@ -73,7 +73,7 @@ sbatch --clusters=serial \
 
 ```bash
 python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py \
-  select-validation-best --tag smoke --primary-metric SHD_cpdag
+  select-validation-best --tag smoke --primary-metric SHD_pattern
 ```
 
 ## 4. Smoke selected benchmark
