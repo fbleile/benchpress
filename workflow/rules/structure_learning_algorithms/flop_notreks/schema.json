@@ -1,0 +1,34 @@
+{
+  "title": "flop_notreks",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "string"},
+      "lambda_bic": {"$ref": "#/$defs/flexnonnegnum"},
+      "restarts": {"$ref": "#/$defs/flexnonnegintnull"},
+      "search_timeout": {"$ref": "#/$defs/flexnonnegnumnull"},
+      "timeout": {"$ref": "#/$defs/flexnonnegnumnull"},
+      "algorithm_seed": {"$ref": "#/$defs/flexnonnegint"},
+      "signature_top_k": {"$ref": "#/$defs/flexnonnegint"},
+      "signature_exploration_k": {"$ref": "#/$defs/flexnonnegint"},
+      "max_signature_rounds": {"$ref": "#/$defs/flexnonnegint"},
+      "initial_signature_mean_size": {"$ref": "#/$defs/flexnonnegnum"},
+      "initial_signature_max_size": {"$ref": "#/$defs/flexnonnegint"},
+      "n_jobs": {"$ref": "#/$defs/flexnonnegint"},
+      "search_version": {
+        "enum": ["fixed_signature_a", "alternating_full_refit_b"],
+        "default": "alternating_full_refit_b"
+      },
+      "knowledge_source": {"enum": ["oracle_true_graph", "file", "none"]},
+      "knowledge_file": {"type": ["string", "null"]}
+    },
+    "additionalProperties": false,
+    "required": [
+      "id", "lambda_bic", "restarts", "search_timeout", "timeout", "algorithm_seed",
+      "signature_top_k", "max_signature_rounds", "search_version", "knowledge_source",
+      "knowledge_file"
+    ]
+  },
+  "uniqueItems": true
+}

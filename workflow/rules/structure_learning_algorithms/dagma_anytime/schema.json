@@ -1,0 +1,61 @@
+{
+  "title": "dagma_anytime",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "string"},
+      "solver_variant": {
+        "enum": [
+          "dagma_vanilla_anytime",
+          "dagma_fast64",
+          "dagma_float32",
+          "dagma_mixed",
+          "dagma_prox_adaptive",
+          "dagma_hybrid"
+        ],
+        "default": "dagma_vanilla_anytime"
+      },
+      "loss_type": {"enum": ["l2"], "default": "l2"},
+      "lambda1": {"$ref": "#/$defs/flexnonnegnum"},
+      "w_threshold": {"$ref": "#/$defs/flexnonnegnum"},
+      "T": {"$ref": "#/$defs/flexnonnegint"},
+      "mu_init": {"$ref": "#/$defs/flexnonnegnum"},
+      "mu_factor": {"$ref": "#/$defs/flexnonnegnum"},
+      "s": {"type": "string"},
+      "warm_iter": {"$ref": "#/$defs/flexnonnegint"},
+      "max_iter": {"$ref": "#/$defs/flexnonnegint"},
+      "lr": {"$ref": "#/$defs/flexnonnegnum"},
+      "checkpoint": {"$ref": "#/$defs/flexnonnegint"},
+      "beta_1": {"$ref": "#/$defs/flexnonnegnum"},
+      "beta_2": {"$ref": "#/$defs/flexnonnegnum"},
+      "max_runtime_seconds": {"$ref": "#/$defs/flexnonnegnumnull", "default": null},
+      "snapshot_times_seconds": {
+        "type": ["array", "string", "null"],
+        "items": {"type": "number", "minimum": 0},
+        "default": null
+      },
+      "random_seed": {"$ref": "#/$defs/flexnonnegint", "default": 0},
+      "precision_policy": {
+        "enum": ["float64", "float32", "mixed", null],
+        "default": null
+      },
+      "adaptive_precision": {"type": "boolean", "default": false},
+      "checkpoint_interval": {"$ref": "#/$defs/flexnonnegintnull", "default": null},
+      "continuation_policy": {"enum": ["vanilla"], "default": "vanilla"},
+      "zero_diagonal": {"type": "boolean", "default": false},
+      "proximal_l1": {"type": "boolean", "default": false},
+      "optimizer": {"enum": ["adam", "prox_adam", "hybrid_experimental"], "default": "adam"},
+      "blas_threads": {"$ref": "#/$defs/flexnonnegintnull", "default": null},
+      "record_trajectory": {"type": "boolean", "default": true},
+      "timeout": {"$ref": "#/$defs/flexnonnegnumnull"}
+    },
+    "additionalProperties": false,
+    "required": [
+      "id", "lambda1", "w_threshold", "T", "mu_init", "mu_factor",
+      "s", "warm_iter", "max_iter", "lr", "checkpoint", "beta_1",
+      "beta_2", "timeout"
+    ]
+  },
+  "uniqueItems": true
+}

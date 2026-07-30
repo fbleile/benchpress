@@ -1,0 +1,19 @@
+{
+  "title": "FLOP-NOTREKS",
+  "version": "0.1.0",
+  "package": {
+    "title": "flopsearch 0.3.0 hard no-trek research fork",
+    "url": "https://github.com/CausalDisco/flopsearch"
+  },
+  "docs_url": "docs.rst",
+  "outputs": ["adjmat"],
+  "graph_types": ["CPDAG"],
+  "language": "Rust/Python",
+  "title_full": "FLOP with hard oracle no-trek constraints",
+  "meta_description": "Order-based FLOP with ancestry-signature constraints",
+  "data_types": ["continuous"],
+  "data_missingness": [],
+  "intervention_types": [],
+  "mcmc": false,
+  "edge_constraints": true
+}

@@ -1,0 +1,9 @@
+{
+  "title": "DAGMA-NOTREKS", "version": "1.0.0",
+  "package": {"title": "dagma 1.1.1 + Benchpress PST adaptation", "url": "https://github.com/kevinsbello/dagma"},
+  "docs_url": "docs.rst", "outputs": ["adjmat"], "graph_types": ["DAG"],
+  "language": "Python", "title_full": "DAGMA with oracle no-trek PST regularization",
+  "meta_description": "Linear DAGMA sharing its optimizer with vanilla DAGMA",
+  "data_types": ["continuous"], "data_missingness": [], "intervention_types": [],
+  "mcmc": false, "edge_constraints": false
+}

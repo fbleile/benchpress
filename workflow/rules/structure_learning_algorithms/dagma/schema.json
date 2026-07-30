@@ -1,0 +1,53 @@
+{
+  "title": "dagma",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "string"},
+      "loss_type": {"enum": ["l2", "gaussian_profile"]},
+      "variance_epsilon": {"$ref": "#/$defs/flexnonnegnum", "default": 1e-8},
+      "selection_mode": {"enum": ["continuous_objective", "exact_bic_archive"], "default": "continuous_objective"},
+      "lambda1": {"$ref": "#/$defs/flexnonnegnum"},
+      "lambda1_scaling": {"enum": ["fixed", "sqrt_logd_over_n"], "default": "fixed"},
+      "lambda1_reference": {"$ref": "#/$defs/flexnonnegnum", "default": 0.03},
+      "lambda1_reference_d": {"$ref": "#/$defs/flexnonnegint", "default": 50},
+      "lambda1_reference_n": {"$ref": "#/$defs/flexnonnegint", "default": 1000},
+      "w_threshold": {"$ref": "#/$defs/flexnonnegnum"},
+      "T": {"$ref": "#/$defs/flexnonnegint"},
+      "mu_init": {"$ref": "#/$defs/flexnonnegnum"},
+      "mu_factor": {"$ref": "#/$defs/flexnonnegnum"},
+      "mu_schedule": {
+        "type": ["array", "null"],
+        "items": {"type": "number", "minimum": 0},
+        "minItems": 1,
+        "default": null
+      },
+      "terminal_zero_stage": {"type": "boolean", "default": false},
+      "zero_block_iterations": {"$ref": "#/$defs/flexnonnegint", "default": 10000},
+      "maximum_zero_iterations": {"$ref": "#/$defs/flexnonnegint", "default": 300000},
+      "h_tolerance": {"$ref": "#/$defs/flexnonnegnum", "default": 1e-12},
+      "notreks_tolerance": {"$ref": "#/$defs/flexnonnegnum", "default": 1e-12},
+      "feasibility_threshold_tolerance": {"$ref": "#/$defs/flexnonnegnum", "default": 1e-6},
+      "gradient_tolerance": {"$ref": "#/$defs/flexnonnegnum", "default": 1e-8},
+      "s": {"type": "string"},
+      "warm_iter": {"$ref": "#/$defs/flexnonnegint"},
+      "max_iter": {"$ref": "#/$defs/flexnonnegint"},
+      "lr": {"$ref": "#/$defs/flexnonnegnum"},
+      "checkpoint": {"$ref": "#/$defs/flexnonnegint"},
+      "beta_1": {"$ref": "#/$defs/flexnonnegnum"},
+      "beta_2": {"$ref": "#/$defs/flexnonnegnum"},
+      "dag_penalty_weight": {"$ref": "#/$defs/flexnonnegnum", "default": 1.0},
+      "restarts": {"$ref": "#/$defs/flexnonnegint", "default": 1},
+      "n_jobs": {"$ref": "#/$defs/flexnonnegint", "default": 1},
+      "algorithm_seed": {"$ref": "#/$defs/flexnonnegint", "default": 0},
+      "initialization_scale": {"$ref": "#/$defs/flexnonnegnum", "default": 0.05},
+      "timeout": {"$ref": "#/$defs/flexnonnegnumnull"}
+    },
+    "additionalProperties": false,
+    "required": ["id", "loss_type", "lambda1", "w_threshold", "T", "mu_init",
+      "mu_factor", "s", "warm_iter", "max_iter", "lr", "checkpoint", "beta_1",
+      "beta_2", "timeout"]
+  },
+  "uniqueItems": true
+}

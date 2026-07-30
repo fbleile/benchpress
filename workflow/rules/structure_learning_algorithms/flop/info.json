@@ -1,0 +1,9 @@
+{
+  "title": "FLOP", "version": "0.3.0",
+  "package": {"title": "flopsearch", "url": "https://github.com/CausalDisco/flopsearch"},
+  "docs_url": "https://github.com/CausalDisco/flopsearch", "outputs": ["adjmat"],
+  "graph_types": ["CPDAG"], "language": "Rust/Python", "title_full": "FLOP",
+  "meta_description": "Vanilla FLOP on standardized data",
+  "data_types": ["continuous"], "data_missingness": [], "intervention_types": [],
+  "mcmc": false, "edge_constraints": false
+}

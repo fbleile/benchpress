@@ -1,0 +1,11 @@
+{
+  "title": "flop", "type": "array", "items": {
+    "type": "object", "properties": {
+      "id": {"type": "string"}, "lambda_bic": {"$ref": "#/$defs/flexnonnegnum"},
+      "restarts": {"$ref": "#/$defs/flexnonnegintnull"},
+      "search_timeout": {"$ref": "#/$defs/flexnonnegnumnull"},
+      "timeout": {"$ref": "#/$defs/flexnonnegnumnull"}
+    }, "additionalProperties": false,
+    "required": ["id", "lambda_bic", "restarts", "search_timeout", "timeout"]
+  }, "uniqueItems": true
+}

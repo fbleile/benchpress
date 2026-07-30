@@ -1,0 +1,7 @@
+{
+  "title": "weighted_graph_postprocessing",
+  "description": "Shared infrastructure, not a standalone Benchpress algorithm.",
+  "type": "array",
+  "items": false,
+  "maxItems": 0
+}

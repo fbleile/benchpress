@@ -1,0 +1,26 @@
+{
+  "tag": "inv_dag_notreks_benchmark",
+  "data": {
+    "sem": "linear_gaussian",
+    "graph_family": "erdos_renyi_dag",
+    "d": 50,
+    "expected_degree": 4,
+    "sample_sizes": [500, 1000, 2000],
+    "seeds": [8101, 8102, 8103, 8104, 8105],
+    "nested_samples": true,
+    "standardized": true
+  },
+  "methods": ["flop", "dagma_notreks", "inv_notreks"],
+  "lambda1_scaling": "sqrt_logd_over_n",
+  "lambda1_reference": 0.03,
+  "lambda1_reference_d": 50,
+  "lambda1_reference_n": 1000,
+  "trek_function": "inv",
+  "trek_weight": 10.0,
+  "inverse_epsilon": 1e-8,
+  "gamma_inv": 1.0,
+  "mu_schedule": [1.0, 0.1, 0.01, 0.001, 0.0001],
+  "s": [1.0, 0.9, 0.8, 0.7, 0.6],
+  "dagma_restarts": 3,
+  "flop_restarts": 16
+}

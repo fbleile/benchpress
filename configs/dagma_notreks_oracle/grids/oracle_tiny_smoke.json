@@ -1,0 +1,6 @@
+{
+  "tag": "oracle_tiny_smoke",
+  "data": {"sem": "linear_gaussian", "graph": "er", "d": 6, "n": 200, "expected_degree": 1.5, "standardized": true, "seeds": [1001]},
+  "trek_weight": [0.0, 0.01, 0.1, 1.0],
+  "smoke_overrides": {"T": 1, "warm_iter": 20, "max_iter": 40, "checkpoint": 10, "flop_restarts": 1}
+}

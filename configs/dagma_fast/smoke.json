@@ -1,0 +1,9 @@
+{
+  "method": "dagma_fast",
+  "lambda_policy": "fixed",
+  "lambda1": 0.03,
+  "rounding_policy": "threshold_grid_score_search",
+  "dimension": 5,
+  "n": 100,
+  "seed": 1701
+}

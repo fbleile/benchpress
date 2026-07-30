@@ -33,6 +33,15 @@ def validate_data_setup(config, data_setup, bmark_setup):
         for alg_conf in alg_conf_avail:
             available_conf_ids.append(alg_conf["id"])
     available_conf_ids += os.listdir("resources/adjmat/myadjmats")
+    # Independent synthetic instances are stored in tag-derived subdirectories.
+    import glob
+    recursive_graphs = [
+        os.path.relpath(path, "resources/adjmat/myadjmats")
+        for path in glob.glob("resources/adjmat/myadjmats/**/*.csv", recursive=True)
+    ]
+    available_conf_ids += recursive_graphs + [
+        path[:-4] for path in recursive_graphs if path.endswith(".csv")
+    ]
 
     # Benchmarks requires a true graph
     if "benchmarks" in bmark_setup["evaluation"]:

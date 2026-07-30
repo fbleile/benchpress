@@ -1,0 +1,13 @@
+{
+  "method": "dagma_notreks",
+  "dag_constraint": "logdet",
+  "loss_type": "l2",
+  "lambda1": 0.03,
+  "trek_function": "inv",
+  "trek_weight": 10.0,
+  "restarts": 5,
+  "screening_floor": 0.01,
+  "candidate_policy": "max_feasibility_threshold_and_screening_floor",
+  "postprocessing": "fixed_order_parent_shrink",
+  "restart_selection": "postprocessed_bic"
+}

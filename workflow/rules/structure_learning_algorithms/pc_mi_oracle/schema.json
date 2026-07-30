@@ -1,0 +1,14 @@
+{
+  "title": "pc_mi_oracle", "type": "array", "items": {
+    "type": "object", "properties": {
+      "id": {"type": "string"}, "alpha": {"$ref": "#/$defs/flexnonnegnum"},
+      "variant": {"enum": ["stable"]}, "ci_test": {"enum": ["fisherz"]},
+      "max_cond_set": {"$ref": "#/$defs/flexnonnegint"},
+      "knowledge_source": {"enum": ["oracle_true_graph", "file", "none"]},
+      "knowledge_file": {"type": ["string", "null"]},
+      "timeout": {"$ref": "#/$defs/flexnonnegnumnull"}
+    }, "additionalProperties": false,
+    "required": ["id", "alpha", "variant", "ci_test", "max_cond_set",
+      "knowledge_source", "knowledge_file", "timeout"]
+  }, "uniqueItems": true
+}

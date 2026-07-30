@@ -1,0 +1,6 @@
+{
+  "tag": "dagma_notreks_main_comparison",
+  "methods": ["flop", "dagma_notreks", "inv_notreks"],
+  "production_config": "production_pipeline.json",
+  "description": "Main matched comparison; long-running and not a smoke test."
+}

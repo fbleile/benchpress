@@ -1,0 +1,42 @@
+{
+  "title": "dagma_fast",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {"type": "string"},
+      "lambda_policy": {
+        "enum": ["fixed", "sqrt_log_d_over_n"],
+        "default": "fixed"
+      },
+      "lambda1": {"$ref": "#/$defs/flexnonnegnum", "default": 0.03},
+      "T": {"$ref": "#/$defs/flexnonnegint", "default": 5},
+      "warm_iter": {"$ref": "#/$defs/flexnonnegint", "default": 30000},
+      "max_iter": {"$ref": "#/$defs/flexnonnegint", "default": 60000},
+      "lr": {"$ref": "#/$defs/flexnonnegnum", "default": 0.0003},
+      "rounding_policy": {
+        "enum": [
+          "threshold_grid_score_search",
+          "weighted_feasible_local_search",
+          "fixed_threshold"
+        ],
+        "default": "threshold_grid_score_search"
+      },
+      "rounding_max_seconds": {
+        "$ref": "#/$defs/flexnonnegnum",
+        "default": 1.0
+      },
+      "rounding_max_candidate_evaluations": {
+        "$ref": "#/$defs/flexnonnegint",
+        "default": 1000
+      },
+      "rounding_max_iterations": {
+        "$ref": "#/$defs/flexnonnegint",
+        "default": 100
+      }
+    },
+    "required": ["id"],
+    "additionalProperties": false
+  },
+  "uniqueItems": true
+}

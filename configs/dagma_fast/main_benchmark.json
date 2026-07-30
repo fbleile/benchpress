@@ -1,0 +1,21 @@
+{
+  "method": "dagma_fast",
+  "lambda_policy": "fixed",
+  "lambda1": 0.03,
+  "dag_penalty": "logdet",
+  "structural_penalties": [],
+  "rounding_policy": "threshold_grid_score_search",
+  "rounding_budget": {
+    "max_seconds": 1.0,
+    "max_candidate_evaluations": 1000,
+    "max_local_search_iterations": 100
+  },
+  "optimizer": {
+    "T": 5,
+    "warm_iter": 30000,
+    "max_iter": 60000,
+    "lr": 0.0003,
+    "beta_1": 0.99,
+    "beta_2": 0.999
+  }
+}

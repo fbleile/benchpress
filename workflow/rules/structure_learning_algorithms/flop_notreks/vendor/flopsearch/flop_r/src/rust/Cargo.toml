@@ -1,0 +1,19 @@
+[package]
+name = 'flop_r'
+publish = false
+version = '0.3.0'
+edition = '2024'
+rust-version = '1.85'
+
+[lib]
+crate-type = [ 'staticlib' ]
+name = 'flop_r'
+
+[dependencies]
+extendr-api = '0.8'
+flop = { path = "flop" }
+nalgebra = "0.34"
+
+[profile.release]
+lto = true
+codegen-units = 1

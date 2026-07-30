@@ -1,0 +1,71 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.path = "man/figures/README-",
+  out.width = "100%"
+)
+```
+
+# flopsearch
+
+<!-- badges: start -->
+<!-- badges: end -->
+
+flopsearch provides an effective and easy-to-use causal discovery algorithm for linear additive noise models.
+
+## Installation
+
+You can install the development version of flopsearch from GitHub with:
+
+``` r
+install.packages("https://github.com/CausalDisco/flopsearch/releases/download/v0.3.0/flopsearch.tar.gz")
+```
+
+This requires a working installation of the [Rust toolchain](https://rust-lang.org/tools/install/).
+
+The name of the installed package is ```flopsearch``` and it can be loaded with:
+
+``` r
+library(flopsearch)
+```
+
+## Citing FLOP
+If you use FLOP in your scientific work, please cite this paper:
+```bibtex
+@article{embracing2026,
+  author  = {Marcel Wien{\"o}bst and Leonard Henckel and Sebastian Weichwald},
+  title   = {{Embracing Discrete Search: A Reasonable Approach to Causal Structure Learning}},
+  journal = {International Conference on Learning Representations (ICLR)},
+  year    = {2026}
+}
+```
+
+## Example
+
+A simple example run of the FLOP algorithm provided by flopsearch.
+
+```{r example}
+library(flopsearch)
+
+# set up data
+p <- 10
+W <- matrix(0, nrow = p, ncol = p)
+W[cbind(1:(p-1), 2:p)] <- 1
+X <- matrix(rnorm(10000 * p), nrow = 10000, ncol = p) %*% solve(diag(p) - W)
+X_std <- scale(X)
+
+# run flop
+G <- flop(X, 2.0, restarts=50)
+```
+
+## Input and Output
+As input, FLOP takes the data matrix, the BIC penalty parameter (we recommend ```2.0``` as a default choice) and either a ```timeout``` (in seconds) or the number of ILS restarts to control how long the search runs.
+
+The output of FLOP is a CPDAG encoded with an adjacency matrix whose entry in row i and column j is 1 in case of a directed edge from the i-th to the j-th variable and 2 in case of an undirected edge between those variables (in case of an undirected edge, the entry in row j and column i is also 2, that is each undirected edge induces two 2's in the matrix).

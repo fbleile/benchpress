@@ -1,0 +1,9 @@
+{
+  "title": "PC-MIOracle", "version": "1.0.0",
+  "package": {"title": "Benchpress stable PC", "url": "https://github.com/felixleopoldo/benchpress"},
+  "docs_url": "docs.rst", "outputs": ["adjmat"], "graph_types": ["CPDAG"],
+  "language": "Python", "title_full": "Stable PC with marginal-only structural oracle",
+  "meta_description": "Oracle answers only unconditional CI; Fisher-z handles conditional queries",
+  "data_types": ["continuous"], "data_missingness": [], "intervention_types": [],
+  "mcmc": false, "edge_constraints": false
+}

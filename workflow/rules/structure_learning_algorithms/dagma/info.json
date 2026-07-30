@@ -1,0 +1,9 @@
+{
+  "title": "DAGMA", "version": "1.1.1",
+  "package": {"title": "dagma", "url": "https://github.com/kevinsbello/dagma"},
+  "docs_url": "https://dagma.readthedocs.io/", "outputs": ["adjmat"],
+  "graph_types": ["DAG"], "language": "Python", "title_full": "DAGMA (linear)",
+  "meta_description": "Official linear DAGMA with Benchpress I/O",
+  "data_types": ["continuous"], "data_missingness": [], "intervention_types": [],
+  "mcmc": false, "edge_constraints": false
+}

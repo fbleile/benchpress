@@ -1,0 +1,5 @@
+{
+  "title": "DAGMA linear anytime variants",
+  "description": "Instrumented and experimental anytime variants of linear DAGMA. The existing dagma module remains the vanilla Benchpress identifier.",
+  "outputs": ["adjmat", "time", "ntests", "diagnostics"]
+}

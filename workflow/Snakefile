@@ -125,6 +125,10 @@ pattern_strings["mcmc_est"] = get_mcmc_est_pattern()
 include: "rules/module_strings.py"
 include: "rules/filename_patterns.py"
 
+if any(name in pattern_strings for name in
+       ("dagma_notreks", "pc_mi_oracle", "flop_notreks")):
+    include: "rules/oracle_knowledge/rule.smk"
+
 # Read which modules are MCMC module (have graphtraj output).
 mcmc_modules = get_mcmc_modules()
 json_string, json_string_mcmc_noest = gen_json_strings(config, pattern_strings, mcmc_modules)
