@@ -189,7 +189,8 @@ def compile_configs(spec_path: Path, output_dir: Path, smoke: bool = False) -> N
         rows.append({**scenario, "config": str(config_path)})
     pd.DataFrame(rows).to_csv(output_dir / "scenario_manifest.csv", index=False)
     commands = [
-        "snakemake --configfile " + row["config"] + " --cores 1 --rerun-incomplete"
+        "snakemake --configfile " + row["config"]
+        + " --cores ${NOTREKS_CORES:-1} --rerun-incomplete"
         for row in rows]
     (output_dir / "commands.txt").write_text("\n".join(commands) + "\n")
     print(f"wrote {len(rows)} Benchpress configs to {output_dir}")
@@ -198,6 +199,7 @@ def compile_configs(spec_path: Path, output_dir: Path, smoke: bool = False) -> N
 def collect_results(manifest_path: Path, results_root: Path, output_path: Path) -> None:
     manifest = pd.read_csv(manifest_path)
     files = list(results_root.rglob("joint_benchmarks.csv"))
+    diagnostic_paths = list(results_root.rglob("*.diagnostics.json"))
     collected = []
     for row in manifest.to_dict("records"):
         scenario = str(row["id"])
@@ -210,6 +212,30 @@ def collect_results(manifest_path: Path, results_root: Path, output_path: Path) 
         for key in ("id", "model", "graph", "d", "n", "knowledge_fraction"):
             if key in row:
                 frame["scenario" if key == "id" else key] = row[key]
+        diagnostics = []
+        for path in diagnostic_paths:
+            if scenario not in str(path):
+                continue
+            try:
+                payload = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if {"method_id", "seed"}.issubset(payload):
+                diagnostics.append({
+                    "id": payload["method_id"], "seed": payload["seed"],
+                    "num_oracle_mi_pairs": payload.get(
+                        "number_of_oracle_pairs"),
+                    "num_supplied_mi_pairs": payload.get(
+                        "number_of_supplied_constraints",
+                        payload.get("number_of_no_trek_pairs")),
+                })
+        if diagnostics and {"id", "seed"}.issubset(frame.columns):
+            frame = frame.merge(pd.DataFrame(diagnostics).drop_duplicates(
+                ["id", "seed"]), on=["id", "seed"], how="left")
+            for column in ("num_oracle_mi_pairs",):
+                frame[column] = frame.groupby("seed")[column].transform("max")
+            frame["num_supplied_mi_pairs"] = frame[
+                "num_supplied_mi_pairs"].fillna(0)
         collected.append(frame)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pd.concat(collected, ignore_index=True).to_csv(output_path, index=False)
@@ -218,6 +244,18 @@ def collect_results(manifest_path: Path, results_root: Path, output_path: Path) 
 
 def analyse(results_csv: Path, output_dir: Path) -> None:
     frame = pd.read_csv(results_csv)
+    for column in ("SHD_cpdag", "SHD_pattern", "SHD_skel", "time",
+                   "TP_pattern", "FP_pattern", "FN_pattern",
+                   "TP_skel", "FP_skel", "FN_skel"):
+        if column in frame:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    for suffix in ("pattern", "skel"):
+        tp, fp, fn = (f"TP_{suffix}", f"FP_{suffix}", f"FN_{suffix}")
+        if {tp, fp, fn}.issubset(frame.columns):
+            precision = frame[tp] / (frame[tp] + frame[fp]).replace(0, np.nan)
+            recall = frame[tp] / (frame[tp] + frame[fn]).replace(0, np.nan)
+            frame[f"F1_{suffix}"] = (2 * precision * recall /
+                                      (precision + recall)).fillna(0.0)
     method_column = next((column for column in ("id", "algorithm")
                           if column in frame and set(METHOD_IDS).issubset(
                               set(frame[column]))), None)
@@ -235,7 +273,8 @@ def analyse(results_csv: Path, output_dir: Path) -> None:
         left = frame[frame[method_column] == baseline]
         right = frame[frame[method_column] == constrained]
         merged = left.merge(right, on=seed_columns, suffixes=("_baseline", "_notreks"))
-        for metric in ("SHD_pattern", "F1_pattern", "SHD_skel", "F1_skel", "time"):
+        for metric in ("SHD_cpdag", "SHD_pattern", "F1_pattern", "SHD_skel",
+                       "F1_skel", "time"):
             lhs, rhs = f"{metric}_baseline", f"{metric}_notreks"
             if lhs in merged and rhs in merged:
                 merged[f"delta_{metric}"] = merged[rhs] - merged[lhs]
@@ -249,12 +288,101 @@ def analyse(results_csv: Path, output_dir: Path) -> None:
     summary = paired.groupby(group_columns, dropna=False)[delta_columns].agg(
         ["mean", "std", "median", "count"])
     summary.to_csv(output_dir / "paired_summary.csv")
+    _factor_and_causal_analysis(paired, output_dir)
     (output_dir / "REPORT.md").write_text(
         "# Paired NOTREKS benchmark\n\n"
         "Only matched FLOP/FLOP+NOTREKS and DAGMA/DAGMA+NOTREKS contrasts "
         "are summarized. Negative SHD deltas and positive F1 deltas favour "
         "the constrained method.\n\n" + _markdown(summary) + "\n")
     print((output_dir / "REPORT.md").read_text())
+
+
+def _fit_effect_model(frame: pd.DataFrame, outcome: str, include_pairs: bool):
+    usable = frame.replace([np.inf, -np.inf], np.nan).dropna(subset=[outcome]).copy()
+    columns = {"intercept": np.ones(len(usable))}
+    for name in ("d", "n"):
+        if name in usable:
+            columns[f"log_{name}"] = np.log(usable[name].astype(float))
+    if "knowledge_fraction" in usable:
+        columns["knowledge_fraction"] = usable.knowledge_fraction.astype(float)
+    if include_pairs and "num_supplied_mi_pairs_notreks" in usable:
+        columns["log1p_supplied_pairs"] = np.log1p(
+            usable.num_supplied_mi_pairs_notreks.astype(float))
+    for name in ("model", "graph"):
+        if name in usable:
+            levels = sorted(map(str, usable[name].dropna().unique()))
+            for level in levels[1:]:
+                columns[f"{name}={level}"] = (usable[name].astype(str) == level).astype(float)
+    design = pd.DataFrame(columns, index=usable.index)
+    if len(usable) <= design.shape[1]:
+        return pd.DataFrame()
+    X = design.to_numpy(float)
+    y = usable[outcome].to_numpy(float)
+    beta, _, _, _ = np.linalg.lstsq(X, y, rcond=None)
+    residual = y - X @ beta
+    dof = max(1, len(y) - X.shape[1])
+    sigma2 = float(residual @ residual / dof)
+    covariance = sigma2 * np.linalg.pinv(X.T @ X)
+    standard_error = np.sqrt(np.maximum(np.diag(covariance), 0))
+    return pd.DataFrame({"term": design.columns, "estimate": beta,
+                         "standard_error": standard_error,
+                         "outcome": outcome,
+                         "model": "mechanistic" if include_pairs else "total_design"})
+
+
+def _factor_and_causal_analysis(paired: pd.DataFrame, output_dir: Path) -> None:
+    outcomes = [name for name in ("delta_SHD_cpdag", "delta_F1_pattern")
+                if name in paired]
+    factor_rows = []
+    for factor in ("model", "graph", "d", "n", "knowledge_fraction"):
+        if factor not in paired:
+            continue
+        for keys, group in paired.groupby(["comparison", factor], dropna=False):
+            for outcome in outcomes:
+                factor_rows.append({"comparison": keys[0], "factor": factor,
+                                    "level": keys[1], "outcome": outcome,
+                                    "mean": group[outcome].mean(),
+                                    "median": group[outcome].median(),
+                                    "sample_size": group[outcome].notna().sum()})
+    pd.DataFrame(factor_rows).to_csv(output_dir / "factor_effects.csv", index=False)
+    models = []
+    for comparison, group in paired.groupby("comparison"):
+        for outcome in outcomes:
+            for include_pairs in (False, True):
+                fitted = _fit_effect_model(group, outcome, include_pairs)
+                if not fitted.empty:
+                    fitted.insert(0, "comparison", comparison)
+                    models.append(fitted)
+    pd.concat(models, ignore_index=True).to_csv(
+        output_dir / "effect_models.csv", index=False) if models else None
+    dag = """digraph benchmark_estimand {
+  model -> data_distribution;
+  graph_family -> true_graph;
+  dimension -> true_graph;
+  true_graph -> oracle_mi_pairs;
+  knowledge_fraction -> supplied_mi_pairs;
+  oracle_mi_pairs -> supplied_mi_pairs;
+  sample_size -> data_information;
+  data_distribution -> recovery;
+  true_graph -> recovery;
+  data_information -> recovery;
+  method_notreks -> optimization_and_constraints;
+  supplied_mi_pairs -> optimization_and_constraints;
+  optimization_and_constraints -> recovery;
+}
+"""
+    (output_dir / "causal_estimand.dot").write_text(dag)
+    (output_dir / "CAUSAL_ANALYSIS.md").write_text(
+        "# Factorial and causal-effect analysis\n\n"
+        "The primary estimands are paired NOTREKS-minus-baseline changes. The "
+        "full-factorial configured factors (model, graph family, dimension, "
+        "sample size, and knowledge fraction) support controlled marginal "
+        "contrasts. `effect_models.csv` contains a total-design model that "
+        "does not adjust for MI-pair counts, and a mechanistic model that "
+        "does. Realized MI-pair count is caused by graph family, dimension, "
+        "and the sampled graph; it is therefore a mediator, not a harmless "
+        "baseline covariate. Its coefficient must not be called the total "
+        "causal effect of graph type. The DOT file records the assumed graph.\n")
 
 
 def parser() -> argparse.ArgumentParser:

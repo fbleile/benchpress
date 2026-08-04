@@ -1,0 +1,26 @@
+{
+  "calibration_id": "d20_n200_oracle25_v1",
+  "calibration_status": "frozen",
+  "data": {
+    "model": "linear_gaussian",
+    "graph": "er_expected_degree_2",
+    "d": 20,
+    "n": 200,
+    "standardized": true,
+    "knowledge_fraction": 0.25,
+    "seeds": [9101, 9102, 9103, 9104, 9105]
+  },
+  "dagma_trek_weight": 10.0,
+  "dagma_trek_function": "inv",
+  "dagma_trek_kernel": "fast",
+  "flop_restarts": 16,
+  "flop_notreks_search_strategy": "global_greedy",
+  "flop_notreks_restarts": 2,
+  "flop_notreks_max_sweeps": 2,
+  "flop_notreks_signature_top_k": 32,
+  "flop_notreks_signature_exploration_k": 8,
+  "flop_notreks_max_signature_rounds": 100,
+  "algorithm_seed": 9137,
+  "knowledge_seed": 271828,
+  "n_jobs": 1
+}

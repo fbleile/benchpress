@@ -54,7 +54,8 @@ def test_analysis_only_builds_requested_paired_comparisons(tmp_path: Path):
     for seed in (1, 2):
         for method, shd in zip(METHOD_IDS, (3, 2, 5, 4)):
             rows.append({"seed": seed, "algorithm": method,
-                         "SHD_pattern": shd, "F1_pattern": 1 / (1 + shd)})
+                         "SHD_cpdag": shd + 1, "SHD_pattern": shd,
+                         "F1_pattern": 1 / (1 + shd)})
     source = tmp_path / "results.csv"
     pd.DataFrame(rows).to_csv(source, index=False)
     analyse(source, tmp_path / "analysis")
@@ -62,6 +63,9 @@ def test_analysis_only_builds_requested_paired_comparisons(tmp_path: Path):
     assert set(paired.comparison) == {
         "flop_vs_flop_notreks", "dagma_vs_dagma_notreks"}
     assert set(paired.delta_SHD_pattern) == {-1}
+    assert set(paired.delta_SHD_cpdag) == {-1}
+    assert (tmp_path / "analysis/factor_effects.csv").exists()
+    assert (tmp_path / "analysis/causal_estimand.dot").exists()
 
 
 def test_collect_joins_scenario_metadata(tmp_path: Path):

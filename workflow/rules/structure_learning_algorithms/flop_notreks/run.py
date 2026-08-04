@@ -32,6 +32,7 @@ if knowledge:
     pairs = named_pairs_to_indices(payload, list(df.columns))
 else:
     pairs = []
+number_of_oracle_pairs = len(pairs)
 pairs = subsample_no_trek_pairs(
     pairs,
     float(snakemake.wildcards.get("knowledge_fraction", 1.0)),
@@ -91,7 +92,12 @@ if (strategy != "global_greedy"
 pd.DataFrame(A.astype(int), columns=df.columns).to_csv(
     snakemake.output["adjmat"], index=False)
 diagnostics.update({
+    "method_id": str(snakemake.wildcards.get("id", "flop_notreks")),
+    "seed": int(snakemake.wildcards.get("seed", 0)),
     "runtime": elapsed,
+    "number_of_oracle_pairs": number_of_oracle_pairs,
+    "knowledge_fraction": float(
+        snakemake.wildcards.get("knowledge_fraction", 1.0)),
     "number_of_supplied_constraints": len(pairs),
     "final_no_trek_violation_count": violations,
     "selected_dag_edge_count": int(selected_dag.sum()),

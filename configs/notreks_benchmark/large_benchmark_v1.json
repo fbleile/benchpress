@@ -1,4 +1,5 @@
 {
+  "benchmark_id": "notreks_large_v1",
   "tuned_hyperparameters": "calibrations/d20_n200_oracle25_v1.json",
   "models": {
     "linear_gaussian": {"method": "linear", "sem_type": "gauss", "noise_scale": 1.0, "coefficient_min": 0.5, "coefficient_max": 1.0},

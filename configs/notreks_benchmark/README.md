@@ -1,6 +1,7 @@
 # NOTREKS benchmark configurations
 
-`benchmark_grid.json` defines reusable named model and graph families, a
+`large_benchmark_v1.json` is the frozen large design. `benchmark_grid.json`
+is the editable design template. Both define reusable named model and graph families, a
 Cartesian grid, and an optional `scenarios` list for targeted additions.  The
 compiler emits one normal Benchpress JSON configuration per scenario.  Every
 configuration contains exactly four IDs: `flop`, `flop_notreks`, `dagma`, and
@@ -34,6 +35,21 @@ The generated `commands.txt` has one resumable Snakemake command per scenario
 and is suitable as the command source for a scheduler array. The repository
 and input resources should be transferred together so the fixed scenario IDs
 and seeds remain unchanged.
+
+Compile the frozen design and submit it as a Slurm array (adjust account,
+partition, memory, and time for the target cluster):
+
+```bash
+PYTHONPATH=. python scripts/notreks_benchmark.py compile --spec configs/notreks_benchmark/large_benchmark_v1.json --output-dir configs/notreks_benchmark/generated_v1
+wc -l configs/notreks_benchmark/generated_v1/commands.txt
+sbatch --array=0-359 --cpus-per-task=4 --mem=16G --time=2-00:00:00 scripts/run_notreks_cluster_array.sh configs/notreks_benchmark/generated_v1/commands.txt
+```
+
+The `d=100` greedy jobs can be substantially slower than the calibration.
+For the frozen ordering, the `d=20` scenarios are array indices
+`0-19,60-79,120-139,180-199,240-259,300-319`; run those first as a staged
+cluster validation before releasing the complete array. Do not infer greedy
+wall time from DAGMA or vanilla FLOP.
 
 After all jobs finish, collect and analyse them with:
 

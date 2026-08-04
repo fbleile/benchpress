@@ -44,6 +44,7 @@ if source == "none":
 else:
     payload = load_sidecar(snakemake.input["knowledge"], list(df.columns))
     pairs = named_pairs_to_indices(payload, list(df.columns))
+number_of_oracle_pairs = len(pairs)
 pairs = subsample_no_trek_pairs(
     pairs,
     float(value("knowledge_fraction", 1.0)),
@@ -145,6 +146,8 @@ score, _ = model._score(W)
 h, _ = model._h(W, float(fit_args["s"][-1]))
 scale = 2.0 / (len(A) - 1) if len(A) > 1 else 0.0
 diagnostics = {
+    "method_id": str(value("id", "dagma_notreks")),
+    "seed": int(value("seed", 0)),
     "trek_weight": fit_args["trek_weight"], "trek_function": fit_args["trek_function"],
     "trek_kernel": fit_args["trek_kernel"],
     "data_standardized": standardize_data,
@@ -164,6 +167,8 @@ diagnostics = {
     "input_column_std_min_before_standardization": float(np.min(data_stds.to_numpy(dtype=float))),
     "input_column_std_max_before_standardization": float(np.max(data_stds.to_numpy(dtype=float))),
     "number_of_no_trek_pairs": len(pairs),
+    "number_of_oracle_pairs": number_of_oracle_pairs,
+    "knowledge_fraction": float(value("knowledge_fraction", 1.0)),
     "raw_notreks_penalty_before_threshold": raw_scaled / scale if scale else 0.0,
     "scaled_notreks_penalty_before_threshold": raw_scaled,
     "raw_notreks_penalty_after_threshold": after_scaled / scale if scale else 0.0,
