@@ -44,6 +44,11 @@ Global greedy comparator
 ------------------------
 
 ``global_greedy.fit_global_greedy_notreks`` is a separate paper comparator.
+It is exposed through ``search_strategy=global_greedy`` and is the strategy
+used by the paper-facing NOTREKS benchmark. It returns a selected DAG directly.
+The historical Rust implementation remains available through
+``search_strategy=signature_alternating`` and returns the usual CPDAG output
+plus a selected-DAG diagnostic.
 It retains FLOP-style node reinsertion outside, but applies a complete-graph
 Gaussian BIC edge-toggle search inside and checks exact DAG/NOTREKS feasibility
 for every move. It does not use graph truth or silently fall back to ordinary

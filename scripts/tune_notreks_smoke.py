@@ -20,10 +20,13 @@ from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection im
 from workflow.rules.structure_learning_algorithms.flop_notreks.adapter import (
     count_no_trek_violations, selected_dag_from_diagnostics,
 )
+from workflow.rules.structure_learning_algorithms.flop_notreks.global_greedy import (
+    GlobalGreedyConfig, fit_global_greedy_notreks,
+)
 from workflow.rules.structure_learning_algorithms.notreks import subsample_no_trek_pairs
 
 
-def dataset(seed: int, d: int = 8, n: int = 200):
+def dataset(seed: int, d: int = 20, n: int = 200):
     sequence = np.random.SeedSequence(seed)
     graph_seed, coefficient_seed, noise_seed = sequence.spawn(3)
     rng = np.random.default_rng(graph_seed)
@@ -80,9 +83,9 @@ def run(output_dir: Path, write_defaults: Path | None = None):
 
     output_dir.mkdir(parents=True, exist_ok=True)
     rows = []
-    dagma_weights = (0.3, 1.0, 3.0, 10.0, 30.0)
-    flop_settings = ((8, 20), (16, 50), (32, 100))
-    for seed in (9101, 9102):
+    dagma_weights = (0.3, 3.0, 10.0)
+    flop_settings = ((1, 1), (2, 1), (2, 2))
+    for seed in (9101, 9102, 9103, 9104, 9105):
         data, truth, pairs = dataset(seed)
         model = SharedDagmaLinear("l2")
         started = time.perf_counter()
@@ -122,20 +125,18 @@ def run(output_dir: Path, write_defaults: Path | None = None):
                      "runtime": time.perf_counter() - started,
                      "edges": int(np.sum(flop_graph != 0)),
                      **truth_metrics(truth, flop_graph)})
-        for top_k, rounds in flop_settings:
+        for restarts, sweeps in flop_settings:
             started = time.perf_counter()
-            _, diagnostics = flopsearch.flop_notreks(
-                data, 2.0, pairs, restarts=2, seed=seed + 9137,
-                signature_top_k=top_k, signature_exploration_k=max(1, top_k // 4),
-                max_signature_rounds=rounds,
-                search_version="alternating_full_refit_b",
-                return_diagnostics=True)
-            graph = selected_dag_from_diagnostics(diagnostics, data.shape[1])
+            result = fit_global_greedy_notreks(
+                data, pairs, GlobalGreedyConfig(
+                    restarts=restarts, max_sweeps=sweeps,
+                    lambda_bic=2.0, seed=seed + 9137))
+            graph = result.adjacency
             bic, _ = gaussian_bic(data, graph, lambda_bic=2.0)
             rows.append({"seed": seed, "family": "flop_notreks",
-                         "setting": f"top_k={top_k},rounds={rounds}",
-                         "signature_top_k": top_k,
-                         "max_signature_rounds": rounds, "bic": bic,
+                         "setting": f"restarts={restarts},sweeps={sweeps}",
+                         "restarts": restarts, "max_sweeps": sweeps,
+                         "bic": bic,
                          "violations": count_no_trek_violations(graph, pairs),
                          "edges": int(graph.sum()),
                          "runtime": time.perf_counter() - started,
@@ -168,9 +169,9 @@ def run(output_dir: Path, write_defaults: Path | None = None):
     chosen = {
         "selection_rule": "lowest mean postprocessed Gaussian BIC among zero-violation runs",
         "dagma_trek_weight": float(dagma_choice.setting.split("=")[1]),
-        "flop_notreks_signature_top_k": int(
+        "flop_notreks_restarts": int(
             flop_choice.setting.split(",")[0].split("=")[1]),
-        "flop_notreks_max_signature_rounds": int(
+        "flop_notreks_max_sweeps": int(
             flop_choice.setting.split(",")[1].split("=")[1]),
     }
     (output_dir / "chosen.json").write_text(json.dumps(chosen, indent=2) + "\n")
@@ -178,9 +179,7 @@ def run(output_dir: Path, write_defaults: Path | None = None):
         defaults = json.loads(write_defaults.read_text())
         defaults.update(chosen)
         defaults.pop("selection_rule", None)
-        defaults["flop_notreks_signature_exploration_k"] = max(
-            1, defaults["flop_notreks_signature_top_k"] // 4)
-        defaults["calibration_status"] = "frozen_from_smoke_9101_9102"
+        defaults["calibration_status"] = "frozen_from_d20_smoke_9101_9105"
         write_defaults.write_text(json.dumps(defaults, indent=2) + "\n")
     print(summary.to_string(index=False))
     print("chosen", json.dumps(chosen, sort_keys=True))

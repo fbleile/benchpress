@@ -1,7 +1,9 @@
 {
-  "calibration_status": "frozen_from_smoke_9101_9102",
-  "dagma_trek_weight": 0.3,
+  "calibration_status": "frozen_from_d20_smoke_9101_9105",
+  "dagma_trek_weight": 10.0,
   "flop_restarts": 16,
+  "flop_notreks_restarts": 2,
+  "flop_notreks_max_sweeps": 2,
   "flop_notreks_signature_top_k": 32,
   "flop_notreks_signature_exploration_k": 8,
   "flop_notreks_max_signature_rounds": 100,

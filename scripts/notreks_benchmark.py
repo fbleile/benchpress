@@ -103,14 +103,19 @@ def _algorithms(scenario: dict, defaults: dict, smoke: bool) -> dict:
         "notreks_constraint_active": True,
     }
     flop_restarts = 2 if smoke else int(defaults["flop_restarts"])
+    flop_notreks_restarts = (1 if smoke else int(
+        defaults["flop_notreks_restarts"]))
     flop = {
         "id": "flop", "lambda_bic": 2.0, "restarts": flop_restarts,
         "search_timeout": None, "timeout": None,
     }
     flop_notreks = {
         **knowledge, "id": "flop_notreks", "lambda_bic": 2.0,
-        "restarts": flop_restarts, "search_timeout": None, "timeout": None,
+        "restarts": flop_notreks_restarts, "search_timeout": None,
+        "timeout": None,
         "algorithm_seed": int(defaults["algorithm_seed"]),
+        "search_strategy": "global_greedy",
+        "max_sweeps": int(defaults["flop_notreks_max_sweeps"]),
         "signature_top_k": int(defaults["flop_notreks_signature_top_k"]),
         "signature_exploration_k": int(
             defaults["flop_notreks_signature_exploration_k"]),

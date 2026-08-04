@@ -4,7 +4,9 @@
 Cartesian grid, and an optional `scenarios` list for targeted additions.  The
 compiler emits one normal Benchpress JSON configuration per scenario.  Every
 configuration contains exactly four IDs: `flop`, `flop_notreks`, `dagma`, and
-`dagma_notreks`.
+`dagma_notreks`. The FLOP+NOTREKS arm uses the hard-feasible
+`global_greedy` strategy; the older signature-alternating implementation is a
+diagnostic only.
 
 Prior-knowledge fractions deterministically subsample the full oracle no-trek
 sidecar with the same dataset-derived seed in both constrained methods. A positive fraction

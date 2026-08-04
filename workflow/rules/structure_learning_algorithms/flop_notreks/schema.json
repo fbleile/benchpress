@@ -10,6 +10,11 @@
       "search_timeout": {"$ref": "#/$defs/flexnonnegnumnull"},
       "timeout": {"$ref": "#/$defs/flexnonnegnumnull"},
       "algorithm_seed": {"$ref": "#/$defs/flexnonnegint"},
+      "search_strategy": {
+        "enum": ["global_greedy", "signature_alternating"],
+        "default": "signature_alternating"
+      },
+      "max_sweeps": {"$ref": "#/$defs/flexnonnegint", "default": 4},
       "signature_top_k": {"$ref": "#/$defs/flexnonnegint"},
       "signature_exploration_k": {"$ref": "#/$defs/flexnonnegint"},
       "max_signature_rounds": {"$ref": "#/$defs/flexnonnegint"},

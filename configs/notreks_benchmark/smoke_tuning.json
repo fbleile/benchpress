@@ -4,8 +4,9 @@
   "graphs": {"er2": {"method": "er", "expected_degree": 2.0}},
   "grid": {
     "models": ["linear_gaussian"], "graphs": ["er2"],
-    "dimensions": [8], "sample_sizes": [200],
-    "knowledge_fractions": [0.25], "seeds": [9101, 9102]
+    "dimensions": [20], "sample_sizes": [200],
+    "knowledge_fractions": [0.25],
+    "seeds": [9101, 9102, 9103, 9104, 9105]
   },
   "scenarios": []
 }

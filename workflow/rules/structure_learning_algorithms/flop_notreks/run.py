@@ -1,5 +1,6 @@
 import json
 import time
+from dataclasses import asdict
 
 import flopsearch
 import numpy as np
@@ -11,6 +12,9 @@ from workflow.rules.structure_learning_algorithms.dagma.knowledge import (
 from workflow.rules.structure_learning_algorithms.flop.adapter import convert_flop_cpdag
 from workflow.rules.structure_learning_algorithms.flop_notreks.adapter import (
     count_no_trek_violations, selected_dag_from_diagnostics,
+)
+from workflow.rules.structure_learning_algorithms.flop_notreks.global_greedy import (
+    GlobalGreedyConfig, fit_global_greedy_notreks,
 )
 from workflow.rules.structure_learning_algorithms.notreks import subsample_no_trek_pairs
 
@@ -35,6 +39,8 @@ pairs = subsample_no_trek_pairs(
     + int(snakemake.wildcards.get("seed", 0)),
 )
 
+strategy = str(snakemake.wildcards.get(
+    "search_strategy", "signature_alternating"))
 kwargs = {
     "seed": (int(snakemake.wildcards["seed"]) + int(snakemake.wildcards["algorithm_seed"]))
             % (2**64),
@@ -53,18 +59,35 @@ else:
     raise ValueError("FLOP-NOTREKS requires restarts or search_timeout")
 
 start = time.perf_counter()
-raw, diagnostics = flopsearch.flop_notreks(
-    X, float(snakemake.wildcards["lambda_bic"]), pairs, **kwargs)
+if strategy == "global_greedy":
+    if str(restarts) in {"None", "null"}:
+        raise ValueError("global-greedy FLOP-NOTREKS requires restart count")
+    result = fit_global_greedy_notreks(
+        X, pairs, GlobalGreedyConfig(
+            restarts=int(restarts),
+            max_sweeps=int(snakemake.wildcards.get("max_sweeps", 4)),
+            lambda_bic=float(snakemake.wildcards["lambda_bic"]),
+            seed=kwargs["seed"]))
+    selected_dag = result.adjacency
+    A = selected_dag.copy()
+    diagnostics = asdict(result)
+    diagnostics.pop("adjacency", None)
+    diagnostics["search_strategy"] = strategy
+else:
+    raw, diagnostics = flopsearch.flop_notreks(
+        X, float(snakemake.wildcards["lambda_bic"]), pairs, **kwargs)
+    raw = np.asarray(raw)
+    selected_dag = selected_dag_from_diagnostics(diagnostics, X.shape[1])
+    A = convert_flop_cpdag(raw, X.shape[1])
+    diagnostics["search_strategy"] = strategy
 elapsed = time.perf_counter() - start
-raw = np.asarray(raw)
-selected_dag = selected_dag_from_diagnostics(diagnostics, X.shape[1])
 violations = count_no_trek_violations(selected_dag, pairs)
 if violations:
     raise RuntimeError(f"selected FLOP-NOTREKS DAG has {violations} no-trek violations")
-if int(diagnostics["final_no_trek_violation_count"]) != violations:
+if (strategy != "global_greedy"
+        and int(diagnostics["final_no_trek_violation_count"]) != violations):
     raise RuntimeError("Rust and Benchpress no-trek violation diagnostics disagree")
 
-A = convert_flop_cpdag(raw, X.shape[1])
 pd.DataFrame(A.astype(int), columns=df.columns).to_csv(
     snakemake.output["adjmat"], index=False)
 diagnostics.update({

@@ -22,6 +22,7 @@ def _spec():
 def _defaults():
     return {"knowledge_seed": 1, "algorithm_seed": 2,
             "dagma_trek_weight": 10, "flop_restarts": 4,
+            "flop_notreks_restarts": 2, "flop_notreks_max_sweeps": 1,
             "flop_notreks_signature_top_k": 8,
             "flop_notreks_signature_exploration_k": 2,
             "flop_notreks_max_signature_rounds": 20, "n_jobs": 1}
@@ -44,6 +45,7 @@ def test_compiled_config_contains_exactly_four_methods_and_shared_fraction():
     assert tuple(algorithms) == METHOD_IDS
     assert algorithms["dagma_notreks"][0]["knowledge_fraction"] == .1
     assert algorithms["flop_notreks"][0]["knowledge_fraction"] == .1
+    assert algorithms["flop_notreks"][0]["search_strategy"] == "global_greedy"
     assert algorithms["dagma"][0]["T"] == 1
 
 
