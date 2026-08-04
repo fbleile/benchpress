@@ -11,6 +11,7 @@ from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection im
     LinearCandidateScorer, PostselectionConfig, lambda_policy,
     select_postselection_candidate, standardize_training_data,
 )
+from workflow.rules.structure_learning_algorithms.notreks import subsample_no_trek_pairs
 
 
 def value(name, default):
@@ -43,6 +44,11 @@ if source == "none":
 else:
     payload = load_sidecar(snakemake.input["knowledge"], list(df.columns))
     pairs = named_pairs_to_indices(payload, list(df.columns))
+pairs = subsample_no_trek_pairs(
+    pairs,
+    float(value("knowledge_fraction", 1.0)),
+    int(value("knowledge_seed", 0)) + int(value("seed", 0)),
+)
 threshold = float(value("w_threshold", .3))
 lambda_policy_name = value("lambda_policy", None)
 lambda1_scaling = str(value("lambda1_scaling", "fixed"))

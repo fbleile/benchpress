@@ -21,7 +21,9 @@
         "default": "alternating_full_refit_b"
       },
       "knowledge_source": {"enum": ["oracle_true_graph", "file", "none"]},
-      "knowledge_file": {"type": ["string", "null"]}
+      "knowledge_file": {"type": ["string", "null"]},
+      "knowledge_fraction": {"type": "number", "minimum": 0, "maximum": 1, "default": 1.0},
+      "knowledge_seed": {"$ref": "#/$defs/flexnonnegint", "default": 0}
     },
     "additionalProperties": false,
     "required": [

@@ -1,0 +1,21 @@
+{
+  "tuned_hyperparameters": "tuned_hyperparameters.json",
+  "models": {
+    "linear_gaussian": {"method": "linear", "sem_type": "gauss", "noise_scale": 1.0, "coefficient_min": 0.5, "coefficient_max": 1.0},
+    "linear_gumbel": {"method": "linear", "sem_type": "gumbel", "noise_scale": 1.0, "coefficient_min": 0.5, "coefficient_max": 1.0}
+  },
+  "graphs": {
+    "er2": {"method": "er", "expected_degree": 2.0},
+    "er4": {"method": "er", "expected_degree": 4.0},
+    "sf4": {"method": "sf", "expected_degree": 4.0}
+  },
+  "grid": {
+    "models": ["linear_gaussian", "linear_gumbel"],
+    "graphs": ["er2", "er4", "sf4"],
+    "dimensions": [20, 50, 100],
+    "sample_sizes": [100, 250, 500, 1000, 2000],
+    "knowledge_fractions": [0.01, 0.05, 0.25, 1.0],
+    "seeds": [11001, 11002, 11003, 11004, 11005]
+  },
+  "scenarios": []
+}

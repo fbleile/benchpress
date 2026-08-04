@@ -1,0 +1,11 @@
+{
+  "calibration_status": "frozen_from_smoke_9101_9102",
+  "dagma_trek_weight": 0.3,
+  "flop_restarts": 16,
+  "flop_notreks_signature_top_k": 32,
+  "flop_notreks_signature_exploration_k": 8,
+  "flop_notreks_max_signature_rounds": 100,
+  "algorithm_seed": 9137,
+  "knowledge_seed": 271828,
+  "n_jobs": 1
+}

@@ -13,6 +13,7 @@ from .kernels import (
     notreks_value_grad_kernel,
     validate_pairs,
 )
+from .pairs import subsample_no_trek_pairs
 
 __all__ = [
     "FAST_KERNEL",
@@ -20,5 +21,6 @@ __all__ = [
     "NoTreksPenalty",
     "make_notreks_kernel",
     "notreks_value_grad_kernel",
+    "subsample_no_trek_pairs",
     "validate_pairs",
 ]

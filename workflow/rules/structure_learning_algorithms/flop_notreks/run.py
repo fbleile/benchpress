@@ -12,6 +12,7 @@ from workflow.rules.structure_learning_algorithms.flop.adapter import convert_fl
 from workflow.rules.structure_learning_algorithms.flop_notreks.adapter import (
     count_no_trek_violations, selected_dag_from_diagnostics,
 )
+from workflow.rules.structure_learning_algorithms.notreks import subsample_no_trek_pairs
 
 
 df = pd.read_csv(snakemake.input["data"])
@@ -27,6 +28,12 @@ if knowledge:
     pairs = named_pairs_to_indices(payload, list(df.columns))
 else:
     pairs = []
+pairs = subsample_no_trek_pairs(
+    pairs,
+    float(snakemake.wildcards.get("knowledge_fraction", 1.0)),
+    int(snakemake.wildcards.get("knowledge_seed", 0))
+    + int(snakemake.wildcards.get("seed", 0)),
+)
 
 kwargs = {
     "seed": (int(snakemake.wildcards["seed"]) + int(snakemake.wildcards["algorithm_seed"]))
