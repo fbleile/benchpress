@@ -1,6 +1,22 @@
 FLOP-NOTREKS
 =============
 
+Feasibility note: FLOP-NOTREKS uses an exact discrete ancestry certificate,
+not DAGMA's continuous inverse NOTREKS kernel. For each supplied pair
+``(i, j)``, it requires ``An(i) intersection An(j) == empty`` (with each node
+counting as its own ancestor). The global-greedy implementation computes a
+Boolean transitive closure, precomputes invalid additions, and performs one
+final full DAG+NOTREKS check. This is the hard certificate used during search.
+
+For diagnostics only, an inverse-resolvent check with ``inverse_epsilon=0`` is
+mathematically equivalent on a valid DAG because
+``(I - A)^(-1) = I + A + A^2 + ...``. Its pair entries are zero up to
+floating-point roundoff when no common ancestor exists. It is not an acyclicity
+certificate: a cyclic matrix can still have an inverse. The continuous DAGMA
+path therefore keeps its epsilon-protected inverse objective, while FLOP keeps
+the exact ancestry check. Recomputing an inverse for every edge proposal is
+also slower than the cached closure/table method.
+
 FLOP-NOTREKS consumes the same validated ``no_trek_pairs`` JSON sidecar as
 DAGMA-NOTREKS and PC-MIOracle. It never receives the true graph. For every
 edge ``u -> v``, the ancestry certificates require ``S_v`` to be a subset of
