@@ -52,7 +52,7 @@
       "initialization_scale": {"$ref": "#/$defs/flexnonnegnum", "default": 0.05},
       "trek_regularizer": {"enum": ["pst"]},
       "trek_function": {"enum": ["exp", "log", "inv", "binom"], "default": "inv"},
-      "trek_kernel": {"enum": ["notreks_reference", "dense_current", "dense_exp", "dense_inv", "selected_inv", "poly_selected_walk", "poly_selected_exp"], "default": "notreks_reference"},
+      "trek_kernel": {"enum": ["fast", "notreks_reference", "dense_current", "dense_exp", "dense_inv", "selected_inv", "poly_selected_walk", "poly_selected_exp"], "default": "fast"},
       "trek_weight": {"$ref": "#/$defs/flexnonnegnum"},
       "trek_log_terms": {"$ref": "#/$defs/flexnonnegint"},
       "trek_inverse_epsilon": {"$ref": "#/$defs/flexnonnegnum"},

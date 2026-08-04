@@ -496,7 +496,7 @@ class SharedDagmaLinear(DagmaLinear):
             dag_penalty_weight=1.0, trek_log_terms=None,
             trek_inverse_epsilon=1e-8, variance_epsilon=1e-8,
             dag_constraint="logdet", gamma_inv=1.0,
-            trek_kernel="notreks_reference",
+            trek_kernel="fast",
             initial_W=None, mu_schedule=None, terminal_zero_stage=False,
             zero_block_iterations=10000, maximum_zero_iterations=300000,
             h_tolerance=1e-12, notreks_tolerance=1e-12,
@@ -508,7 +508,9 @@ class SharedDagmaLinear(DagmaLinear):
             self._trek_kernel = NoTreksKernel.from_pairs(
                 self.no_trek_pairs, np.asarray(X).shape[1])
         else:
-            from workflow.rules.structure_learning_algorithms.dagma_notreks.kernels import make_notreks_kernel
+            from workflow.rules.structure_learning_algorithms.notreks import (
+                make_notreks_kernel,
+            )
 
             self._trek_kernel = make_notreks_kernel(
                 self.trek_kernel_name, self.no_trek_pairs, np.asarray(X).shape[1])

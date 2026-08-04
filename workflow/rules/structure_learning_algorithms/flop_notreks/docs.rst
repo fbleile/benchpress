@@ -39,3 +39,13 @@ proposal evaluation.
 All constrained versions preserve order precedence, the signature-subset edge
 rule, independent-set signatures, target self-membership, and zero selected-DAG
 violations.
+
+Global greedy comparator
+------------------------
+
+``global_greedy.fit_global_greedy_notreks`` is a separate paper comparator.
+It retains FLOP-style node reinsertion outside, but applies a complete-graph
+Gaussian BIC edge-toggle search inside and checks exact DAG/NOTREKS feasibility
+for every move. It does not use graph truth or silently fall back to ordinary
+FLOP. It is intentionally kept distinct from Versions A and B because it does
+not use their ancestry-signature representation.

@@ -1,7 +1,7 @@
 # DAGMA-NOTREKS
 
-DAGMA-NOTREKS adds supplied marginal-independence knowledge to linear
-log-determinant DAGMA. Knowledge is a validated JSON sidecar containing
+DAGMA-NOTREKS is vanilla linear log-determinant DAGMA with an optional,
+method-independent NOTREKS structural component. Knowledge is a validated JSON sidecar containing
 unordered node-name pairs. The sidecar is converted to column indices before
 optimisation; the algorithm never receives the true graph.
 
@@ -13,7 +13,7 @@ are:
 
 - log-det DAGMA with the ordinary five-stage positive-\(\mu\) path;
 - L2 loss, `lambda1=0.03`, and five deterministic restarts;
-- analytic inverse NOTREKS with `trek_weight=10`;
+- analytic inverse NOTREKS with `trek_weight=10` and `trek_kernel=fast`;
 - candidate threshold
   \(\tau=\max(\tau_{\mathrm{feas}},0.01)\);
 - deletion-only, fixed-order FLOP parent shrinking;
@@ -25,6 +25,12 @@ The continuous objective follows the existing shared solver convention:
 \mu\{\operatorname{score}(W)+\lambda_1\lVert W\rVert_1\}
 +h_{\mathrm{logdet}}(W)+\lambda_{\mathrm{NT}}R_{\mathcal I}^{\mathrm{inv}}(W).
 \]
+
+With no pairs or zero NOTREKS weight, the same solver is ordinary DAGMA. The
+NOTREKS implementation lives in the sibling `notreks/` package rather than in
+the DAGMA method. `fast` is the selected-column inverse implementation;
+`notreks_reference`, `dense_inv`, `selected_inv`, and polynomial ablations can
+be selected explicitly for reproducibility.
 
 The pipeline is deliberately compositional:
 
@@ -96,9 +102,10 @@ diagnostics. Gaussian-profile loss and terminal-zero-stage experiments are
 historical only and are not production entry points.
 
 The shared solver retains lightweight function boundaries for the data loss,
-DAG penalty, NOTREKS penalty, feasibility projection, BIC scoring, and
-postprocessing. Mathematical formulas and scaling live in the shared
-`dagma/` modules; experiment runners must not duplicate them.
+DAG penalty, optional structural penalties, feasibility projection, BIC
+scoring, and postprocessing. NOTREKS kernels and pair utilities live in
+`structure_learning_algorithms/notreks/`; experiment runners must not duplicate
+them.
 
 ## Sidecar
 

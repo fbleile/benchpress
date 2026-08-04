@@ -45,6 +45,7 @@ class ProductionConfig:
     lambda1: float = 0.03
     trek_weight: float = 10.0
     trek_function: str = "inv"
+    trek_kernel: str = "fast"
     restarts: int = 5
     seed: int = 1729
     initialization_scale: float = 0.05
@@ -206,6 +207,7 @@ def run_production_pipeline(
             no_trek_pairs=no_trek_pairs,
             trek_weight=config.trek_weight,
             trek_function=config.trek_function,
+            trek_kernel=config.trek_kernel,
             initial_W=_initial_adjacency(config, data.shape[1], restart),
             lambda1=effective_lambda,
             w_threshold=0.0,

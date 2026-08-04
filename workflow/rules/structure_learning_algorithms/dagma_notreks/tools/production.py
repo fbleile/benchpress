@@ -103,7 +103,8 @@ def _write_result(output_dir: Path, selected, restarts, config, pairs=()):
     payload = {
         "method": "dagma_notreks",
         "dag_penalty": "logdet",
-        "notreks_kernel": config.trek_function,
+        "notreks_function": config.trek_function,
+        "notreks_kernel": config.trek_kernel,
         "lambda1": config.lambda1,
         "lambda_policy": config.lambda_policy,
         "lambda1_effective": selected.lambda1_effective,

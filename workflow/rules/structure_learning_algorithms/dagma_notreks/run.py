@@ -84,7 +84,7 @@ fit_args = dict(
     gradient_tolerance=float(value("gradient_tolerance", 1e-8)),
     no_trek_pairs=pairs, trek_weight=float(value("trek_weight", .1)),
     trek_function=str(value("trek_function", "inv")),
-    trek_kernel=str(value("trek_kernel", "notreks_reference")),
+    trek_kernel=str(value("trek_kernel", "fast")),
     trek_log_terms=int(value("trek_log_terms", 2 * len(df.columns))),
     trek_inverse_epsilon=float(value("trek_inverse_epsilon", 1e-8)),
 )

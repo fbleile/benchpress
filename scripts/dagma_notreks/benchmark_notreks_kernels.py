@@ -28,7 +28,7 @@ from workflow.rules.structure_learning_algorithms.dagma.shared import (  # noqa:
     SharedDagmaLinear,
     notreks_value_grad,
 )
-from workflow.rules.structure_learning_algorithms.dagma_notreks.kernels import (  # noqa: E402
+from workflow.rules.structure_learning_algorithms.notreks import (  # noqa: E402
     KERNEL_REGISTRY,
     make_notreks_kernel,
 )
@@ -519,7 +519,9 @@ Optimizer interaction:
 - The fixed NOTREKS contribution is outside the DAGMA `mu` factor in the current repository convention.
 - Component timing is recorded when `profile_components` is enabled through existing stage diagnostics.
 
-This benchmark adds opt-in kernels through `trek_kernel`; `notreks_reference` remains the default.
+The production default is `fast` (selected-column inverse). The recoverable
+`notreks_reference` kernel and all named ablations remain selectable through
+`trek_kernel`.
 """
     (out / "implementation_audit.md").write_text(text)
 
