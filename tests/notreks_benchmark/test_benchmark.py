@@ -4,7 +4,8 @@ from pathlib import Path
 import pandas as pd
 
 from scripts.notreks_benchmark import (
-    METHOD_IDS, analyse, benchpress_config, collect_results, expand_scenarios,
+    METHOD_IDS, analyse, benchpress_config, collect_results, compile_configs,
+    expand_scenarios,
 )
 
 
@@ -47,6 +48,27 @@ def test_compiled_config_contains_exactly_four_methods_and_shared_fraction():
     assert algorithms["flop_notreks"][0]["knowledge_fraction"] == .1
     assert algorithms["flop_notreks"][0]["search_strategy"] == "global_greedy"
     assert algorithms["dagma"][0]["T"] == 1
+
+
+def test_compiler_emits_native_benchpress_cluster_commands(
+        tmp_path: Path):
+    spec_path = tmp_path / "spec.json"
+    spec = _spec()
+    spec["tuned_hyperparameters"] = "defaults.json"
+    spec_path.write_text(json.dumps(spec))
+    (tmp_path / "defaults.json").write_text(json.dumps(_defaults()))
+    output_dir = tmp_path / "compiled"
+
+    compile_configs(spec_path, output_dir)
+
+    commands = (output_dir / "commands.txt").read_text().splitlines()
+    assert len(commands) == 4
+    assert all(command.startswith(
+        "snakemake --snakefile workflow/Snakefile --use-apptainer "
+    ) for command in commands)
+    assert all("--configfile " in command for command in commands)
+    assert all("--cores ${NOTREKS_CORES:-1}" in command
+               for command in commands)
 
 
 def test_analysis_only_builds_requested_paired_comparisons(tmp_path: Path):

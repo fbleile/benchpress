@@ -36,6 +36,13 @@ and is suitable as the command source for a scheduler array. The repository
 and input resources should be transferred together so the fixed scenario IDs
 and seeds remain unchanged.
 
+Every command explicitly runs `workflow/Snakefile` with `--use-apptainer`.
+Thus the cluster execution is native Benchpress: Benchpress generates the
+graph and SEM data, constructs the oracle knowledge sidecar, executes the four
+registered structure-learning rules in their containers, and runs the normal
+Benchpress evaluation rules. `run_notreks_pipeline_smoke.py` is only a local
+container-free integration check and is not used by the cluster array.
+
 Compile the frozen design and submit it as a Slurm array (adjust account,
 partition, memory, and time for the target cluster):
 

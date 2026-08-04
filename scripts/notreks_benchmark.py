@@ -189,8 +189,9 @@ def compile_configs(spec_path: Path, output_dir: Path, smoke: bool = False) -> N
         rows.append({**scenario, "config": str(config_path)})
     pd.DataFrame(rows).to_csv(output_dir / "scenario_manifest.csv", index=False)
     commands = [
-        "snakemake --configfile " + row["config"]
-        + " --cores ${NOTREKS_CORES:-1} --rerun-incomplete"
+        "snakemake --snakefile workflow/Snakefile --use-apptainer --configfile "
+        + row["config"]
+        + " --cores ${NOTREKS_CORES:-1} --rerun-incomplete --printshellcmds"
         for row in rows]
     (output_dir / "commands.txt").write_text("\n".join(commands) + "\n")
     print(f"wrote {len(rows)} Benchpress configs to {output_dir}")
