@@ -30,6 +30,18 @@ PYTHONPATH=. .venv-local-smoke/bin/python scripts/notreks_benchmark.py compile -
 Add a single scenario by appending an object with `id`, `model`, `graph`, `d`,
 `n`, `knowledge_fraction`, and a contiguous `seeds` list to `scenarios`.
 
+Preview the complete report format locally on the frozen one-seed smoke:
+
+```bash
+OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONPATH=. \
+  .venv-local-smoke/bin/python scripts/run_notreks_pipeline_smoke.py \
+  --output-dir results/dagma_notreks_oracle/pipeline_smoke_v2
+```
+
+Open `pipeline_smoke_v2/analysis/REPORT.md`; its `figures/` directory contains
+both PNG and SVG versions. This smoke is a pipeline preview, not evidence for a
+scientific conclusion.
+
 ## Cluster workflow
 
 The generated `commands.txt` has one resumable Snakemake command per scenario
@@ -44,14 +56,19 @@ registered structure-learning rules in their containers, and runs the normal
 Benchpress evaluation rules. `run_notreks_pipeline_smoke.py` is only a local
 container-free integration check and is not used by the cluster array.
 
-Compile the frozen design and submit it as a Slurm array (adjust account,
-partition, memory, and time for the target cluster):
+The canonical submission command compiles the frozen design, submits the
+Benchpress array, and submits a dependent analysis job. No second cluster
+command is required:
 
 ```bash
-PYTHONPATH=. python scripts/notreks_benchmark.py compile --spec configs/notreks_benchmark/large_benchmark_v1.json --output-dir configs/notreks_benchmark/generated_v1
-wc -l configs/notreks_benchmark/generated_v1/commands.txt
-sbatch --array=0-359 --cpus-per-task=4 --mem=16G --time=2-00:00:00 scripts/run_notreks_cluster_array.sh configs/notreks_benchmark/generated_v1/commands.txt
+NOTREKS_PYTHON=python scripts/submit_notreks_benchmark.sh
 ```
+
+Override scheduler resources with `NOTREKS_CPUS_PER_TASK`, `NOTREKS_MEMORY`,
+`NOTREKS_TIME_LIMIT`, `NOTREKS_ANALYSIS_MEMORY`, and
+`NOTREKS_ANALYSIS_TIME_LIMIT`. The selected Python environment must provide
+NumPy, pandas, and matplotlib. The submission script prints both Slurm job IDs;
+the analysis job has an `afterok` dependency on the complete array.
 
 The `d=100` greedy jobs can be substantially slower than the calibration.
 For the frozen ordering, the `d=20` scenarios are array indices
@@ -59,11 +76,12 @@ For the frozen ordering, the `d=20` scenarios are array indices
 cluster validation before releasing the complete array. Do not infer greedy
 wall time from DAGMA or vanilla FLOP.
 
-After all jobs finish, collect and analyse them with:
+The dependent job automatically collects and analyses all rows. Its outputs
+include `all_runs.csv`, paired and factor summaries, a causal-analysis note,
+PNG and SVG figures, and a self-contained Markdown report at:
 
-```bash
-PYTHONPATH=. python scripts/notreks_benchmark.py collect --manifest configs/notreks_benchmark/generated/scenario_manifest.csv --results-root results/output --output results/dagma_notreks_oracle/main_benchmark/all_runs.csv
-PYTHONPATH=. python scripts/notreks_benchmark.py analyse --results-csv results/dagma_notreks_oracle/main_benchmark/all_runs.csv --output-dir results/dagma_notreks_oracle/main_benchmark/analysis
+```text
+results/dagma_notreks_oracle/main_benchmark/analysis/REPORT.md
 ```
 
 The analysis deliberately produces only the two scientifically relevant

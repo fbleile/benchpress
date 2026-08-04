@@ -2,7 +2,8 @@
 
 Calibration used standardized linear-Gaussian ER data at `d=20`, `n=200`,
 seeds 9101–9105, and 25% of the available oracle no-trek pairs. Hyperparameter
-selection used only zero-violation eligibility and graph-level Gaussian BIC;
+selection used only zero-violation eligibility and graph-level Gaussian BIC
+after the same fixed `|W| >= 0.30` threshold used by both DAGMA benchmark arms;
 the truth metrics below are diagnostic.
 
 ## What FLOP+NOTREKS means here
@@ -22,8 +23,11 @@ is not selected by the paper benchmark configurations.
 
 ## Frozen calibration
 
-For DAGMA-NOTREKS, weights 0.3, 3, and 10 were tested. Weight 10 obtained the
-best mean postselected BIC and is frozen.
+For DAGMA-NOTREKS, weights 0.3, 3, and 10 were tested. The matched-threshold
+recheck produced mean BIC values `-1248.27`, `-1311.01`, and `-1383.45`,
+respectively. Weight 10 retained the best mean BIC and is frozen. All 15
+thresholded calibration graphs had zero supplied-pair violations; this was
+measured rather than enforced by postselection.
 
 For greedy FLOP-NOTREKS, `(restarts, sweeps)` values `(1,1)`, `(2,1)`, and
 `(2,2)` were tested. `(2,2)` obtained the best mean BIC and is frozen. It is

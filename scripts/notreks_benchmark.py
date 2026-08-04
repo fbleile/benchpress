@@ -16,6 +16,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+try:
+    from scripts.notreks_report import generate_figures, write_report
+except ModuleNotFoundError:  # Direct ``python scripts/notreks_benchmark.py``.
+    from notreks_report import generate_figures, write_report
+
 
 METHOD_IDS = ("flop", "flop_notreks", "dagma", "dagma_notreks")
 DAGMA_DEFAULTS = {
@@ -246,6 +251,17 @@ def collect_results(manifest_path: Path, results_root: Path, output_path: Path) 
 
 def analyse(results_csv: Path, output_dir: Path) -> None:
     frame = pd.read_csv(results_csv)
+    if "oracle_violations" in frame:
+        if "num_mi_violations" not in frame:
+            frame["num_mi_violations"] = frame["oracle_violations"]
+        else:
+            frame["num_mi_violations"] = frame[
+                "num_mi_violations"].fillna(frame["oracle_violations"])
+    if ("mi_violation_fraction" not in frame
+            and {"num_mi_violations", "num_supplied_mi_pairs"}.issubset(
+                frame.columns)):
+        denominator = frame["num_supplied_mi_pairs"].replace(0, np.nan)
+        frame["mi_violation_fraction"] = frame["num_mi_violations"] / denominator
     for column in ("SHD_cpdag", "SHD_pattern", "SHD_skel", "time",
                    "TP_pattern", "FP_pattern", "FN_pattern",
                    "TP_skel", "FP_skel", "FN_skel", "num_mi_violations",
@@ -260,8 +276,7 @@ def analyse(results_csv: Path, output_dir: Path) -> None:
             frame[f"F1_{suffix}"] = (2 * precision * recall /
                                       (precision + recall)).fillna(0.0)
     method_column = next((column for column in ("id", "algorithm")
-                          if column in frame and set(METHOD_IDS).issubset(
-                              set(frame[column]))), None)
+                          if column in frame), None)
     if method_column is None:
         raise ValueError("cannot identify a method-ID column containing all four methods")
     seed_columns = [name for name in ("scenario", "model", "graph", "d", "n",
@@ -269,6 +284,15 @@ def analyse(results_csv: Path, output_dir: Path) -> None:
     required = set(METHOD_IDS)
     if not required.issubset(set(frame[method_column])):
         raise ValueError(f"results are missing methods {sorted(required - set(frame[method_column]))}")
+    grouped_methods = frame.groupby(seed_columns, dropna=False)[
+        method_column].agg(list)
+    invalid = grouped_methods[grouped_methods.map(
+        lambda values: len(values) != len(required) or set(values) != required)]
+    if len(invalid):
+        raise ValueError(
+            f"{len(invalid)} dataset rows do not contain each benchmark "
+            "method exactly once; analysis aborted rather than reporting an "
+            "incomplete cluster run")
     output_dir.mkdir(parents=True, exist_ok=True)
     pairs = []
     for baseline, constrained in (("flop", "flop_notreks"),
@@ -307,15 +331,8 @@ def analyse(results_csv: Path, output_dir: Path) -> None:
         ["mean", "std", "median", "count"]).to_csv(
             output_dir / "algorithm_summary.csv")
     _factor_and_causal_analysis(paired, output_dir)
-    (output_dir / "REPORT.md").write_text(
-        "# Paired NOTREKS benchmark\n\n"
-        "Only matched FLOP/FLOP+NOTREKS and DAGMA/DAGMA+NOTREKS contrasts "
-        "are summarized. Negative SHD deltas and positive F1 deltas favour "
-        "the constrained method. `notreks_num_mi_violations` and "
-        "`notreks_mi_violation_fraction` report residual violations after "
-        "the same fixed threshold used by vanilla DAGMA; zero violations "
-        "are no longer enforced by DAGMA+NOTREKS postselection.\n\n"
-        + _markdown(summary) + "\n")
+    figures = generate_figures(frame, paired, output_dir)
+    write_report(frame, paired, output_dir, figures)
     print((output_dir / "REPORT.md").read_text())
 
 

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from scripts.notreks_benchmark import analyse, compile_configs
-from scripts.tune_notreks_smoke import dataset, postselect
+from scripts.tune_notreks_smoke import dataset
 from workflow.rules.structure_learning_algorithms.dagma.shared import SharedDagmaLinear
 from workflow.rules.structure_learning_algorithms.dagma.knowledge import no_trek_pairs_from_dag
 from workflow.rules.structure_learning_algorithms.dagma_notreks.tools.local_smoke import _metrics
@@ -74,7 +74,9 @@ def run(output_dir: Path) -> None:
         data.copy(), no_trek_pairs=pairs,
         trek_weight=float(calibration["dagma_trek_weight"]),
         trek_function="inv", trek_kernel="fast", **fit)
-    estimates["dagma_notreks"], _, _ = postselect(data, weighted_nt, pairs)
+    estimates["dagma_notreks"] = (
+        np.abs(weighted_nt) >= .30).astype(np.uint8)
+    np.fill_diagonal(estimates["dagma_notreks"], 0)
     runtime["dagma_notreks"] = time.perf_counter() - started
 
     rows = []
@@ -91,9 +93,12 @@ def run(output_dir: Path) -> None:
             "id": method, "algorithm": method, "time": runtime[method],
             "num_oracle_mi_pairs": number_of_oracle_pairs,
             "num_supplied_mi_pairs": len(pairs) if constrained else 0,
-            "oracle_violations": (
+            "num_mi_violations": (
                 count_no_trek_violations(adjacency, pairs)
                 if constrained else np.nan),
+            "mi_violation_fraction": (
+                count_no_trek_violations(adjacency, pairs) / len(pairs)
+                if constrained and pairs else np.nan),
             **metrics,
         })
     results = output_dir / "all_runs.csv"
@@ -101,7 +106,7 @@ def run(output_dir: Path) -> None:
     analyse(results, output_dir / "analysis")
     print(pd.DataFrame(rows)[[
         "id", "SHD_cpdag", "SHD_pattern", "F1_pattern", "time",
-        "oracle_violations"]].to_string(index=False))
+        "num_mi_violations"]].to_string(index=False))
 
 
 def main():

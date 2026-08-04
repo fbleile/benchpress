@@ -14,9 +14,6 @@ import pandas as pd
 from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import gaussian_bic
 from workflow.rules.structure_learning_algorithms.dagma.knowledge import no_trek_pairs_from_dag
 from workflow.rules.structure_learning_algorithms.dagma.shared import SharedDagmaLinear
-from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
-    LinearCandidateScorer, PostselectionConfig, select_postselection_candidate,
-)
 from workflow.rules.structure_learning_algorithms.flop_notreks.adapter import (
     count_no_trek_violations, selected_dag_from_diagnostics,
 )
@@ -49,18 +46,11 @@ def dataset(seed: int, d: int = 20, n: int = 200):
 
 
 def postselect(data, weighted, pairs):
-    scorer = LinearCandidateScorer(data, regularizer_type="L1",
-                                   regularizer_weight=0.03)
-    result = select_postselection_candidate(
-        weighted, scorer=scorer,
-        config=PostselectionConfig(
-            policy="PS5_fixed_threshold_joint_feasible",
-            candidate_edge_pool="fixed_threshold", fixed_threshold=.30,
-            dag_constraint_active=True,
-            notreks_constraint_active=bool(pairs)),
-        model_class="linear_dagma", notreks_pairs=pairs)
-    bic, _ = gaussian_bic(data, result.adjacency, lambda_bic=2.0)
-    return result.adjacency, float(bic), result
+    """Apply the same fixed threshold used by both benchmark DAGMA arms."""
+    graph = (np.abs(np.asarray(weighted)) >= .30).astype(np.uint8)
+    np.fill_diagonal(graph, 0)
+    bic, _ = gaussian_bic(data, graph, lambda_bic=2.0)
+    return graph, float(bic), None
 
 
 def truth_metrics(truth, estimate):
@@ -167,7 +157,7 @@ def run(output_dir: Path, write_defaults: Path | None = None):
         ["successful_seeds", "mean_bic", "median_bic", "mean_runtime"],
         ascending=[False, True, True, True]).iloc[0]
     chosen = {
-        "selection_rule": "lowest mean postprocessed Gaussian BIC among zero-violation runs",
+        "selection_rule": "lowest mean fixed-threshold Gaussian BIC among zero-violation runs",
         "dagma_trek_weight": float(dagma_choice.setting.split("=")[1]),
         "flop_notreks_restarts": int(
             flop_choice.setting.split(",")[0].split("=")[1]),

@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from scripts.notreks_benchmark import (
     METHOD_IDS, analyse, benchpress_config, collect_results, compile_configs,
@@ -96,6 +97,10 @@ def test_analysis_only_builds_requested_paired_comparisons(tmp_path: Path):
     assert set(paired.notreks_num_mi_violations) == {0}
     assert set(paired.notreks_mi_violation_fraction) == {0.0}
     assert (tmp_path / "analysis/algorithm_summary.csv").exists()
+    assert (tmp_path / "analysis/figures/paired_cpdag_shd_change.png").exists()
+    report = (tmp_path / "analysis/REPORT.md").read_text()
+    assert "Immediate interpretation" in report
+    assert "wins/ties/losses" in report
     assert (tmp_path / "analysis/factor_effects.csv").exists()
     assert (tmp_path / "analysis/causal_estimand.dot").exists()
 
@@ -114,3 +119,14 @@ def test_collect_joins_scenario_metadata(tmp_path: Path):
     row = pd.read_csv(output).iloc[0]
     assert row.scenario == "scenario-a"
     assert row.knowledge_fraction == .1
+
+
+def test_analysis_rejects_incomplete_dataset_rows(tmp_path: Path):
+    source = tmp_path / "incomplete.csv"
+    pd.DataFrame([
+        {"scenario": "one", "seed": 1, "algorithm": method,
+         "SHD_cpdag": index}
+        for index, method in enumerate(METHOD_IDS[:-1])
+    ]).to_csv(source, index=False)
+    with pytest.raises(ValueError, match="missing methods|exactly once"):
+        analyse(source, tmp_path / "analysis")
