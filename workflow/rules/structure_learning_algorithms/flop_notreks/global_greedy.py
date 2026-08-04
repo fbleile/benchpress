@@ -1,9 +1,9 @@
 """FLOP-style order reinsertion with a hard-NOTREKS global greedy inner loop.
 
-This diagnostic/paper comparator reuses FLOP's outer idea, but deliberately
-scores complete graphs and routes every edge move through exact discrete DAG
-and NOTREKS feasibility. It does not use graph truth or a decomposable-score
-shortcut for selection.
+This diagnostic/paper comparator reuses FLOP's outer idea and scores complete
+graphs under exact discrete DAG and NOTREKS feasibility. Gaussian BIC is
+decomposable, so the implementation caches exact node-local scores while
+retaining the same graph-level acceptance objective and deterministic ties.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from time import perf_counter
 from typing import Sequence
 
 import numpy as np
+import scipy.linalg as sla
 
 from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.feasibility import (
     CompositeFeasibility,
@@ -40,6 +41,8 @@ class GlobalGreedyResult:
     restart: int
     runtime_seconds: float
     graph_score_evaluations: int
+    local_score_cache_misses: int
+    full_feasibility_evaluations: int
     feasibility_rejections: int
     accepted_edge_moves: int
     accepted_reinsertions: int
@@ -63,6 +66,91 @@ def _reinsert(order: Sequence[int], node: int, position: int) -> list[int]:
     return candidate
 
 
+class _LocalGaussianBIC:
+    """Exact cached local scores matching the graph-level BIC convention."""
+
+    def __init__(self, data: np.ndarray, lambda_bic: float):
+        self.data = data - data.mean(axis=0, keepdims=True)
+        self.n = len(data)
+        self.penalty = float(lambda_bic) * np.log(self.n)
+        self.cache: dict[tuple[int, tuple[int, ...]], float] = {}
+        self.cache_misses = 0
+
+    def score(self, child: int, parents: Sequence[int]) -> float:
+        key = (int(child), tuple(sorted(map(int, parents))))
+        if key not in self.cache:
+            parent_array = np.asarray(key[1], dtype=int)
+            if len(parent_array):
+                beta, *_ = sla.lstsq(
+                    self.data[:, parent_array], self.data[:, child],
+                    lapack_driver="gelsy")
+                residual = (self.data[:, child]
+                            - self.data[:, parent_array] @ beta)
+            else:
+                residual = self.data[:, child]
+            variance = max(
+                float(residual @ residual) / self.n, 1e-8)
+            self.cache[key] = (
+                self.n * np.log(variance) + len(parent_array) * self.penalty)
+            self.cache_misses += 1
+        return self.cache[key]
+
+    def graph_score(self, graph: np.ndarray) -> float:
+        return float(sum(
+            self.score(child, np.flatnonzero(graph[:, child]))
+            for child in range(graph.shape[0])))
+
+
+def _transitive_reach(graph: np.ndarray) -> np.ndarray:
+    reach = np.asarray(graph, dtype=bool).copy()
+    np.fill_diagonal(reach, True)
+    for node in range(len(reach)):
+        reach |= reach[:, [node]] & reach[[node], :]
+    return reach
+
+
+def _addition_violates_notreks(
+    reach: np.ndarray,
+    source: int,
+    target: int,
+    pairs: np.ndarray,
+) -> bool:
+    """Check an order-valid edge addition from the current feasible graph."""
+    if not len(pairs):
+        return False
+    new_ancestors = reach[:, source]
+    for left, right in pairs:
+        left_affected = bool(reach[target, left])
+        right_affected = bool(reach[target, right])
+        if left_affected and right_affected:
+            return True
+        if left_affected and np.any(new_ancestors & reach[:, right]):
+            return True
+        if right_affected and np.any(new_ancestors & reach[:, left]):
+            return True
+    return False
+
+
+def _invalid_notreks_additions(
+    reach: np.ndarray,
+    pairs: np.ndarray,
+) -> np.ndarray:
+    """Return exact invalid ``source -> target`` additions for a feasible DAG."""
+    d = reach.shape[0]
+    invalid = np.zeros((d, d), dtype=bool)
+    if not len(pairs):
+        return invalid
+    # common[i, j] is true exactly when i and j currently share an ancestor.
+    common = (reach.T.astype(np.uint16) @ reach.astype(np.uint16)) > 0
+    for left, right in pairs:
+        left_affected = reach[:, left]
+        right_affected = reach[:, right]
+        invalid |= np.outer(common[:, right], left_affected)
+        invalid |= np.outer(common[:, left], right_affected)
+        invalid[:, left_affected & right_affected] = True
+    return invalid
+
+
 def fit_global_greedy_notreks(
     X: np.ndarray,
     no_trek_pairs: Sequence[tuple[int, int]],
@@ -78,41 +166,50 @@ def fit_global_greedy_notreks(
     constraints = CompositeFeasibility((
         DagConstraint(), NoTreksConstraint(no_trek_pairs)))
     scorer = GaussianBICGraphScore(data, lambda_bic=config.lambda_bic)
-    score_cache: dict[bytes, float] = {}
+    local_scorer = _LocalGaussianBIC(data, config.lambda_bic)
+    canonical_pairs = np.asarray(sorted({
+        tuple(sorted(map(int, pair))) for pair in no_trek_pairs
+    }), dtype=int).reshape(-1, 2)
     score_evaluations = feasibility_rejections = accepted_moves = 0
-
-    def score(graph: np.ndarray) -> float:
-        nonlocal score_evaluations
-        key = np.asarray(graph, dtype=np.uint8).tobytes()
-        if key not in score_cache:
-            score_cache[key] = scorer.score_graph(graph)
-            score_evaluations += 1
-        return score_cache[key]
+    full_feasibility_evaluations = 0
 
     def improve(graph: np.ndarray, order: Sequence[int]):
-        nonlocal feasibility_rejections, accepted_moves
+        nonlocal score_evaluations, feasibility_rejections, accepted_moves
         current = _project_to_order(graph, order)
-        current_score = score(current)
+        current_score = local_scorer.graph_score(current)
         position = np.empty(d, dtype=int)
         position[np.asarray(order, dtype=int)] = np.arange(d)
         edges = [
             (i, j) for i in range(d) for j in range(d)
             if position[i] < position[j]]
         while True:
+            reach = _transitive_reach(current)
+            invalid_additions = _invalid_notreks_additions(
+                reach, canonical_pairs)
             best = (current_score, current.tobytes(), None)
             for i, j in edges:
-                proposal = current.copy()
-                proposal[i, j] ^= 1
-                if not constraints.is_feasible(proposal):
+                adding = not bool(current[i, j])
+                if adding and invalid_additions[i, j]:
                     feasibility_rejections += 1
                     continue
-                value = score(proposal)
+                old_parents = np.flatnonzero(current[:, j])
+                if adding:
+                    new_parents = np.append(old_parents, i)
+                else:
+                    new_parents = old_parents[old_parents != i]
+                value = (current_score
+                         - local_scorer.score(j, old_parents)
+                         + local_scorer.score(j, new_parents))
+                score_evaluations += 1
+                proposal = current.copy()
+                proposal[i, j] ^= 1
                 candidate = (value, proposal.tobytes(), proposal)
                 if candidate[:2] < best[:2]:
                     best = candidate
             if best[2] is None or best[0] >= current_score - 1e-10:
                 return current, current_score
             current, current_score = best[2], best[0]
+            current_score = local_scorer.graph_score(current)
             accepted_moves += 1
 
     rng = np.random.default_rng(config.seed)
@@ -149,13 +246,19 @@ def fit_global_greedy_notreks(
         if winner is None or candidate[:3] < winner[:3]:
             winner = candidate
     assert winner is not None
+    full_feasibility_evaluations += 1
     summary = constraints.violation_summary(winner[3])
     if not summary["feasible"]:
         raise RuntimeError("global greedy returned an infeasible graph")
+    exact_score = scorer.score_graph(winner[3])
+    if not np.isclose(exact_score, winner[0], rtol=1e-10, atol=1e-8):
+        raise RuntimeError("incremental and graph-level Gaussian BIC disagree")
     return GlobalGreedyResult(
-        adjacency=winner[3], score=float(winner[0]), order=winner[4],
+        adjacency=winner[3], score=float(exact_score), order=winner[4],
         restart=int(winner[2]), runtime_seconds=perf_counter() - started,
         graph_score_evaluations=score_evaluations,
+        local_score_cache_misses=local_scorer.cache_misses,
+        full_feasibility_evaluations=full_feasibility_evaluations,
         feasibility_rejections=feasibility_rejections,
         accepted_edge_moves=accepted_moves,
         accepted_reinsertions=accepted_reinsertions,

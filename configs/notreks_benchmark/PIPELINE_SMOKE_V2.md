@@ -15,6 +15,17 @@ feasibility repair or discrete postselection was applied to DAGMA+NOTREKS.
 | DAGMA | 18 | 17 | 0.614 | 0.592 | not constrained |
 | DAGMA + NOTREKS | 11 | 11 | 0.703 | 2.586 | 0 |
 
+## Exact implementation acceleration
+
+The hard-feasible FLOP+NOTREKS inner loop was subsequently accelerated without
+changing its search, Gaussian-BIC objective, deterministic tie-breaking, or
+hard constraints. Exact node-local BIC scores are cached, and invalid NOTREKS
+edge additions are precomputed from the current transitive closure. Repeating
+this same seed and pipeline selected the same perfect graph with zero supplied
+pair violations in **2.180 seconds**, versus **95.704 seconds** above (a
+**43.9x** end-to-end method speedup). The original table is retained as the
+historical pre-optimization result.
+
 The paired CPDAG-SHD changes were `-2` for FLOP+NOTREKS and `-7` for
 DAGMA+NOTREKS. This is a pipeline check on one graph, not a scientific effect
 estimate. Raw local artifacts live under

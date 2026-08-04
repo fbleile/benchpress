@@ -70,7 +70,12 @@ Override scheduler resources with `NOTREKS_CPUS_PER_TASK`, `NOTREKS_MEMORY`,
 NumPy, pandas, and matplotlib. The submission script prints both Slurm job IDs;
 the analysis job has an `afterok` dependency on the complete array.
 
-The `d=100` greedy jobs can be substantially slower than the calibration.
+The FLOP+NOTREKS implementation caches exact node-local Gaussian-BIC scores and
+precomputes hard-NOTREKS-invalid additions from each incumbent's transitive
+closure. This preserves the global greedy search result while avoiding full
+graph refits and feasibility traversals for every one-edge proposal. The
+matched `d=20` pipeline smoke improved from 95.704 to 2.180 seconds. The
+`d=100` greedy jobs can still be substantially slower than the calibration.
 For the frozen ordering, the `d=20` scenarios are array indices
 `0-19,60-79,120-139,180-199,240-259,300-319`; run those first as a staged
 cluster validation before releasing the complete array. Do not infer greedy
