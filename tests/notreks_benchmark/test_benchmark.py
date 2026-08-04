@@ -48,6 +48,9 @@ def test_compiled_config_contains_exactly_four_methods_and_shared_fraction():
     assert algorithms["flop_notreks"][0]["knowledge_fraction"] == .1
     assert algorithms["flop_notreks"][0]["search_strategy"] == "global_greedy"
     assert algorithms["dagma"][0]["T"] == 1
+    assert algorithms["dagma"][0]["w_threshold"] == .3
+    assert algorithms["dagma_notreks"][0]["w_threshold"] == .3
+    assert "postselection_policy" not in algorithms["dagma_notreks"][0]
 
 
 def test_compiler_emits_native_benchpress_cluster_commands(
@@ -77,7 +80,11 @@ def test_analysis_only_builds_requested_paired_comparisons(tmp_path: Path):
         for method, shd in zip(METHOD_IDS, (3, 2, 5, 4)):
             rows.append({"seed": seed, "algorithm": method,
                          "SHD_cpdag": shd + 1, "SHD_pattern": shd,
-                         "F1_pattern": 1 / (1 + shd)})
+                         "F1_pattern": 1 / (1 + shd),
+                         "num_mi_violations": (
+                             0 if method.endswith("notreks") else None),
+                         "mi_violation_fraction": (
+                             0.0 if method.endswith("notreks") else None)})
     source = tmp_path / "results.csv"
     pd.DataFrame(rows).to_csv(source, index=False)
     analyse(source, tmp_path / "analysis")
@@ -86,6 +93,9 @@ def test_analysis_only_builds_requested_paired_comparisons(tmp_path: Path):
         "flop_vs_flop_notreks", "dagma_vs_dagma_notreks"}
     assert set(paired.delta_SHD_pattern) == {-1}
     assert set(paired.delta_SHD_cpdag) == {-1}
+    assert set(paired.notreks_num_mi_violations) == {0}
+    assert set(paired.notreks_mi_violation_fraction) == {0.0}
+    assert (tmp_path / "analysis/algorithm_summary.csv").exists()
     assert (tmp_path / "analysis/factor_effects.csv").exists()
     assert (tmp_path / "analysis/causal_estimand.dot").exists()
 

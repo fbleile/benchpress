@@ -100,6 +100,8 @@ diagnostics.update({
         snakemake.wildcards.get("knowledge_fraction", 1.0)),
     "number_of_supplied_constraints": len(pairs),
     "final_no_trek_violation_count": violations,
+    "fraction_of_oracle_pairs_violated_after_threshold": (
+        violations / len(pairs) if pairs else 0.0),
     "selected_dag_edge_count": int(selected_dag.sum()),
 })
 with open(snakemake.output["diagnostics"], "w", encoding="utf-8") as handle:

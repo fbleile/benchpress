@@ -18,9 +18,10 @@ FLOP-NOTREKS proposal budget in `tuned_hyperparameters.json`; these values are
 then reused across every benchmark scenario.
 
 The primary DAGMA pair intentionally uses the ordinary DAGMA fixed threshold
-of 0.30 in both arms. DAGMA+NOTREKS may make only the deterministic feasibility
-repair required by its active hard constraints. This prevents postselection
-strength from being confounded with the continuous NOTREKS penalty.
+of 0.30 in both arms. DAGMA+NOTREKS performs no feasibility repair or discrete
+search after thresholding. This isolates the continuous NOTREKS penalty from
+postselection strength; residual supplied-pair violation counts and fractions
+are reported as outcomes rather than forced to zero.
 
 ```bash
 PYTHONPATH=. .venv-local-smoke/bin/python scripts/notreks_benchmark.py compile --spec configs/notreks_benchmark/benchmark_grid.json --output-dir configs/notreks_benchmark/generated

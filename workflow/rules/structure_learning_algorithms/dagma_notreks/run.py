@@ -8,8 +8,7 @@ from workflow.rules.structure_learning_algorithms.dagma.knowledge import load_si
 from workflow.rules.structure_learning_algorithms.dagma.shared import SharedDagmaLinear, notreks_value_grad
 from workflow.rules.structure_learning_algorithms.dagma.inverse_structural import lambda1_sqrt_logd_over_n
 from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
-    LinearCandidateScorer, PostselectionConfig, lambda_policy,
-    select_postselection_candidate, standardize_training_data,
+    lambda_policy, standardize_training_data,
 )
 from workflow.rules.structure_learning_algorithms.notreks import subsample_no_trek_pairs
 
@@ -69,7 +68,7 @@ elif lambda1_scaling == "sqrt_logd_over_n":
 else:
     raise ValueError("lambda1_scaling must be fixed or sqrt_logd_over_n")
 fit_args = dict(
-    lambda1=lambda1, w_threshold=0.0,
+    lambda1=lambda1, w_threshold=threshold,
     T=int(value("T", 5)), mu_init=float(value("mu_init", 1.0)),
     mu_factor=float(value("mu_factor", .1)),
     s=[float(x) for x in str(value("s", "1.0,0.9,0.8,0.7,0.6")).split(",")],
@@ -97,43 +96,13 @@ fit_args = dict(
 )
 model = SharedDagmaLinear(str(value("loss_type", "l2")))
 start = time.perf_counter()
-W = model.fit(df.to_numpy(dtype=float), **fit_args)
+W = model.fit(df.to_numpy(dtype=float, copy=True), **fit_args)
 elapsed = time.perf_counter() - start
 raw_scaled, _ = notreks_value_grad(
     W, pairs, fit_args["trek_function"], log_terms=fit_args["trek_log_terms"],
     inverse_epsilon=fit_args["trek_inverse_epsilon"])
-postselection_policy = str(value(
-    "postselection_policy", "PS1_joint_feasible_greedy_score"))
-threshold_grid = value("threshold_grid", [.01, .03, .05, .10, .20, .30])
-if isinstance(threshold_grid, str):
-    threshold_grid = json.loads(threshold_grid) if threshold_grid.startswith(
-        "[") else [float(item) for item in threshold_grid.split(",")]
-scorer = LinearCandidateScorer(
-    df.to_numpy(dtype=float),
-    regularizer_type=str(value("regularizer_type", "L1")),
-    regularizer_weight=lambda1)
-postselection = select_postselection_candidate(
-    W, scorer=scorer,
-    config=PostselectionConfig(
-        policy=postselection_policy,
-        candidate_edge_pool=str(value(
-            "candidate_edge_pool", "threshold_grid")),
-        threshold_grid=tuple(float(item) for item in threshold_grid),
-        fixed_threshold=float(value("fixed_threshold", threshold)),
-        max_search_seconds=float(value("max_search_seconds", 1.0)),
-        max_expanded_nodes=int(value("max_expanded_nodes", 1000)),
-        max_queue_size=int(value("max_queue_size", 1000)),
-        max_ambiguous_edges=int(value("max_ambiguous_edges", 20)),
-        max_indegree=(
-            None if value("max_indegree", None) is None
-            else int(value("max_indegree", None))),
-        dag_constraint_active=str(value(
-            "dag_constraint_active", "true")).lower() == "true",
-        notreks_constraint_active=(
-            str(value("notreks_constraint_active", "true")).lower() == "true"
-            and bool(pairs))),
-    model_class="linear_dagma", notreks_pairs=pairs)
-A = postselection.adjacency
+A = (np.abs(W) >= threshold).astype(int)
+np.fill_diagonal(A, 0)
 after_scaled, _ = notreks_value_grad(A.astype(float), pairs, fit_args["trek_function"],
                                      log_terms=fit_args["trek_log_terms"],
                                      inverse_epsilon=fit_args["trek_inverse_epsilon"])
@@ -161,8 +130,13 @@ diagnostics = {
     "lambda1_requested": lambda1_requested,
     "lambda1_multiplier": lambda1_multiplier,
     "lambda1_effective": lambda1,
-    "regularizer_type": scorer.regularizer_type,
-    "postselection": postselection.to_row(),
+    "regularizer_type": str(value("regularizer_type", "L1")),
+    "postselection": {
+        "policy": "fixed_weight_threshold",
+        "threshold": threshold,
+        "matches_vanilla_dagma": True,
+        "hard_feasibility_enforced": False,
+    },
     "input_column_mean_max_abs_before_standardization": float(np.max(np.abs(data_means.to_numpy(dtype=float)))),
     "input_column_std_min_before_standardization": float(np.min(data_stds.to_numpy(dtype=float))),
     "input_column_std_max_before_standardization": float(np.max(data_stds.to_numpy(dtype=float))),

@@ -61,7 +61,7 @@ kwargs = dict(
 )
 start = time.perf_counter()
 model = SharedDagmaLinear(str(_value("loss_type", "l2")))
-W = model.fit(df.to_numpy(dtype=float), **kwargs)
+W = model.fit(df.to_numpy(dtype=float, copy=True), **kwargs)
 elapsed = time.perf_counter() - start
 pd.DataFrame((W != 0).astype(int), columns=df.columns).to_csv(snakemake.output["adjmat"], index=False)
 with open(snakemake.output["time"], "w") as handle:

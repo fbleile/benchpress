@@ -96,11 +96,6 @@ def _algorithms(scenario: dict, defaults: dict, smoke: bool) -> dict:
         "trek_kernel": "fast", "trek_weight": defaults["dagma_trek_weight"],
         "trek_log_terms": 2 * int(scenario["d"]),
         "trek_inverse_epsilon": 1e-8,
-        "postselection_policy": "PS5_fixed_threshold_joint_feasible",
-        "candidate_edge_pool": "fixed_threshold",
-        "fixed_threshold": 0.30,
-        "dag_constraint_active": True,
-        "notreks_constraint_active": True,
     }
     flop_restarts = 2 if smoke else int(defaults["flop_restarts"])
     flop_notreks_restarts = (1 if smoke else int(
@@ -229,6 +224,12 @@ def collect_results(manifest_path: Path, results_root: Path, output_path: Path) 
                     "num_supplied_mi_pairs": payload.get(
                         "number_of_supplied_constraints",
                         payload.get("number_of_no_trek_pairs")),
+                    "num_mi_violations": payload.get(
+                        "final_no_trek_violation_count",
+                        payload.get(
+                            "number_of_oracle_pairs_violated_after_threshold")),
+                    "mi_violation_fraction": payload.get(
+                        "fraction_of_oracle_pairs_violated_after_threshold"),
                 })
         if diagnostics and {"id", "seed"}.issubset(frame.columns):
             frame = frame.merge(pd.DataFrame(diagnostics).drop_duplicates(
@@ -247,7 +248,8 @@ def analyse(results_csv: Path, output_dir: Path) -> None:
     frame = pd.read_csv(results_csv)
     for column in ("SHD_cpdag", "SHD_pattern", "SHD_skel", "time",
                    "TP_pattern", "FP_pattern", "FN_pattern",
-                   "TP_skel", "FP_skel", "FN_skel"):
+                   "TP_skel", "FP_skel", "FN_skel", "num_mi_violations",
+                   "mi_violation_fraction"):
         if column in frame:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     for suffix in ("pattern", "skel"):
@@ -280,21 +282,40 @@ def analyse(results_csv: Path, output_dir: Path) -> None:
             if lhs in merged and rhs in merged:
                 merged[f"delta_{metric}"] = merged[rhs] - merged[lhs]
         merged["comparison"] = f"{baseline}_vs_{constrained}"
+        for metric in ("num_mi_violations", "mi_violation_fraction"):
+            constrained_column = f"{metric}_notreks"
+            if constrained_column in merged:
+                merged[f"notreks_{metric}"] = merged[constrained_column]
         pairs.append(merged)
     paired = pd.concat(pairs, ignore_index=True)
     paired.to_csv(output_dir / "paired_per_dataset.csv", index=False)
-    delta_columns = [column for column in paired if column.startswith("delta_")]
+    delta_columns = [column for column in paired if (
+        column.startswith("delta_") or column.startswith("notreks_num_mi_")
+        or column.startswith("notreks_mi_violation_"))]
     group_columns = ["comparison"] + [name for name in (
         "model", "graph", "d", "n", "knowledge_fraction") if name in paired]
     summary = paired.groupby(group_columns, dropna=False)[delta_columns].agg(
         ["mean", "std", "median", "count"])
     summary.to_csv(output_dir / "paired_summary.csv")
+    aggregate_metrics = [metric for metric in (
+        "SHD_cpdag", "SHD_pattern", "F1_pattern", "SHD_skel", "F1_skel",
+        "time", "num_mi_violations", "mi_violation_fraction")
+        if metric in frame]
+    algorithm_groups = [method_column] + [name for name in (
+        "model", "graph", "d", "n", "knowledge_fraction") if name in frame]
+    frame.groupby(algorithm_groups, dropna=False)[aggregate_metrics].agg(
+        ["mean", "std", "median", "count"]).to_csv(
+            output_dir / "algorithm_summary.csv")
     _factor_and_causal_analysis(paired, output_dir)
     (output_dir / "REPORT.md").write_text(
         "# Paired NOTREKS benchmark\n\n"
         "Only matched FLOP/FLOP+NOTREKS and DAGMA/DAGMA+NOTREKS contrasts "
         "are summarized. Negative SHD deltas and positive F1 deltas favour "
-        "the constrained method.\n\n" + _markdown(summary) + "\n")
+        "the constrained method. `notreks_num_mi_violations` and "
+        "`notreks_mi_violation_fraction` report residual violations after "
+        "the same fixed threshold used by vanilla DAGMA; zero violations "
+        "are no longer enforced by DAGMA+NOTREKS postselection.\n\n"
+        + _markdown(summary) + "\n")
     print((output_dir / "REPORT.md").read_text())
 
 
