@@ -20,7 +20,13 @@ configfilename = "config/config.json"
 i = 0
 for arg in args:
     if arg == "--configfile" or arg == "--configfiles":  # This is strange
-        configfilename = args[i + 1]
+        supplied_config = args[i + 1]
+        # Keep configfile usable for Snakemake while ensuring downstream
+        # output patterns never embed an absolute login-node path.
+        configfilename = (
+            os.path.relpath(supplied_config, os.getcwd())
+            if os.path.isabs(supplied_config) else supplied_config
+        )
         break
     i += 1
 
