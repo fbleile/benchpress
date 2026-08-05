@@ -10,7 +10,7 @@ rule sample_fixed_sem_params_data_gcastle:
         data="{output_dir}/data/" \
              "adjmat=/{adjmat}/" \
              "parameters=/{bn}/" \
-             "data=/"+pattern_strings["gcastle_iidsim"] + "/" \
+             "data=/"+pattern_strings["gcastle_iidsim"] + "/standardized={standardized}/" \
              "seed={seed}.csv"
     wildcard_constraints:
         n="[0-9]*",
@@ -29,7 +29,7 @@ rule gcastle_iidsim:
         data="{output_dir}/data" \
             "/adjmat=/{adjmat}"\
             "/parameters=/{params}/" \
-            "data=/"+pattern_strings["gcastle_iidsim"] + "/" \
+            "data=/"+pattern_strings["gcastle_iidsim"] + "/standardized={standardized}/" \
             "seed={seed}.csv"
     wildcard_constraints:
         n="[0-9]*",

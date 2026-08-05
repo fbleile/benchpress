@@ -19,6 +19,13 @@ done
 if command -v snakemake >/dev/null 2>&1; then
   if [[ "${NOTREKS_CONTAINER_MODE:-auto}" == "host" ]]; then
     echo "container_mode=host"
+    if python -c 'import dagma' >/dev/null 2>&1; then
+      echo "dagma_python=available"
+    else
+      echo "MISSING: Python package dagma (required for host-mode DAGMA rules)" >&2
+      echo "Install dagma==1.1.1 in the selected environment or use a reachable DAGMA container." >&2
+      missing=1
+    fi
   else
     HELP="$(snakemake --help 2>&1)"
     if grep -q -- '--use-apptainer' <<<"$HELP"; then

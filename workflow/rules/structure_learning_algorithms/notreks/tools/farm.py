@@ -199,7 +199,10 @@ def run_task(
     if container_flag:
         command.append(container_flag)
     command.extend([
-        "--nolock", "--rerun-incomplete", "--snakefile", "workflow/Snakefile",
+        "--nolock", "--drop-metadata", "--persistence-backend", "db",
+        "--persistence-backend-db-url", "sqlite:///.snakemake/metadata.db",
+        "--rerun-incomplete",
+        "--snakefile", "workflow/Snakefile",
         "--configfile", str(config),
     ])
     env = os.environ.copy()
