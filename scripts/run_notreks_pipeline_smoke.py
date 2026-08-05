@@ -85,20 +85,20 @@ def run(output_dir: Path) -> None:
         metric_path = output_dir / f"{method}_metrics.csv"
         pd.DataFrame(adjacency, columns=names).to_csv(estimate_path, index=False)
         metrics = _metrics(true_path, estimate_path, metric_path)
-        constrained = method.endswith("notreks")
+        # Evaluate the same supplied no-trek knowledge for every method.  The
+        # vanilla arms do not use the pairs during optimization, but their
+        # post-hoc violation count is scientifically important rather than
+        # missing data.
+        violations = count_no_trek_violations(adjacency, pairs)
         rows.append({
             "scenario": "pipeline-smoke-v1", "model": "linear_gaussian",
             "graph": "er2", "d": 20, "n": 200,
             "knowledge_fraction": .25, "seed": 9201,
             "id": method, "algorithm": method, "time": runtime[method],
             "num_oracle_mi_pairs": number_of_oracle_pairs,
-            "num_supplied_mi_pairs": len(pairs) if constrained else 0,
-            "num_mi_violations": (
-                count_no_trek_violations(adjacency, pairs)
-                if constrained else np.nan),
-            "mi_violation_fraction": (
-                count_no_trek_violations(adjacency, pairs) / len(pairs)
-                if constrained and pairs else np.nan),
+            "num_supplied_mi_pairs": len(pairs),
+            "num_mi_violations": violations,
+            "mi_violation_fraction": violations / len(pairs) if pairs else 0.0,
             **metrics,
         })
     results = output_dir / "all_runs.csv"
