@@ -1,58 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir="${NOTREKS_REPO_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-spec="${1:-$repo_dir/configs/notreks_benchmark/large_benchmark_v1.json}"
-generated="${2:-$repo_dir/configs/notreks_benchmark/generated_v1}"
-output_dir="${3:-$repo_dir/results/dagma_notreks_oracle/main_benchmark}"
-python_bin="${NOTREKS_PYTHON:-python}"
-
-cd "$repo_dir"
-export PYTHONPATH="$repo_dir${PYTHONPATH:+:$PYTHONPATH}"
-command -v sbatch >/dev/null || {
-  echo "sbatch is required to submit the cluster benchmark" >&2
-  exit 2
-}
-"$python_bin" -c 'import numpy, pandas, matplotlib' || {
-  echo "NOTREKS_PYTHON must provide NumPy, pandas, and matplotlib" >&2
-  exit 2
-}
-"$python_bin" scripts/notreks_benchmark.py compile \
-  --spec "$spec" --output-dir "$generated"
-
-command_file="$generated/commands.txt"
-manifest="$generated/scenario_manifest.csv"
-mkdir -p "$output_dir/logs"
-row_count="$(wc -l < "$command_file" | tr -d ' ')"
-if [[ "$row_count" -lt 1 ]]; then
-  echo "No benchmark scenarios were generated" >&2
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG="${1:?usage: $0 CONFIG RUN_DIR [MANIFEST]}"
+RUN_DIR="${2:?usage: $0 CONFIG RUN_DIR [MANIFEST]}"
+MANIFEST="${3:-${MANIFEST:-}}"
+export REPO_DIR CONFIG RUN_DIR MANIFEST
+bash "$REPO_DIR/scripts/check_notreks_cluster_environment.sh" "$CONFIG"
+mkdir -p "$REPO_DIR/$RUN_DIR/logs/slurm"
+cluster="${NOTREKS_CLUSTER:-serial}"
+partition="${NOTREKS_PARTITION:-serial_std}"
+if [[ "$cluster:$partition" == "serial:cm4_std" ]]; then
+  echo "invalid resource pair: cm4_std belongs to cluster cm4" >&2
   exit 2
 fi
-
-array_max=$((row_count - 1))
-echo "Submitting $row_count native Benchpress scenarios (array 0-$array_max)."
-echo "Each task uses workflow/Snakefile with Apptainer; completed Snakemake outputs are resumable."
-array_job="$(sbatch --parsable \
-  --job-name=notreks-benchmark \
-  --output="$output_dir/logs/benchpress_%A_%a.out" \
-  --array="0-$array_max" \
-  --cpus-per-task="${NOTREKS_CPUS_PER_TASK:-4}" \
-  --mem="${NOTREKS_MEMORY:-16G}" \
-  --time="${NOTREKS_TIME_LIMIT:-2-00:00:00}" \
-  scripts/run_notreks_cluster_array.sh "$command_file")"
-array_job="${array_job%%;*}"
-
-analysis_job="$(sbatch --parsable \
-  --job-name=notreks-analysis \
-  --output="$output_dir/logs/analysis_%j.out" \
-  --dependency="afterok:$array_job" \
-  --cpus-per-task=1 \
-  --mem="${NOTREKS_ANALYSIS_MEMORY:-16G}" \
-  --time="${NOTREKS_ANALYSIS_TIME_LIMIT:-02:00:00}" \
-  scripts/run_notreks_cluster_finalize.sh \
-  "$manifest" "$repo_dir/results/output" "$output_dir")"
-analysis_job="${analysis_job%%;*}"
-
-printf 'Benchmark array job: %s\nAnalysis job: %s (runs automatically after success)\n' \
-  "$array_job" "$analysis_job"
-printf 'Final report: %s/analysis/REPORT.md\n' "$output_dir"
+qos_args=()
+if [[ "$cluster:$partition" == "serial:serial_long" ]]; then qos_args+=(--qos=cm4_serial_long); fi
+export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-16}"
+if [[ -z "${ANALYSIS_COMMAND:-}" ]]; then
+  config_name="$(basename "$CONFIG" .json)"
+  config_name="${config_name#selected_}"
+  config_name="${config_name%_config}"
+  ANALYSIS_COMMAND="python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py analyze-benchmark --tag '$config_name' --output-dir '$REPO_DIR/$RUN_DIR/analysis'"
+fi
+export ANALYSIS_COMMAND
+if [[ "${NOTREKS_DRY_RUN:-0}" == "1" ]]; then
+  export PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}"
+  dry_args=(--repo "$REPO_DIR" --run-dir "$RUN_DIR" --config "$CONFIG" --workers "$SNAKEMAKE_CORES" --dry-run)
+  if [[ -n "$MANIFEST" ]]; then dry_args+=(--manifest "$MANIFEST"); fi
+  python "$REPO_DIR/workflow/rules/structure_learning_algorithms/notreks/tools/farm.py" "${dry_args[@]}"
+  exit 0
+fi
+echo "Submitting one driver allocation: cluster=$cluster partition=$partition workers=$SNAKEMAKE_CORES"
+job_id="$(sbatch --parsable --clusters="$cluster" --partition="$partition" "${qos_args[@]}" \
+  --cpus-per-task="$SNAKEMAKE_CORES" --mem="${NOTREKS_MEMORY:-64G}" \
+  --time="${NOTREKS_TIME_LIMIT:-24:00:00}" --export=ALL \
+  -o "$REPO_DIR/$RUN_DIR/logs/slurm/%x-%j.out" -e "$REPO_DIR/$RUN_DIR/logs/slurm/%x-%j.err" \
+  "$REPO_DIR/workflow/rules/structure_learning_algorithms/notreks/slurm/notreks_driver_farm.sh")"
+job_id="${job_id%%;*}"
+printf '%s\n' "$job_id" > "$REPO_DIR/$RUN_DIR/driver_job_id"
+echo "driver_job_id=$job_id"
+echo "status: bash scripts/notreks_farm_status.sh $RUN_DIR"
+echo "cancel: bash scripts/notreks_farm_cancel.sh $RUN_DIR"
