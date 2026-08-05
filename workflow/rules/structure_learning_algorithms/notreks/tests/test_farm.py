@@ -6,6 +6,7 @@ from pathlib import Path
 
 from workflow.rules.structure_learning_algorithms.notreks.tools.farm import (
     choose_container_flag,
+    classify,
     run_task,
     task_rows,
     validate_cpdag_config,
@@ -130,3 +131,9 @@ def test_isolated_task_has_private_workspace_and_workflow(tmp_path: Path) -> Non
     assert result["status"] == "success"
     assert (workspace / "pwd.txt").is_file()
     assert (workspace / "workflow").is_symlink()
+
+
+def test_resource_class_reads_graph_dimension(tmp_path: Path) -> None:
+    config = tmp_path / "config.json"
+    config.write_text('{"resources": {"graph": {"gcastle_dag": [{"n_nodes": 100}]}}}')
+    assert classify(config, None) == ("medium", 7200)

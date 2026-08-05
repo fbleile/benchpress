@@ -171,7 +171,10 @@ def classify(config_path: Path, explicit: str | None) -> tuple[str, int]:
     try:
         config = json.loads(config_path.read_text())
         text = json.dumps(config)
-        dims = [int(x) for x in re.findall(r'"d"\s*:\s*(\d+)', text)]
+        # Generated Benchpress configs encode dimension as ``n_nodes`` in the
+        # graph resource rather than as a top-level ``d`` field.
+        dims = [int(x) for x in re.findall(
+            r'"(?:d|n_nodes)"\s*:\s*(\d+)', text)]
         d = max(dims, default=20)
     except (OSError, ValueError, json.JSONDecodeError):
         d = 20
