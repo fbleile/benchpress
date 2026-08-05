@@ -209,13 +209,28 @@ def run_task(
     force: bool = False,
     *,
     snakemake_command: list[str] | None = None,
+    isolate: bool = False,
 ) -> dict:
     task_id = row["task_id"]
     task_dir = run_dir / "tasks" / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     status_path = task_dir / "status.json"
     old = _task_status(run_dir, row)
-    expected = _path(repo, run_dir, row.get("expected_output", "")) if row.get("expected_output") else None
+    workspace = task_dir / "workspace" if isolate else repo
+    workspace.mkdir(parents=True, exist_ok=True)
+    if isolate:
+        # The workflow uses repository-relative includes and output paths.  A
+        # per-task checkout would be wasteful; this symlink gives Snakemake
+        # the same layout while keeping every task's results and metadata
+        # completely separate.
+        workflow_link = workspace / "workflow"
+        if not workflow_link.exists():
+            workflow_link.symlink_to(repo / "workflow", target_is_directory=True)
+    expected = (
+        (workspace / row["expected_output"])
+        if isolate and row.get("expected_output") and not Path(row["expected_output"]).is_absolute()
+        else (_path(repo, run_dir, row.get("expected_output", "")) if row.get("expected_output") else None)
+    )
     if not force and old and old.get("status") == "success" and (expected is None or expected.is_file()):
         return old
     config = _path(repo, run_dir, row["config_path"])
@@ -234,7 +249,7 @@ def run_task(
     # SQLite persistence avoids long metadata filenames on newer Snakemake,
     # but Snakemake 7.32 (the LRZ installation) has no such option.
     if supports_option(snakemake, "--persistence-backend"):
-        metadata_db = run_dir / "snakemake_metadata.db"
+        metadata_db = task_dir / "snakemake_metadata.db"
         command.extend([
             "--persistence-backend", "db",
             "--persistence-backend-db-url", f"sqlite:///{metadata_db}",
@@ -248,9 +263,9 @@ def run_task(
     # directory.  Shared login-node caches can be read-only or owned by a
     # different environment, which otherwise makes every task fail before
     # the workflow is parsed.
-    cache_dir = run_dir / "cache"
-    tmp_dir = run_dir / "tmp"
-    mpl_dir = run_dir / "mplconfig"
+    cache_dir = task_dir / "cache"
+    tmp_dir = task_dir / "tmp"
+    mpl_dir = task_dir / "mplconfig"
     cache_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     mpl_dir.mkdir(parents=True, exist_ok=True)
@@ -262,7 +277,7 @@ def run_task(
     result = dict(running, command=command, timeout_seconds=timeout)
     try:
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
-            completed = subprocess.run(command, cwd=repo, env=env, stdout=out, stderr=err,
+            completed = subprocess.run(command, cwd=workspace, env=env, stdout=out, stderr=err,
                                        text=True, timeout=timeout)
         if completed.returncode != 0:
             result.update(status="failed", exit_code=completed.returncode)
@@ -325,6 +340,7 @@ def run_farm(args: argparse.Namespace) -> int:
         "python": args.python or sys.executable,
         "resource_class": args.resource_class or "auto", "task_count": len(rows),
         "output_graph_type": "cpdag",
+        "isolate_tasks": bool(args.isolate_tasks),
     })
     if args.dry_run:
         print(f"dry-run: planned_tasks={len(rows)} workers={workers} per_task_cores=1")
@@ -336,7 +352,11 @@ def run_farm(args: argparse.Namespace) -> int:
     pending = []
     for row in rows:
         status = _task_status(run_dir, row)
-        expected = _path(repo, run_dir, row.get("expected_output", "")) if row.get("expected_output") else None
+        expected = (
+            (run_dir / "tasks" / row["task_id"] / "workspace" / row["expected_output"])
+            if args.isolate_tasks and row.get("expected_output") and not Path(row["expected_output"]).is_absolute()
+            else (_path(repo, run_dir, row.get("expected_output", "")) if row.get("expected_output") else None)
+        )
         if not args.force and status and status.get("status") == "success" and (expected is None or expected.is_file()):
             continue
         pending.append(row)
@@ -349,6 +369,7 @@ def run_farm(args: argparse.Namespace) -> int:
                 classify(_path(repo, run_dir, row["config_path"]), args.resource_class)[1],
                 classify(_path(repo, run_dir, row["config_path"]), args.resource_class)[0],
                 args.force, snakemake_command=snakemake_command,
+                isolate=args.isolate_tasks,
             ): row
             for row in pending
         }
@@ -387,6 +408,10 @@ def main() -> None:
     parser.add_argument("--analysis-command")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--isolate-tasks", action="store_true",
+        help="run each scenario in its own workspace/results/. Required for concurrent cluster workers",
+    )
     args = parser.parse_args()
     raise SystemExit(run_farm(args))
 

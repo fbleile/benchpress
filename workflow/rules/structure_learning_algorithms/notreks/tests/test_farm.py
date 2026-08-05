@@ -110,3 +110,23 @@ def test_task_timeout_is_recorded_and_resume_skips_success(tmp_path: Path) -> No
     second = run_task(tmp_path, tmp_path / "run", row, str(fake), "--use-singularity", 1, "smoke")
     assert second["status"] == "success"
     assert second["start_time"] == first["start_time"]
+
+
+def test_isolated_task_has_private_workspace_and_workflow(tmp_path: Path) -> None:
+    fake = tmp_path / "snakemake"
+    fake.write_text(
+        '#!/bin/sh\n'
+        'if [ "$1" = "--help" ]; then echo "help"; exit 0; fi\n'
+        'printf "%s" "$PWD" > pwd.txt\n'
+    )
+    fake.chmod(0o755)
+    config = tmp_path / "config.json"
+    _config(config)
+    row = {"task_id": "isolated", "config_path": str(config), "expected_output": ""}
+    result = run_task(
+        tmp_path, tmp_path / "run", row, str(fake), "", 10, "smoke", isolate=True
+    )
+    workspace = tmp_path / "run" / "tasks" / "isolated" / "workspace"
+    assert result["status"] == "success"
+    assert (workspace / "pwd.txt").is_file()
+    assert (workspace / "workflow").is_symlink()
