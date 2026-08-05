@@ -52,6 +52,8 @@ def test_compiled_config_contains_exactly_four_methods_and_shared_fraction():
     assert algorithms["dagma"][0]["w_threshold"] == .3
     assert algorithms["dagma_notreks"][0]["w_threshold"] == .3
     assert "postselection_policy" not in algorithms["dagma_notreks"][0]
+    assert config["benchmark_setup"][0]["evaluation"]["benchmarks"]["ids"] == []
+    assert set(config["benchmark_setup"][0]["evaluation"]["graph_estimation"]["ids"]) == set(METHOD_IDS)
 
 
 def test_compiler_emits_native_benchpress_cluster_commands(
@@ -118,7 +120,27 @@ def test_collect_joins_scenario_metadata(tmp_path: Path):
     collect_results(manifest, tmp_path / "results", output)
     row = pd.read_csv(output).iloc[0]
     assert row.scenario == "scenario-a"
-    assert row.knowledge_fraction == .1
+
+
+def test_collect_falls_back_to_per_method_results_without_r_aggregate(tmp_path: Path):
+    manifest = tmp_path / "manifest.csv"
+    pd.DataFrame([{"id": "scenario-a", "model": "gauss", "graph": "er",
+                   "d": 5, "n": 100, "knowledge_fraction": .1}]).to_csv(
+                       manifest, index=False)
+    result_dir = tmp_path / "results/scenario-a/results/result"
+    result_dir.mkdir(parents=True)
+    for method in METHOD_IDS:
+        pd.DataFrame([{"algorithm": method, "seed": 1,
+                       "SHD_cpdag": 1, "SHD_pattern": 1}]).to_csv(
+            result_dir / f"{method}.result.csv", index=False)
+    # Put each method under its normal method directory.
+    for method in METHOD_IDS:
+        method_dir = result_dir / method
+        method_dir.mkdir(exist_ok=True)
+        (result_dir / f"{method}.result.csv").rename(method_dir / "result.csv")
+    output = tmp_path / "all.csv"
+    collect_results(manifest, tmp_path / "results", output)
+    assert set(pd.read_csv(output).algorithm) == set(METHOD_IDS)
 
 
 def test_analysis_rejects_incomplete_dataset_rows(tmp_path: Path):

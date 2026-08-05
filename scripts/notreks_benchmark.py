@@ -11,10 +11,15 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from workflow.rules.structure_learning_algorithms.dagma_notreks.tools.local_smoke import (
+    _python_metrics,
+)
 
 try:
     from scripts.notreks_report import generate_figures, write_report
@@ -148,11 +153,15 @@ def benchpress_config(scenario: dict, defaults: dict, smoke: bool = False) -> di
             "data": [{"graph_id": graph_id, "parameters_id": parameter_id,
                       "data_id": data_id,
                       "seed_range": [min(seeds), max(seeds)]}],
+            # The legacy Benchpress benchmark aggregate invokes an R stack
+            # (rjson/argparser/BiDAG/pcalg).  The NOTREKS farm collects the
+            # Python per-method result.csv files directly, so do not schedule
+            # that optional R aggregate on host-mode cluster nodes.
             "evaluation": {"benchmarks": {
                 "filename_prefix": f"notreks_benchmark/{scenario['id']}/",
                 "show_seed": True, "errorbar": True, "errorbarh": False,
                 "scatter": True, "path": True, "text": False,
-                "ids": list(METHOD_IDS)},
+                "ids": []},
                 "graph_estimation": {
                     "ids": list(METHOD_IDS),
                     "convert_to": ["cpdag"],
@@ -215,11 +224,68 @@ def collect_results(manifest_path: Path, results_root: Path, output_path: Path) 
     for row in manifest.to_dict("records"):
         scenario = str(row["id"])
         matches = [path for path in files if scenario in str(path)]
-        if len(matches) != 1:
+        if len(matches) == 1:
+            frame = pd.read_csv(matches[0])
+        elif len(matches) == 0:
+            # Host-mode cluster runs intentionally disable the legacy R
+            # aggregate.  Graph-estimation still writes one Python result.csv
+            # per method; combine those rows here instead.
+            per_method = [path for path in results_root.rglob("result.csv")
+                          if scenario in str(path)]
+            frames = []
+            for path in per_method:
+                candidate = pd.read_csv(path)
+                method_column = next((name for name in ("algorithm", "id")
+                                      if name in candidate), None)
+                if method_column and set(candidate[method_column].astype(str)) & set(METHOD_IDS):
+                    frames.append(candidate[candidate[method_column].astype(str).isin(METHOD_IDS)])
+            if not frames:
+                # A minimal host-mode workflow may disable both the legacy R
+                # aggregate and Benchpress's optional result-summary rules.
+                # Recover metrics directly from the canonical weighted-to-graph
+                # outputs instead of requiring R packages on the cluster.
+                raw_files = [path for path in results_root.rglob("adjmat.csv")
+                             if "adjmat_estimate" in str(path)
+                             and scenario in str(path)]
+                true_files = [path for path in results_root.rglob("*.csv")
+                              if "/adjmat/" in str(path)
+                              and "adjmat_estimate" not in str(path)]
+                raw_rows = []
+                for raw_path in raw_files:
+                    method_match = re.search(r"/algorithm=/([^/]+)/", str(raw_path))
+                    seed_match = re.search(r"/seed=(\d+)/", str(raw_path))
+                    if not method_match or not seed_match:
+                        continue
+                    method, seed = method_match.group(1), int(seed_match.group(1))
+                    if method not in METHOD_IDS:
+                        continue
+                    true_path = next((path for path in true_files
+                                      if f"seed={seed}.csv" in str(path)), None)
+                    if true_path is None:
+                        continue
+                    metrics = _python_metrics(true_path, raw_path)
+                    time_path = Path(str(raw_path).replace("/adjmat_estimate/", "/time/")).with_name("time.txt")
+                    metrics.update({"algorithm": method, "seed": seed,
+                                    "time": time_path.read_text().strip()
+                                    if time_path.is_file() else "nan"})
+                    raw_rows.append(metrics)
+                if raw_rows:
+                    frame = pd.DataFrame(raw_rows)
+                else:
+                    raise ValueError(
+                        f"expected joint_benchmarks.csv, per-method result.csv, "
+                        f"or raw graph outputs for {scenario}; found none")
+            elif frames:
+                frame = pd.concat(frames, ignore_index=True)
+        else:
             raise ValueError(
                 f"expected exactly one joint_benchmarks.csv for {scenario}; "
                 f"found {len(matches)}")
-        frame = pd.read_csv(matches[0])
+        # Benchpress's legacy aggregate calls this column ``id`` while the
+        # Python summary rules call it ``algorithm``.  Normalize both forms
+        # before joining NOTREKS diagnostics.
+        if "id" not in frame and "algorithm" in frame:
+            frame["id"] = frame["algorithm"]
         for key in ("id", "model", "graph", "d", "n", "knowledge_fraction"):
             if key in row:
                 frame["scenario" if key == "id" else key] = row[key]
