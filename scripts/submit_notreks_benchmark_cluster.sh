@@ -20,13 +20,16 @@ cd "$REPO_DIR"
 bash scripts/check_notreks_environment.sh "$CONFIG"
 mkdir -p "$RUN_DIR/logs/slurm"
 
-JOB_ID="$(sbatch --parsable \
+JOB_RAW="$(sbatch --parsable \
   --clusters=serial --partition=serial_long --qos=cm4_serial_long \
   --nodes=1 --ntasks=1 --cpus-per-task="$WORKERS" --time="$TIME_LIMIT" \
   --export=ALL,NOTREKS_CONTAINER_MODE=host \
   -o "$RUN_DIR/logs/slurm/notreks-%j.out" \
   -e "$RUN_DIR/logs/slurm/notreks-%j.err" \
   scripts/run_notreks_cluster_driver.sh "$CONFIG" "$RUN_DIR" "$MANIFEST" "$WORKERS")"
+# Slurm may append ``;cluster`` in parsable output when clusters are enabled.
+# Keep only the numeric job id for status/cancellation commands.
+JOB_ID="${JOB_RAW%%;*}"
 printf '%s\n' "$JOB_ID" > "$RUN_DIR/driver_job_id"
 printf 'submitted job=%s workers=%s partition=serial_long time=%s\n' "$JOB_ID" "$WORKERS" "$TIME_LIMIT"
 printf 'status: bash scripts/notreks_farm_status.sh %q\n' "$RUN_DIR"
