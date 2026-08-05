@@ -11,7 +11,11 @@ def oracle_true_graph_from_data(wildcards):
 
 rule oracle_no_trek_sidecar:
     input:
-        data=alg_input_data(),
+        # The oracle output is keyed by the complete Benchpress data
+        # wildcard.  Do not expand this into separate adjmat/parameter
+        # wildcards: they cannot be inferred from the output and cause a
+        # Snakemake WildcardError on generated full-grid configurations.
+        data="{output_dir}/data/{data}/seed={seed}.csv",
         graph=oracle_true_graph_from_data
     output:
         knowledge=oracle_knowledge_path()
