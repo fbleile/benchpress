@@ -29,23 +29,21 @@ def join_string_sampled_model(algorithm, bmark_setup, mode="result"):
 
 # TODO: These should take a pattern string instead of an algorithm.
 def summarise_alg_input_adjmat_est_path(algorithm):
-    # Keep summary inputs identical to the canonical algorithm output
-    # contract in filename_patterns.py.  The historical expanded form
-    # (adjmat=/.../parameters=/.../data=/...) no longer matches the compact
-    # output paths used by current rules and causes result.csv generation to
-    # fail only after the expensive optimizer has completed.
-    return ("{output_dir}/adjmat_estimate/{data}/"
+    return ("{output_dir}/adjmat_estimate/"
+            "adjmat=/{adjmat}/parameters=/{bn}/data=/{data}/"
             "algorithm=/" + pattern_strings[algorithm] + "/"
             "seed={seed}/adjmat.csv")
 
 def summarise_alg_input_time_path(algorithm):
-    return ("{output_dir}/time/{data}/"
+    return ("{output_dir}/time/"
+            "adjmat=/{adjmat}/parameters=/{bn}/data=/{data}/"
             "algorithm=/" + pattern_strings[algorithm] + "/"
             "seed={seed}/time.txt")
 
 # This is code repetition, yes...
 def summarise_alg_input_ntests_path(algorithm):
-    return ("{output_dir}/ntests/{data}/"
+    return ("{output_dir}/ntests/"
+            "adjmat=/{adjmat}/parameters=/{bn}/data=/{data}/"
             "algorithm=/" + pattern_strings[algorithm] + "/"
             "seed={seed}/ntests.txt")
 

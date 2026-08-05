@@ -43,27 +43,27 @@ def alg_output_adjmat_path(algorithm):
         It is used in alg_input_data() below.    
     """
 
-    return "{output_dir}/adjmat_estimate/{data}/"\
+    return "{output_dir}/adjmat_estimate/adjmat=/{adjmat}/parameters=/{bn}/data=/{data}/"\
         "algorithm=/" + pattern_strings[algorithm] + "/" +\
         "seed={seed}/" \
         "adjmat.csv"
 
 
 def alg_output_time_path(algorithm):
-    return "{output_dir}/time/{data}/"\
+    return "{output_dir}/time/adjmat=/{adjmat}/parameters=/{bn}/data=/{data}/"\
         "algorithm=/" + pattern_strings[algorithm] + "/" +\
         "seed={seed}/" \
         "time.txt"
 
 # This is code repetition, yes...
 def alg_output_ntests_path(algorithm):
-    return "{output_dir}/ntests/{data}/"\
+    return "{output_dir}/ntests/adjmat=/{adjmat}/parameters=/{bn}/data=/{data}/"\
         "algorithm=/" + pattern_strings[algorithm] + "/" +\
         "seed={seed}/" \
         "ntests.txt"
 
 def alg_input_data():
-    return "{output_dir}/data/{data}/seed={seed}.csv"
+    return "{output_dir}/data/adjmat=/{adjmat}/parameters=/{bn}/data=/{data}/seed={seed}.csv"
 
 
 def time_path(algorithm):
