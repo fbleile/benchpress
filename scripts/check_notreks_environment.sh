@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-CONFIG="${CONFIG:-${1:-}}"
+CONFIG="${1:-${CONFIG:-}}"
 # Interactive command substitution/copy-paste can accidentally introduce a
 # newline into an exported config path.  Normalize it before file checks so a
 # harmless wrapped variable does not look like a missing configuration.
@@ -12,7 +12,8 @@ echo "repository=$REPO_DIR"
 echo "branch=$(git -C "$REPO_DIR" branch --show-current 2>/dev/null || echo unknown)"
 echo "commit=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 missing=0
-for command in python snakemake sbatch srun; do
+required_commands=(python snakemake)
+for command in "${required_commands[@]}"; do
   if command -v "$command" >/dev/null 2>&1; then
     echo "$command=$(command -v "$command")"
     "$command" --version 2>&1 | head -1 || true
@@ -71,9 +72,12 @@ PY
 fi
 test -f "$REPO_DIR/workflow/Snakefile" || { echo "MISSING: workflow/Snakefile" >&2; missing=1; }
 if [[ -n "$CONFIG" ]]; then
-  test -f "$REPO_DIR/$CONFIG" || test -f "$CONFIG" || { echo "MISSING: config=$CONFIG" >&2; missing=1; }
-  config_path="$CONFIG"
-  [[ -f "$REPO_DIR/$CONFIG" ]] && config_path="$REPO_DIR/$CONFIG"
+  if [[ "$CONFIG" = /* ]]; then
+    config_path="$CONFIG"
+  else
+    config_path="$REPO_DIR/$CONFIG"
+  fi
+  test -f "$config_path" || { echo "MISSING: config=$config_path" >&2; missing=1; }
   if [[ -f "$config_path" ]]; then
     if ! PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" python - "$REPO_DIR" "$config_path" <<'PY'
 import sys
@@ -92,16 +96,16 @@ PY
     fi
   fi
 fi
-if [[ "${CLUSTERS:-serial}:${PARTITION:-serial_std}" == "serial:cm4_std" ]]; then
-  echo "invalid resource pair: serial + cm4_std" >&2
-  missing=1
-fi
 if [[ "$missing" -ne 0 ]]; then
   echo "preflight: FAILED" >&2
   exit 1
 fi
 if [[ -n "$CONFIG" && -f "$config_path" ]]; then
   parse_log="$(mktemp)"
+  # Snakemake creates a source cache during parsing.  On managed macOS and
+  # shared filesystems TMPDIR can point at a stale or non-writable location;
+  # keep this short-lived validation state inside the repository instead.
+  preflight_tmp="$(dirname "$config_path")"
   parse_bin=""
   if [[ "${NOTREKS_CONTAINER_MODE:-auto}" == "host" ]] && \
      ! command -v singularity >/dev/null 2>&1 && ! command -v apptainer >/dev/null 2>&1; then
@@ -110,7 +114,7 @@ if [[ -n "$CONFIG" && -f "$config_path" ]]; then
     chmod +x "$parse_bin/singularity"
   fi
   trap 'rm -f "$parse_log"; test -z "$parse_bin" || rm -rf "$parse_bin"' EXIT
-  if ! (cd "$REPO_DIR" && PATH="${parse_bin:+$parse_bin:}$PATH" snakemake --dry-run --quiet --nolock \
+  if ! (cd "$REPO_DIR" && TMPDIR="$preflight_tmp" PATH="${parse_bin:+$parse_bin:}$PATH" snakemake --dry-run --quiet --nolock \
       --snakefile workflow/Snakefile --configfile "$config_path" --cores 1) \
       >"$parse_log" 2>&1; then
     echo "ERROR: Snakemake could not parse the selected configuration:" >&2

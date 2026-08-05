@@ -61,7 +61,7 @@ Benchpress array, and submits a dependent analysis job. No second cluster
 command is required:
 
 ```bash
-NOTREKS_PYTHON=python scripts/submit_notreks_benchmark.sh
+NOTREKS_PYTHON=python scripts/run_notreks_benchmark_local.sh
 ```
 
 Override scheduler resources with `NOTREKS_CPUS_PER_TASK`, `NOTREKS_MEMORY`,
