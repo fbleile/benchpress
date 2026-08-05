@@ -3,6 +3,11 @@ set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CONFIG="${CONFIG:-${1:-}}"
+# Interactive command substitution/copy-paste can accidentally introduce a
+# newline into an exported config path.  Normalize it before file checks so a
+# harmless wrapped variable does not look like a missing configuration.
+CONFIG="${CONFIG//$'\n'/}"
+CONFIG="${CONFIG//$'\r'/}"
 echo "repository=$REPO_DIR"
 echo "branch=$(git -C "$REPO_DIR" branch --show-current 2>/dev/null || echo unknown)"
 echo "commit=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
