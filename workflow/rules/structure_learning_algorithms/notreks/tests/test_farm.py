@@ -9,6 +9,7 @@ from workflow.rules.structure_learning_algorithms.notreks.tools.farm import (
     run_task,
     task_rows,
     validate_cpdag_config,
+    validate_required_files,
 )
 
 
@@ -55,6 +56,36 @@ def test_cpdag_config_is_required(tmp_path: Path) -> None:
         assert "convert_to" in str(exc)
     else:
         raise AssertionError("missing CPDAG conversion was accepted")
+
+
+def test_missing_required_schema_is_rejected(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    module = repo / "workflow/rules/structure_learning_algorithms/example"
+    module.mkdir(parents=True)
+    (module / "rule.smk").write_text("")
+    config = tmp_path / "config.json"
+    config.write_text(
+        '{"resources": {"structure_learning_algorithms": {"example": []}}}'
+    )
+    try:
+        validate_required_files(repo, config)
+    except FileNotFoundError as exc:
+        assert "required Benchpress schema is missing" in str(exc)
+    else:
+        raise AssertionError("missing schema was accepted")
+
+
+def test_required_schema_and_rule_are_accepted(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    module = repo / "workflow/rules/structure_learning_algorithms/example"
+    module.mkdir(parents=True)
+    (module / "rule.smk").write_text("")
+    (module / "schema.json").write_text("{}")
+    config = tmp_path / "config.json"
+    config.write_text(
+        '{"resources": {"structure_learning_algorithms": {"example": []}}}'
+    )
+    validate_required_files(repo, config)
 
 
 def test_task_timeout_is_recorded_and_resume_skips_success(tmp_path: Path) -> None:

@@ -97,11 +97,30 @@ def validate_cpdag_config(config: Path) -> None:
         raise ValueError("config has no benchmark_setup entries")
     for setup in setups:
         conversion = setup.get("evaluation", {}).get("graph_estimation", {}).get("convert_to", [])
-        if "cpdag" not in conversion:
+        if conversion.count("cpdag") != 1:
             raise ValueError(
-                "config must request graph_estimation.convert_to=['cpdag']; "
+                "config must request graph_estimation.convert_to=['cpdag'] exactly once; "
                 "regenerate it with the NOTREKS compiler"
             )
+
+
+def validate_required_files(repo: Path, config: Path) -> None:
+    """Validate configured Benchpress modules before a Slurm submission."""
+    payload = json.loads(config.read_text())
+    algorithms = payload.get("resources", {}).get("structure_learning_algorithms", {})
+    if not isinstance(algorithms, dict) or not algorithms:
+        raise ValueError("config has no structure_learning_algorithms resources")
+    root = repo / "workflow" / "rules" / "structure_learning_algorithms"
+    for name in algorithms:
+        module = root / str(name)
+        rule = module / "rule.smk"
+        schema = module / "schema.json"
+        if not module.is_dir():
+            raise FileNotFoundError(f"required Benchpress module is missing: {module.relative_to(repo)}")
+        if not rule.is_file():
+            raise FileNotFoundError(f"required Benchpress rule is missing: {rule.relative_to(repo)}")
+        if not schema.is_file():
+            raise FileNotFoundError(f"required Benchpress schema is missing: {schema.relative_to(repo)}")
 
 
 def _path(repo: Path, run_dir: Path, value: str) -> Path:

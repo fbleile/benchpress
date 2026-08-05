@@ -37,15 +37,19 @@ if [[ -n "$CONFIG" ]]; then
   config_path="$CONFIG"
   [[ -f "$REPO_DIR/$CONFIG" ]] && config_path="$REPO_DIR/$CONFIG"
   if [[ -f "$config_path" ]]; then
-    if ! python - "$config_path" <<'PY'
-import json, sys
-x=json.load(open(sys.argv[1]))
-ok=all('cpdag' in s.get('evaluation', {}).get('graph_estimation', {}).get('convert_to', [])
-       for s in x.get('benchmark_setup', []))
-raise SystemExit(0 if ok and x.get('benchmark_setup') else 1)
+    if ! PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}" python - "$REPO_DIR" "$config_path" <<'PY'
+import sys
+from pathlib import Path
+from workflow.rules.structure_learning_algorithms.notreks.tools.farm import (
+    validate_cpdag_config,
+    validate_required_files,
+)
+repo, config = Path(sys.argv[1]), Path(sys.argv[2])
+validate_cpdag_config(config)
+validate_required_files(repo, config)
 PY
     then
-      echo "CONFIG ERROR: every benchmark_setup must request graph_estimation.convert_to=['cpdag']" >&2
+      echo "CONFIG ERROR: required Benchpress files or CPDAG conversion are invalid" >&2
       missing=1
     fi
   fi
@@ -57,5 +61,18 @@ fi
 if [[ "$missing" -ne 0 ]]; then
   echo "preflight: FAILED" >&2
   exit 1
+fi
+if [[ -n "$CONFIG" && -f "$config_path" ]]; then
+  parse_log="$(mktemp)"
+  trap 'rm -f "$parse_log"' EXIT
+  if ! (cd "$REPO_DIR" && snakemake --dry-run --quiet --nolock \
+      --snakefile workflow/Snakefile --configfile "$config_path" --cores 1) \
+      >"$parse_log" 2>&1; then
+    echo "ERROR: Snakemake could not parse the selected configuration:" >&2
+    sed -n '1,40p' "$parse_log" >&2
+    exit 1
+  fi
+  rm -f "$parse_log"
+  trap - EXIT
 fi
 echo "preflight: OK"

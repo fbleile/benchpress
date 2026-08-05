@@ -86,6 +86,11 @@ for p in Path("workflow/rules/structure_learning_algorithms/").iterdir():
     if p.name == ".DS_Store":
         continue
 
+    # Shared implementation packages (for example ``notreks``) live next
+    # to Benchpress algorithm modules but do not define a resource module.
+    if not (p / "rule.smk").is_file():
+        continue
+
     module_schema_filename = "workflow/rules/structure_learning_algorithms/{}/schema.json".format(p.name)
     with open(module_schema_filename) as json_file:
         module_schema = json.load(json_file)
