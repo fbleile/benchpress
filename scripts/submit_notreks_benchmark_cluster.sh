@@ -23,7 +23,7 @@ mkdir -p "$RUN_DIR/logs/slurm"
 JOB_RAW="$(sbatch --parsable \
   --clusters=serial --partition=serial_long --qos=cm4_serial_long \
   --nodes=1 --ntasks=1 --cpus-per-task="$WORKERS" --time="$TIME_LIMIT" \
-  --export=ALL,NOTREKS_CONTAINER_MODE=host \
+  --export=ALL,REPO_DIR="$REPO_DIR",NOTREKS_CONTAINER_MODE=host \
   -o "$RUN_DIR/logs/slurm/notreks-%j.out" \
   -e "$RUN_DIR/logs/slurm/notreks-%j.err" \
   scripts/run_notreks_cluster_driver.sh "$CONFIG" "$RUN_DIR" "$MANIFEST" "$WORKERS")"

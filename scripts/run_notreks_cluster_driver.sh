@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CONFIG="${1:?usage: $0 CONFIG RUN_DIR MANIFEST WORKERS}"
 RUN_DIR="${2:?usage: $0 CONFIG RUN_DIR MANIFEST WORKERS}"
 MANIFEST="${3:?usage: $0 CONFIG RUN_DIR MANIFEST WORKERS}"
