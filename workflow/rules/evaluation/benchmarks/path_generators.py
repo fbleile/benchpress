@@ -29,32 +29,25 @@ def join_string_sampled_model(algorithm, bmark_setup, mode="result"):
 
 # TODO: These should take a pattern string instead of an algorithm.
 def summarise_alg_input_adjmat_est_path(algorithm):
-    return ("{output_dir}/adjmat_estimate/"
-            "adjmat=/{adjmat}/"
-            "parameters=/{bn}/"
-            "data=/{data}/"
+    # Keep summary inputs identical to the canonical algorithm output
+    # contract in filename_patterns.py.  The historical expanded form
+    # (adjmat=/.../parameters=/.../data=/...) no longer matches the compact
+    # output paths used by current rules and causes result.csv generation to
+    # fail only after the expensive optimizer has completed.
+    return ("{output_dir}/adjmat_estimate/{data}/"
             "algorithm=/" + pattern_strings[algorithm] + "/"
-            "seed={seed}/"
-            "adjmat.csv")
+            "seed={seed}/adjmat.csv")
 
 def summarise_alg_input_time_path(algorithm):
-    return ("{output_dir}/time/"
-            "adjmat=/{adjmat}/"
-            "parameters=/{bn}/"
-            "data=/{data}/"
+    return ("{output_dir}/time/{data}/"
             "algorithm=/" + pattern_strings[algorithm] + "/"
-            "seed={seed}/"
-            "time.txt")
+            "seed={seed}/time.txt")
 
 # This is code repetition, yes...
 def summarise_alg_input_ntests_path(algorithm):
-    return ("{output_dir}/ntests/"
-            "adjmat=/{adjmat}/"
-            "parameters=/{bn}/"
-            "data=/{data}/"
+    return ("{output_dir}/ntests/{data}/"
             "algorithm=/" + pattern_strings[algorithm] + "/"
-            "seed={seed}/"
-            "ntests.txt")
+            "seed={seed}/ntests.txt")
 
 def summarise_alg_output_res_path(algorithm):
     return ("{output_dir}/result/"
@@ -89,4 +82,3 @@ def result_path_mcmc(algorithm):
             "seed={seed}/"
             "id={id}/"
             "result.csv")
-
