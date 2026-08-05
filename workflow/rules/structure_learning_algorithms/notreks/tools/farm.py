@@ -223,9 +223,10 @@ def run_task(
         # per-task checkout would be wasteful; this symlink gives Snakemake
         # the same layout while keeping every task's results and metadata
         # completely separate.
-        workflow_link = workspace / "workflow"
-        if not workflow_link.exists():
-            workflow_link.symlink_to(repo / "workflow", target_is_directory=True)
+        for name in ("workflow", "resources"):
+            repository_link = workspace / name
+            if not repository_link.exists():
+                repository_link.symlink_to(repo / name, target_is_directory=True)
     expected = (
         (workspace / row["expected_output"])
         if isolate and row.get("expected_output") and not Path(row["expected_output"]).is_absolute()
