@@ -14,7 +14,11 @@ algorithm = snakemake.params["alg"]
 with open(snakemake.params["config"]) as json_file:    
     config = json.load(json_file)
 
-cmd="""
+# Run the legacy shell chain fail-fast.  Without ``set -e`` a failed R
+# summarizer is followed by add_column.py, which hides the real error behind
+# a misleading FileNotFoundError for result.csv.
+cmd="set -e\n"
+cmd += """
 Rscript workflow/rules/evaluation/benchmarks/run_summarise.R  --adjmat_true {adjmat_true} --adjmat_est {adjmat_est}  --filename {res}  
 python workflow/rules/evaluation/benchmarks/add_column.py --filename {res} --colname seed       --colval {seed}
 python workflow/rules/evaluation/benchmarks/add_column.py --filename {res} --colname algorithm       --colval {alg} 
