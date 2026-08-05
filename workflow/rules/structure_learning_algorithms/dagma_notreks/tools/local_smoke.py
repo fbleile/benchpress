@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -31,11 +32,21 @@ R_EVAL = ROOT / "workflow/rules/evaluation/benchmarks/run_summarise.R"
 
 
 def _metrics(true_path, estimated_path, output_path):
-    subprocess.run([
-        "Rscript", str(R_EVAL), "--adjmat_true", str(true_path),
-        "--adjmat_est", str(estimated_path), "--filename", str(output_path),
-    ], check=True, capture_output=True, text=True)
-    row = pd.read_csv(output_path).iloc[0].to_dict()
+    # The direct smoke runner must also work on environments without the
+    # Benchpress R stack (BiDAG/pcalg).  Prefer the canonical R metrics when
+    # available, but use a transparent Python fallback for smoke diagnostics.
+    use_python = os.environ.get("NOTREKS_METRICS_BACKEND") == "python"
+    try:
+        if use_python:
+            raise RuntimeError("python metrics requested")
+        subprocess.run([
+            "Rscript", str(R_EVAL), "--adjmat_true", str(true_path),
+            "--adjmat_est", str(estimated_path), "--filename", str(output_path),
+        ], check=True, capture_output=True, text=True)
+        row = pd.read_csv(output_path).iloc[0].to_dict()
+    except (FileNotFoundError, subprocess.CalledProcessError, RuntimeError):
+        row = _python_metrics(true_path, estimated_path)
+        pd.DataFrame([row]).to_csv(output_path, index=False)
     for suffix in ("skel", "pattern"):
         tp, fp, fn = (float(row[f"TP_{suffix}"]), float(row[f"FP_{suffix}"]),
                       float(row[f"FN_{suffix}"]))
@@ -46,6 +57,47 @@ def _metrics(true_path, estimated_path, output_path):
         row[f"F1_{suffix}"] = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
     row["SHD_skel"] = float(row["FP_skel"]) + float(row["FN_skel"])
     return row
+
+
+def _python_metrics(true_path, estimated_path):
+    """Small dependency-free fallback for direct smoke execution.
+
+    It reports exact skeleton errors and directed-pattern errors.  CPDAG SHD
+    is conservatively represented by the directed-pattern SHD because the
+    canonical R/pcalg CPDAG converter is unavailable in this fallback mode.
+    The row is marked so it cannot be confused with the full Benchpress
+    metric implementation.
+    """
+    truth = pd.read_csv(true_path).to_numpy(dtype=int)
+    estimate = pd.read_csv(estimated_path).to_numpy(dtype=int)
+    truth = truth != 0
+    estimate = estimate != 0
+    true_skel = truth | truth.T
+    est_skel = estimate | estimate.T
+    upper = np.triu(np.ones_like(true_skel, dtype=bool), 1)
+    tp_s = int(np.sum(true_skel[upper] & est_skel[upper]))
+    fp_s = int(np.sum(~true_skel[upper] & est_skel[upper]))
+    fn_s = int(np.sum(true_skel[upper] & ~est_skel[upper]))
+    pattern_diff = int(np.sum(np.abs(estimate.astype(int) - truth.astype(int))) / 2)
+    precision_s = tp_s / (tp_s + fp_s) if tp_s + fp_s else 0.0
+    recall_s = tp_s / (tp_s + fn_s) if tp_s + fn_s else 0.0
+    directed_tp = int(np.sum(estimate & truth))
+    directed_fp = int(np.sum(estimate & ~truth))
+    directed_fn = int(np.sum(~estimate & truth))
+    precision_p = directed_tp / (directed_tp + directed_fp) if directed_tp + directed_fp else 0.0
+    recall_p = directed_tp / (directed_tp + directed_fn) if directed_tp + directed_fn else 0.0
+    f1_s = 2 * precision_s * recall_s / (precision_s + recall_s) if precision_s + recall_s else 0.0
+    f1_p = 2 * precision_p * recall_p / (precision_p + recall_p) if precision_p + recall_p else 0.0
+    return {
+        "TP_skel": tp_s, "FP_skel": fp_s, "FN_skel": fn_s,
+        "precision_skel": precision_s, "recall_skel": recall_s,
+        "F1_skel": f1_s, "SHD_skel": fp_s + fn_s,
+        "TP_pattern": directed_tp, "FP_pattern": directed_fp,
+        "FN_pattern": directed_fn, "precision_pattern": precision_p,
+        "recall_pattern": recall_p, "F1_pattern": f1_p,
+        "SHD_pattern": pattern_diff, "SHD_cpdag": pattern_diff,
+        "metrics_backend": "python_fallback_pattern",
+    }
 
 
 def _reachability(A):
