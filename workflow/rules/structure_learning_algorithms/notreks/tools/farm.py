@@ -212,9 +212,10 @@ def run_task(
     # SQLite persistence avoids long metadata filenames on newer Snakemake,
     # but Snakemake 7.32 (the LRZ installation) has no such option.
     if supports_option(snakemake, "--persistence-backend"):
+        metadata_db = run_dir / "snakemake_metadata.db"
         command.extend([
             "--persistence-backend", "db",
-            "--persistence-backend-db-url", "sqlite:///.snakemake/metadata.db",
+            "--persistence-backend-db-url", f"sqlite:///{metadata_db}",
         ])
     command.extend([
         "--rerun-incomplete", "--snakefile", "workflow/Snakefile",
