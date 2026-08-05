@@ -2,7 +2,14 @@ import json
 import time
 from dataclasses import asdict
 
-import flopsearch
+try:
+    import flopsearch
+except ModuleNotFoundError as exc:
+    raise RuntimeError(
+        "FLOP-NOTREKS requires the Linux flopsearch package in the active "
+        "Python environment. In host mode run "
+        "bash scripts/install_flopsearch_host.sh before starting the farm."
+    ) from exc
 import numpy as np
 import pandas as pd
 

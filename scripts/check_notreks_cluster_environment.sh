@@ -26,6 +26,28 @@ if command -v snakemake >/dev/null 2>&1; then
       echo "Install dagma==1.1.1 in the selected environment or use a reachable DAGMA container." >&2
       missing=1
     fi
+    # Host mode bypasses the FLOP container as well.  Check the extension
+    # before submission so a farm task cannot fail later with an opaque
+    # ModuleNotFoundError from a Snakemake script.
+    if [[ -n "${CONFIG:-}" ]]; then
+      host_config="$CONFIG"
+      [[ -f "$REPO_DIR/$CONFIG" ]] && host_config="$REPO_DIR/$CONFIG"
+      if python - "$host_config" 2>/dev/null <<'PY'
+import json, sys
+payload = json.load(open(sys.argv[1]))
+names = payload.get("resources", {}).get("structure_learning_algorithms", {})
+raise SystemExit(0 if any(str(n) in {"flop", "flop_notreks"} for n in names) else 1)
+PY
+      then
+        if python -c 'import flopsearch' >/dev/null 2>&1; then
+          echo "flopsearch_python=available"
+        else
+          echo "MISSING: Python package flopsearch (required for host-mode FLOP rules)" >&2
+          echo "Install it with: bash scripts/install_flopsearch_host.sh" >&2
+          missing=1
+        fi
+      fi
+    fi
   else
     HELP="$(snakemake --help 2>&1)"
     if grep -q -- '--use-apptainer' <<<"$HELP"; then

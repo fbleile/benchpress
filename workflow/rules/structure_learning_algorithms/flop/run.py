@@ -1,6 +1,13 @@
 import time
 
-import flopsearch
+try:
+    import flopsearch
+except ModuleNotFoundError as exc:
+    raise RuntimeError(
+        "FLOP requires the Linux flopsearch==0.3.0 package in the active "
+        "Python environment. In host mode run "
+        "bash scripts/install_flopsearch_host.sh before starting the farm."
+    ) from exc
 import numpy as np
 import pandas as pd
 from workflow.rules.structure_learning_algorithms.flop.adapter import convert_flop_cpdag
