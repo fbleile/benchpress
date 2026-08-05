@@ -221,7 +221,21 @@ def run_task(
         "--configfile", str(config),
     ])
     env = os.environ.copy()
-    env.update({"OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"})
+    # Keep Snakemake/matplotlib temporary state inside the resumable run
+    # directory.  Shared login-node caches can be read-only or owned by a
+    # different environment, which otherwise makes every task fail before
+    # the workflow is parsed.
+    cache_dir = run_dir / "cache"
+    tmp_dir = run_dir / "tmp"
+    mpl_dir = run_dir / "mplconfig"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    mpl_dir.mkdir(parents=True, exist_ok=True)
+    env.update({
+        "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
+        "XDG_CACHE_HOME": str(cache_dir), "TMPDIR": str(tmp_dir),
+        "MPLCONFIGDIR": str(mpl_dir),
+    })
     result = dict(running, command=command, timeout_seconds=timeout)
     try:
         with stdout_path.open("w") as out, stderr_path.open("w") as err:
