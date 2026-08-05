@@ -90,6 +90,13 @@ def test_required_schema_and_rule_are_accepted(tmp_path: Path) -> None:
     validate_required_files(repo, config)
 
 
+def test_gcastle_dag_rule_uses_replicate_wildcard() -> None:
+    rule = Path("workflow/rules/graph/gcastle_dag/rule.smk").read_text()
+    script = Path("workflow/rules/graph/gcastle_dag/script.py").read_text()
+    assert "seed={replicate}.csv" in rule
+    assert 'wildcards.get("seed", snakemake.wildcards["replicate"])' in script
+
+
 def test_task_timeout_is_recorded_and_resume_skips_success(tmp_path: Path) -> None:
     tmp_path.mkdir(parents=True, exist_ok=True)
     fake = tmp_path / "snakemake"

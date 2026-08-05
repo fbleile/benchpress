@@ -17,18 +17,22 @@ for command in python snakemake sbatch srun; do
   fi
 done
 if command -v snakemake >/dev/null 2>&1; then
-  HELP="$(snakemake --help 2>&1)"
-  if grep -q -- '--use-apptainer' <<<"$HELP"; then
-    echo "container_flag=--use-apptainer"
-    command -v apptainer >/dev/null 2>&1 || { echo "MISSING: apptainer" >&2; missing=1; }
-  elif grep -q -- '--use-singularity' <<<"$HELP"; then
-    echo "container_flag=--use-singularity"
-    if ! command -v singularity >/dev/null 2>&1 && ! command -v apptainer >/dev/null 2>&1; then
-      echo "MISSING: singularity or apptainer" >&2; missing=1
-    fi
+  if [[ "${NOTREKS_CONTAINER_MODE:-auto}" == "host" ]]; then
+    echo "container_mode=host"
   else
-    echo "MISSING: Snakemake container flag" >&2
-    missing=1
+    HELP="$(snakemake --help 2>&1)"
+    if grep -q -- '--use-apptainer' <<<"$HELP"; then
+      echo "container_flag=--use-apptainer"
+      command -v apptainer >/dev/null 2>&1 || { echo "MISSING: apptainer" >&2; missing=1; }
+    elif grep -q -- '--use-singularity' <<<"$HELP"; then
+      echo "container_flag=--use-singularity"
+      if ! command -v singularity >/dev/null 2>&1 && ! command -v apptainer >/dev/null 2>&1; then
+        echo "MISSING: singularity or apptainer" >&2; missing=1
+      fi
+    else
+      echo "MISSING: Snakemake container flag" >&2
+      missing=1
+    fi
   fi
 fi
 test -f "$REPO_DIR/workflow/Snakefile" || { echo "MISSING: workflow/Snakefile" >&2; missing=1; }
@@ -64,8 +68,15 @@ if [[ "$missing" -ne 0 ]]; then
 fi
 if [[ -n "$CONFIG" && -f "$config_path" ]]; then
   parse_log="$(mktemp)"
-  trap 'rm -f "$parse_log"' EXIT
-  if ! (cd "$REPO_DIR" && snakemake --dry-run --quiet --nolock \
+  parse_bin=""
+  if [[ "${NOTREKS_CONTAINER_MODE:-auto}" == "host" ]] && \
+     ! command -v singularity >/dev/null 2>&1 && ! command -v apptainer >/dev/null 2>&1; then
+    parse_bin="$(mktemp -d)"
+    printf '%s\n' '#!/bin/sh' "echo 'singularity version 3.8.0'" > "$parse_bin/singularity"
+    chmod +x "$parse_bin/singularity"
+  fi
+  trap 'rm -f "$parse_log"; test -z "$parse_bin" || rm -rf "$parse_bin"' EXIT
+  if ! (cd "$REPO_DIR" && PATH="${parse_bin:+$parse_bin:}$PATH" snakemake --dry-run --quiet --nolock \
       --snakefile workflow/Snakefile --configfile "$config_path" --cores 1) \
       >"$parse_log" 2>&1; then
     echo "ERROR: Snakemake could not parse the selected configuration:" >&2
@@ -73,6 +84,7 @@ if [[ -n "$CONFIG" && -f "$config_path" ]]; then
     exit 1
   fi
   rm -f "$parse_log"
+  test -z "$parse_bin" || rm -rf "$parse_bin"
   trap - EXIT
 fi
 echo "preflight: OK"

@@ -195,10 +195,13 @@ def run_task(
                "resource_class": resource_class, "output_graph_type": "cpdag",
                "start_time": now()}
     atomic_json(status_path, running)
-    command = [
-        snakemake, "--cores", "1", container_flag, "--nolock", "--rerun-incomplete",
-        "--snakefile", "workflow/Snakefile", "--configfile", str(config),
-    ]
+    command = [snakemake, "--cores", "1"]
+    if container_flag:
+        command.append(container_flag)
+    command.extend([
+        "--nolock", "--rerun-incomplete", "--snakefile", "workflow/Snakefile",
+        "--configfile", str(config),
+    ])
     env = os.environ.copy()
     env.update({"OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"})
     result = dict(running, command=command, timeout_seconds=timeout)
@@ -231,7 +234,23 @@ def run_farm(args: argparse.Namespace) -> int:
     validate_cpdag_config(config)
     manifest = Path(args.manifest).resolve() if args.manifest else None
     rows = task_rows(config, manifest)
-    smk, flag = choose_container_flag(args.snakemake)
+    if os.environ.get("NOTREKS_CONTAINER_MODE", "auto").lower() == "host":
+        smk = args.snakemake or shutil.which("snakemake")
+        if not smk:
+            raise RuntimeError("snakemake was not found for host-mode execution")
+        flag = ""
+        # Benchpress's legacy helper checks that a container runtime exists
+        # even when Snakemake is not asked to execute containers. Provide a
+        # run-local version shim only when neither runtime is installed.
+        if not shutil.which("singularity") and not shutil.which("apptainer"):
+            shim_dir = run_dir / "bin"
+            shim_dir.mkdir(parents=True, exist_ok=True)
+            shim = shim_dir / "singularity"
+            shim.write_text("#!/bin/sh\necho 'singularity version 3.8.0'\n")
+            shim.chmod(0o755)
+            os.environ["PATH"] = str(shim_dir) + os.pathsep + os.environ.get("PATH", "")
+    else:
+        smk, flag = choose_container_flag(args.snakemake)
     # Snakemake 7 calls the container option ``--use-singularity``.  LRZ
     # installations commonly provide only the Apptainer executable, so use a
     # run-local compatibility shim rather than requiring a cluster-wide alias.
@@ -245,7 +264,7 @@ def run_farm(args: argparse.Namespace) -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
     atomic_json(run_dir / "farm_config.json", {
         "config": str(config), "manifest": str(manifest) if manifest else None,
-        "workers": workers, "container_flag": flag, "snakemake": smk,
+        "workers": workers, "container_flag": flag or "host", "snakemake": smk,
         "resource_class": args.resource_class or "auto", "task_count": len(rows),
         "output_graph_type": "cpdag",
     })

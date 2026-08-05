@@ -14,7 +14,9 @@ rule sample_fixed_sem_params_data_gcastle:
              "seed={seed}.csv"
     wildcard_constraints:
         n="[0-9]*",
-        bn=r".*\.csv"
+        bn=r".*\.csv",
+        noise_scale=r"[0-9]+(?:\.[0-9]+)?",
+        standardized=r"(?:True|False)"
     container:
         "docker://bpimages/gcastle:1.0.3"
     script:
@@ -30,7 +32,9 @@ rule gcastle_iidsim:
             "data=/"+pattern_strings["gcastle_iidsim"] + "/" \
             "seed={seed}.csv"
     wildcard_constraints:
-        n="[0-9]*"
+        n="[0-9]*",
+        noise_scale=r"[0-9]+(?:\.[0-9]+)?",
+        standardized=r"(?:True|False)"
     container:
         "docker://bpimages/gcastle:1.0.3"
     script:

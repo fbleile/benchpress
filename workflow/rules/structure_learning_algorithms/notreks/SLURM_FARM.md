@@ -35,6 +35,12 @@ Apptainer is installed with a legacy Snakemake, the farm creates a run-local
 `singularity` compatibility symlink. No cluster software or shell setup is
 modified.
 
+If the configured `bpimages/*` registry is unavailable, set
+`NOTREKS_CONTAINER_MODE=host` explicitly. The farm then runs Snakemake without
+container execution against the activated environment; that environment must
+provide the packages required by the selected data, algorithm, and evaluation
+rules. The default remains container mode.
+
 Generated benchmark configurations request the canonical Benchpress
 DAG-to-CPDAG conversion exactly once with
 `benchmark_setup[].evaluation.graph_estimation.convert_to=["cpdag"]`. Raw
