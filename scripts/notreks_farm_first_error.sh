@@ -10,7 +10,14 @@ for path in sorted((run/'tasks').glob('*/status.json')):
     if row.get('status') in {'failed','TIMEOUT'}:
         print(json.dumps({k:row.get(k) for k in ('task_id','config_path','command','exit_code','status','exception')}, indent=2))
         err=path.parent/'stderr.log'
-        if err.exists(): print('\n--- stderr ---\n'+err.read_text()[:6000])
+        if err.exists():
+            text=err.read_text(errors='replace')
+            # Snakemake prints a very large DAG before the useful exception.
+            # Show both the beginning (environment/config context) and the
+            # end (the actual rule/error) so this remains useful on clusters.
+            if len(text) > 7500:
+                text = text[:1200] + '\n... [stderr middle elided] ...\n' + text[-6200:]
+            print('\n--- stderr ---\n'+text)
         break
 else:
     print('No failed or timed-out task found.')
