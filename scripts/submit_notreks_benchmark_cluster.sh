@@ -7,6 +7,7 @@ RUN_DIR="${2:?usage: $0 CONFIG RUN_DIR MANIFEST}"
 MANIFEST="${3:?usage: $0 CONFIG RUN_DIR MANIFEST}"
 WORKERS="${NOTREKS_WORKERS:-16}"
 TIME_LIMIT="${NOTREKS_TIME_LIMIT:-168:00:00}"
+MEMORY="${NOTREKS_MEMORY:-64G}"
 # The cluster driver runs the already-installed Python implementations.  Host
 # mode is the safe default: it avoids pulling the unavailable public DAGMA
 # image and is also passed explicitly to the submitted allocation below.
@@ -22,7 +23,7 @@ mkdir -p "$RUN_DIR/logs/slurm"
 
 JOB_RAW="$(sbatch --parsable \
   --clusters=serial --partition=serial_long --qos=cm4_serial_long \
-  --nodes=1 --ntasks=1 --cpus-per-task="$WORKERS" --time="$TIME_LIMIT" \
+  --nodes=1 --ntasks=1 --cpus-per-task="$WORKERS" --mem="$MEMORY" --time="$TIME_LIMIT" \
   --chdir="$REPO_DIR" \
   --export=ALL,REPO_DIR="$REPO_DIR",NOTREKS_CONTAINER_MODE=host \
   -o "$RUN_DIR/logs/slurm/notreks-%j.out" \
@@ -32,6 +33,6 @@ JOB_RAW="$(sbatch --parsable \
 # Keep only the numeric job id for status/cancellation commands.
 JOB_ID="${JOB_RAW%%;*}"
 printf '%s\n' "$JOB_ID" > "$RUN_DIR/driver_job_id"
-printf 'submitted job=%s workers=%s partition=serial_long time=%s\n' "$JOB_ID" "$WORKERS" "$TIME_LIMIT"
+printf 'submitted job=%s workers=%s memory=%s partition=serial_long time=%s\n' "$JOB_ID" "$WORKERS" "$MEMORY" "$TIME_LIMIT"
 printf 'status: bash scripts/notreks_farm_status.sh %q\n' "$RUN_DIR"
 printf 'cancel: scancel %s\n' "$JOB_ID"
