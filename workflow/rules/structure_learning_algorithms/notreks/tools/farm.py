@@ -204,7 +204,7 @@ def run_task(
     row: dict[str, str],
     snakemake: str,
     container_flag: str,
-    timeout: int,
+    timeout: int | None,
     resource_class: str,
     force: bool = False,
     *,
@@ -341,6 +341,7 @@ def run_farm(args: argparse.Namespace) -> int:
         "python": args.python or sys.executable,
         "resource_class": args.resource_class or "auto", "task_count": len(rows),
         "output_graph_type": "cpdag",
+        "no_task_timeout": bool(args.no_task_timeout),
         "isolate_tasks": bool(args.isolate_tasks),
     })
     if args.dry_run:
@@ -367,7 +368,8 @@ def run_farm(args: argparse.Namespace) -> int:
         futures = {
             pool.submit(
                 run_task, repo, run_dir, row, smk, flag,
-                classify(_path(repo, run_dir, row["config_path"]), args.resource_class)[1],
+                (None if args.no_task_timeout else classify(
+                    _path(repo, run_dir, row["config_path"]), args.resource_class)[1]),
                 classify(_path(repo, run_dir, row["config_path"]), args.resource_class)[0],
                 args.force, snakemake_command=snakemake_command,
                 isolate=args.isolate_tasks,
@@ -412,6 +414,10 @@ def main() -> None:
     parser.add_argument(
         "--isolate-tasks", action="store_true",
         help="run each scenario in its own workspace/results/. Required for concurrent cluster workers",
+    )
+    parser.add_argument(
+        "--no-task-timeout", action="store_true",
+        help="do not kill individual tasks; the driver allocation remains bounded",
     )
     args = parser.parse_args()
     raise SystemExit(run_farm(args))

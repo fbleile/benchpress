@@ -26,4 +26,5 @@ exec srun --exclusive --ntasks=1 --cpus-per-task="$WORKERS" \
   python workflow/rules/structure_learning_algorithms/notreks/tools/farm.py \
     --repo "$REPO_DIR" --run-dir "$RUN_ABS" --config "$CONFIG" \
     --manifest "$MANIFEST" --workers "$WORKERS" --isolate-tasks \
+    --no-task-timeout \
     --analysis-command "$ANALYSIS_COMMAND"
