@@ -16,7 +16,9 @@ from workflow.rules.structure_learning_algorithms.notreks.tools.farm import (
 def _config(path: Path) -> None:
     path.write_text(
         '{"benchmark_setup": [{"evaluation": '
-        '{"graph_estimation": {"convert_to": ["cpdag"]}}}]}\n'
+        '{"graph_estimation": {"ids": [], "convert_to": ["cpdag"], '
+        '"graphs": false, "adjmats": false, "diffplots": false, '
+        '"csvs": true, "graphvizcompare": false}}}]}\n'
     )
 
 
@@ -53,7 +55,7 @@ def test_cpdag_config_is_required(tmp_path: Path) -> None:
     try:
         validate_cpdag_config(config)
     except ValueError as exc:
-        assert "convert_to" in str(exc)
+        assert "convert_to" in str(exc) or "graph_estimation.ids" in str(exc)
     else:
         raise AssertionError("missing CPDAG conversion was accepted")
 

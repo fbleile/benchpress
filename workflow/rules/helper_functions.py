@@ -268,9 +268,15 @@ def get_mcmc_modules(alg_module_path="workflow/rules/structure_learning_algorith
     for p in Path(alg_module_path).iterdir():
         if p.name.startswith("."): # Skip hidden files
             continue
-        with open(p/"info.json") as json_file:
+        # Shared implementation packages may live next to algorithm modules
+        # (for example weighted_graph_postprocessing and notreks) without an
+        # algorithm metadata file. They are not MCMC modules.
+        info_path = p / "info.json"
+        if not info_path.is_file():
+            continue
+        with open(info_path) as json_file:
             info = json.load(json_file)
-            if "graphtraj" in info["outputs"]:
+        if "graphtraj" in info.get("outputs", []):
                 mcmc_modules.append(p.name)
     return mcmc_modules
 
@@ -303,5 +309,3 @@ def check_system_requirements():
             raise Exception(
                 "You have " + outp + ". Benchpress requires Singularity >= 3.2."
             )
-
-

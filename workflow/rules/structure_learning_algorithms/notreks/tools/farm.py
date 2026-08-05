@@ -96,7 +96,10 @@ def validate_cpdag_config(config: Path) -> None:
     if not setups:
         raise ValueError("config has no benchmark_setup entries")
     for setup in setups:
-        conversion = setup.get("evaluation", {}).get("graph_estimation", {}).get("convert_to", [])
+        graph_estimation = setup.get("evaluation", {}).get("graph_estimation", {})
+        if "ids" not in graph_estimation:
+            raise ValueError("graph_estimation.ids is required by Benchpress validation")
+        conversion = graph_estimation.get("convert_to", [])
         if conversion.count("cpdag") != 1:
             raise ValueError(
                 "config must request graph_estimation.convert_to=['cpdag'] exactly once; "
