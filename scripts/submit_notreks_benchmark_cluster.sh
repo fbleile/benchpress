@@ -7,6 +7,10 @@ RUN_DIR="${2:?usage: $0 CONFIG RUN_DIR MANIFEST}"
 MANIFEST="${3:?usage: $0 CONFIG RUN_DIR MANIFEST}"
 WORKERS="${NOTREKS_WORKERS:-16}"
 TIME_LIMIT="${NOTREKS_TIME_LIMIT:-168:00:00}"
+# The cluster driver runs the already-installed Python implementations.  Host
+# mode is the safe default: it avoids pulling the unavailable public DAGMA
+# image and is also passed explicitly to the submitted allocation below.
+export NOTREKS_CONTAINER_MODE="${NOTREKS_CONTAINER_MODE:-host}"
 
 if (( WORKERS < 1 || WORKERS > 16 )); then
   echo "ERROR: serial partitions support 1-16 workers; got $WORKERS" >&2
