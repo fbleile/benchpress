@@ -18,10 +18,11 @@ qos_args=()
 if [[ "$cluster:$partition" == "serial:serial_long" ]]; then qos_args+=(--qos=cm4_serial_long); fi
 export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-16}"
 if [[ -z "${ANALYSIS_COMMAND:-}" ]]; then
-  config_name="$(basename "$CONFIG" .json)"
-  config_name="${config_name#selected_}"
-  config_name="${config_name%_config}"
-  ANALYSIS_COMMAND="python workflow/rules/structure_learning_algorithms/notreks/tools/cli.py analyze-benchmark --tag '$config_name' --output-dir '$REPO_DIR/$RUN_DIR/analysis'"
+  if [[ -z "$MANIFEST" ]]; then
+    echo "ANALYSIS_COMMAND must be provided when no scenario manifest is supplied" >&2
+    exit 2
+  fi
+  ANALYSIS_COMMAND="python scripts/notreks_benchmark.py collect --manifest '$MANIFEST' --results-root '$REPO_DIR/results/output' --output '$REPO_DIR/$RUN_DIR/results.csv' && python scripts/notreks_benchmark.py analyse --results-csv '$REPO_DIR/$RUN_DIR/results.csv' --output-dir '$REPO_DIR/$RUN_DIR/analysis'"
 fi
 export ANALYSIS_COMMAND
 if [[ "${NOTREKS_DRY_RUN:-0}" == "1" ]]; then

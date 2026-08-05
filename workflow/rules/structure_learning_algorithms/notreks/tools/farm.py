@@ -74,8 +74,12 @@ def task_rows(config: Path, manifest: Path | None) -> list[dict[str, str]]:
         raise ValueError(f"Task manifest is empty: {manifest}")
     result = []
     for index, row in enumerate(rows):
-        task_id = str(row.get("job_id", row.get("task_id", index)))
-        config_path = row.get("config_path") or row.get("relative_config_path")
+        task_id = str(row.get("job_id", row.get("task_id", row.get("id", index))))
+        config_path = (
+            row.get("config_path")
+            or row.get("relative_config_path")
+            or row.get("config")
+        )
         if not config_path:
             raise ValueError(f"Manifest row {task_id} has no config path")
         expected = row.get("benchpress_joint_benchmarks_path", "")

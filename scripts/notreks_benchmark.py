@@ -152,7 +152,9 @@ def benchpress_config(scenario: dict, defaults: dict, smoke: bool = False) -> di
                 "filename_prefix": f"notreks_benchmark/{scenario['id']}/",
                 "show_seed": True, "errorbar": True, "errorbarh": False,
                 "scatter": True, "path": True, "text": False,
-                "ids": list(METHOD_IDS)}, "graph_true_plots": False,
+                "ids": list(METHOD_IDS)},
+                "graph_estimation": {"convert_to": ["cpdag"]},
+                "graph_true_plots": False,
                 "graph_true_stats": True, "graph_plots": []},
         }],
         "resources": {
