@@ -9,7 +9,10 @@ export REPO_DIR CONFIG RUN_DIR MANIFEST
 bash "$REPO_DIR/scripts/check_notreks_environment.sh" "$CONFIG"
 mkdir -p "$REPO_DIR/$RUN_DIR/logs"
 export PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}"
-export SNAKEMAKE_CORES="${SNAKEMAKE_CORES:-1}"
+if [[ "${SNAKEMAKE_CORES:-1}" != "1" ]]; then
+  echo "local workflow: forcing SNAKEMAKE_CORES=1 because scenarios share Benchpress results paths" >&2
+fi
+export SNAKEMAKE_CORES=1
 if [[ -z "${ANALYSIS_COMMAND:-}" ]]; then
   if [[ -z "$MANIFEST" ]]; then
     echo "ANALYSIS_COMMAND must be provided when no scenario manifest is supplied" >&2
