@@ -7,8 +7,6 @@ The canonical R path remains available elsewhere; this Python implementation
 uses the same basic edge-count conventions and explicitly marks its backend.
 """
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
@@ -30,6 +28,8 @@ def _metrics(true_path: str, estimate_path: str) -> dict[str, object]:
     directed_tp = int(np.sum(estimate & truth))
     directed_fp = int(np.sum(estimate & ~truth))
     directed_fn = int(np.sum(~estimate & truth))
+    true_n_edges_pattern = int(np.sum(truth))
+    true_n_edges_skel = int(np.sum(true_skel[upper]))
     pattern_shd = int(np.sum(np.abs(estimate.astype(int) - truth.astype(int))) / 2)
     precision_s = tp_s / (tp_s + fp_s) if tp_s + fp_s else 0.0
     recall_s = tp_s / (tp_s + fn_s) if tp_s + fn_s else 0.0
@@ -45,11 +45,16 @@ def _metrics(true_path: str, estimate_path: str) -> dict[str, object]:
         # label the backend explicitly rather than silently claiming CPDAG
         # equivalence semantics.
         "SHD_cpdag": pattern_shd, "SHD_skel": fp_s + fn_s,
+        "true_n_edges_pattern": true_n_edges_pattern,
+        "true_n_edges_skel": true_n_edges_skel,
         "precision_pattern": precision_p, "recall_pattern": recall_p,
         "F1_pattern": f1_p, "precision_skel": precision_s,
         "recall_skel": recall_s, "F1_skel": f1_s,
-        "TPR_pattern": recall_p, "FPR_pattern": np.nan,
-        "FPR_skel": np.nan, "FNR_skel": np.nan,
+        "TPR_pattern": recall_p,
+        "FPR_pattern": directed_fp / true_n_edges_pattern if true_n_edges_pattern else 0.0,
+        "FPRn_pattern": directed_fp / true_n_edges_pattern if true_n_edges_pattern else 0.0,
+        "FPR_skel": fp_s / true_n_edges_skel if true_n_edges_skel else 0.0,
+        "FNR_skel": fn_s / true_n_edges_skel if true_n_edges_skel else 0.0,
         "graph_type": "dag_or_cpdag_python_proxy",
         "metrics_backend": "python_fallback_pattern",
     }
@@ -72,5 +77,9 @@ row.update({
 for key, value in algorithm_config.items():
     if isinstance(value, (list, tuple)):
         value = ";".join(map(str, value))
+    elif isinstance(value, str) and "," in value:
+        # Some legacy configs encode continuation schedules as a comma-
+        # separated string.  Keep the result a valid rectangular CSV.
+        value = value.replace(",", ";")
     row[key] = value
 pd.DataFrame([row]).to_csv(snakemake.output["res"], index=False)

@@ -69,6 +69,26 @@ def supports_option(snakemake: str, option: str) -> bool:
     return option in help_text
 
 
+def select_snakemake_command(binary: str, python_executable: str | None) -> list[str]:
+    """Run Snakemake with the farm's interpreter when it is installed there.
+
+    Snakemake executes ``script`` blocks with its own interpreter.  Calling a
+    binary from a different environment can therefore make packages available
+    to the farm (for example ``dagma``) disappear inside workflow rules.  A
+    module invocation keeps the interpreter and its site-packages consistent;
+    the binary remains a safe fallback for split installations.
+    """
+    candidate = python_executable or sys.executable
+    probe = subprocess.run(
+        [candidate, "-c", "import snakemake"],
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode == 0:
+        return [candidate, "-m", "snakemake"]
+    return [binary]
+
+
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="") as handle:
         return list(csv.DictReader(handle))
@@ -187,6 +207,8 @@ def run_task(
     timeout: int,
     resource_class: str,
     force: bool = False,
+    *,
+    snakemake_command: list[str] | None = None,
 ) -> dict:
     task_id = row["task_id"]
     task_dir = run_dir / "tasks" / task_id
@@ -203,7 +225,7 @@ def run_task(
                "resource_class": resource_class, "output_graph_type": "cpdag",
                "start_time": now()}
     atomic_json(status_path, running)
-    command = [snakemake, "--cores", "1"]
+    command = [*(snakemake_command or [snakemake]), "--cores", "1"]
     if container_flag:
         command.append(container_flag)
     command.extend(["--nolock"])
@@ -292,12 +314,15 @@ def run_farm(args: argparse.Namespace) -> int:
         shim_dir.mkdir(parents=True, exist_ok=True)
         os.symlink(shutil.which("apptainer"), shim_dir / "singularity") if not (shim_dir / "singularity").exists() else None
         os.environ["PATH"] = str(shim_dir) + os.pathsep + os.environ.get("PATH", "")
+    snakemake_command = select_snakemake_command(smk, args.python)
     workers = args.workers or int(os.environ.get("SLURM_CPUS_PER_TASK", "1"))
     workers = max(1, min(int(workers), int(args.max_workers or workers)))
     run_dir.mkdir(parents=True, exist_ok=True)
     atomic_json(run_dir / "farm_config.json", {
         "config": str(config), "manifest": str(manifest) if manifest else None,
         "workers": workers, "container_flag": flag or "host", "snakemake": smk,
+        "snakemake_command": snakemake_command,
+        "python": args.python or sys.executable,
         "resource_class": args.resource_class or "auto", "task_count": len(rows),
         "output_graph_type": "cpdag",
     })
@@ -323,7 +348,7 @@ def run_farm(args: argparse.Namespace) -> int:
                 run_task, repo, run_dir, row, smk, flag,
                 classify(_path(repo, run_dir, row["config_path"]), args.resource_class)[1],
                 classify(_path(repo, run_dir, row["config_path"]), args.resource_class)[0],
-                args.force
+                args.force, snakemake_command=snakemake_command,
             ): row
             for row in pending
         }
@@ -355,6 +380,10 @@ def main() -> None:
     parser.add_argument("--max-workers", type=int)
     parser.add_argument("--resource-class", choices=["smoke", "short", "medium", "long"])
     parser.add_argument("--snakemake")
+    parser.add_argument(
+        "--python",
+        help="Python interpreter used to run Snakemake when it imports snakemake; defaults to the farm interpreter",
+    )
     parser.add_argument("--analysis-command")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
