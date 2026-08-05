@@ -61,6 +61,14 @@ def choose_container_flag(snakemake: str | None = None) -> tuple[str, str]:
     return binary, flag
 
 
+def supports_option(snakemake: str, option: str) -> bool:
+    """Return whether this installed Snakemake exposes an option."""
+    help_text = subprocess.run(
+        [snakemake, "--help"], capture_output=True, text=True, check=True
+    ).stdout
+    return option in help_text
+
+
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="") as handle:
         return list(csv.DictReader(handle))
@@ -198,11 +206,18 @@ def run_task(
     command = [snakemake, "--cores", "1"]
     if container_flag:
         command.append(container_flag)
+    command.extend(["--nolock"])
+    if supports_option(snakemake, "--drop-metadata"):
+        command.append("--drop-metadata")
+    # SQLite persistence avoids long metadata filenames on newer Snakemake,
+    # but Snakemake 7.32 (the LRZ installation) has no such option.
+    if supports_option(snakemake, "--persistence-backend"):
+        command.extend([
+            "--persistence-backend", "db",
+            "--persistence-backend-db-url", "sqlite:///.snakemake/metadata.db",
+        ])
     command.extend([
-        "--nolock", "--drop-metadata", "--persistence-backend", "db",
-        "--persistence-backend-db-url", "sqlite:///.snakemake/metadata.db",
-        "--rerun-incomplete",
-        "--snakefile", "workflow/Snakefile",
+        "--rerun-incomplete", "--snakefile", "workflow/Snakefile",
         "--configfile", str(config),
     ])
     env = os.environ.copy()
