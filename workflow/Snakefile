@@ -104,15 +104,16 @@ for p in Path("workflow/rules/structure_learning_algorithms/").iterdir():
     structure_learning_algorithms_module_schemas[p.name] = module_schema
 
 # Yes this is a hack. But it works probably. Any better ideas?
-# Generate random hash for the temporary schema file
-tmp_hash = random.getrandbits(128)
-tmp_schema = f"schemas/tmp.config.schema_{tmp_hash}.json"
-with open("workflow/"+tmp_schema, "w") as outfile:
-    outfile.write(json.dumps(schema, indent=4))
-
-snakemake.utils.validate(config, tmp_schema)
-# remove the temporary schema file
-os.remove("workflow/"+tmp_schema)
+# Write the generated schema to a writable temporary directory rather than
+# the repository checkout.  This avoids failing every task when the source
+# tree is read-only or shared across users (common on clusters).
+tmp_dir = os.environ.get("TMPDIR") or "/tmp"
+tmp_schema_path = Path(tmp_dir) / f"benchpress.config.schema_{random.getrandbits(128)}.json"
+tmp_schema_path.write_text(json.dumps(schema, indent=4))
+try:
+    snakemake.utils.validate(config, str(tmp_schema_path))
+finally:
+    tmp_schema_path.unlink(missing_ok=True)
 
 include: "rules/docker_images.smk"
 
