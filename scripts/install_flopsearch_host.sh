@@ -9,7 +9,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 VENDOR_DIR="$ROOT_DIR/workflow/rules/structure_learning_algorithms/flop_notreks/vendor/flopsearch/flop_python"
 
-if "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+backend_available() {
+  "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
 import flopsearch
 import numpy as np
 
@@ -20,6 +21,9 @@ flopsearch.flop_notreks(
     data, 2.0, [], restarts=0, seed=1,
     search_version="global_greedy_rust", return_diagnostics=True)
 PY
+}
+
+if backend_available
 then
   echo "flopsearch global_greedy_rust backend already available"
   exit 0
@@ -27,8 +31,11 @@ fi
 
 echo "Installing flopsearch==0.3.0 into $($PYTHON_BIN -c 'import sys; print(sys.prefix)')"
 if "$PYTHON_BIN" -m pip install --no-cache-dir "flopsearch==0.3.0"; then
-  echo "flopsearch installation succeeded"
-  exit 0
+  if backend_available; then
+    echo "flopsearch global_greedy_rust backend installed"
+    exit 0
+  fi
+  echo "Installed wheel lacks global_greedy_rust; building vendored source." >&2
 fi
 
 command -v maturin >/dev/null 2>&1 || {
@@ -50,4 +57,8 @@ trap 'rm -rf "$wheel_dir"' EXIT
 echo "Building vendored flopsearch from $VENDOR_DIR"
 maturin build --manifest-path "$VENDOR_DIR/Cargo.toml" --release --out "$wheel_dir"
 "$PYTHON_BIN" -m pip install --no-cache-dir "$wheel_dir"/*.whl
+backend_available || {
+  echo "ERROR: vendored flopsearch build does not expose global_greedy_rust." >&2
+  exit 1
+}
 echo "flopsearch installation succeeded from vendored source"
