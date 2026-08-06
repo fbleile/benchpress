@@ -92,7 +92,7 @@ fit_args = dict(
     trek_function=str(value("trek_function", "inv")),
     trek_kernel=str(value("trek_kernel", "fast")),
     trek_log_terms=int(value("trek_log_terms", 2 * len(df.columns))),
-    trek_inverse_epsilon=float(value("trek_inverse_epsilon", 1e-8)),
+    trek_inverse_epsilon=float(value("trek_inverse_epsilon", 0.0)),
 )
 model = SharedDagmaLinear(str(value("loss_type", "l2")))
 start = time.perf_counter()

@@ -133,7 +133,7 @@ def expand(grid_path):
                 "trek_regularizer": "pst",
                 "trek_function": meta.get("trek_function", "inv"),
                 "trek_weight": weight, "trek_log_terms": 2 * int(meta["data"]["d"]),
-                "trek_inverse_epsilon": 1e-8, "knowledge_source": "oracle_true_graph",
+                "trek_inverse_epsilon": 0.0, "knowledge_source": "oracle_true_graph",
                 "knowledge_file": None}
         notreks.append(item)
         rows.append({"family": "dagma_notreks", "id": item["id"], "trek_weight": weight})

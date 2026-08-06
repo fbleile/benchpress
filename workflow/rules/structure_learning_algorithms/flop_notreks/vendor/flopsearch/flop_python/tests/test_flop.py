@@ -39,19 +39,8 @@ def test_flop_notreks_inputs_outputs_and_reproducibility():
         data, 2.0, np.asarray([[1, 0], [0, 1]], dtype=np.int64), **kwargs)
     assert np.array_equal(first, second)
     assert d1["final_bic"] == d2["final_bic"]
-    assert d1["search_version"] == "alternating_full_refit_b"
-    assert (d1["number_of_post_promotion_order_blocks"]
-            == d1["number_of_accepted_promotions"])
-    timing_keys = {
-        "time_in_constrained_order_search",
-        "time_in_signature_move_evaluation",
-        "time_in_complete_constrained_refits",
-    }
-    assert {
-        key: value for key, value in d1.items() if key not in timing_keys
-    } == {
-        key: value for key, value in d2.items() if key not in timing_keys
-    }
+    assert d1["search_version"] == "global_greedy_rust"
+    assert d1["final_no_trek_violation_count"] == d2["final_no_trek_violation_count"] == 0
     assert d1["final_no_trek_violation_count"] == 0
     assert not _has_common_ancestor(first, 0, 1)
     cpdag = flopsearch.flop_notreks(
@@ -70,17 +59,9 @@ def test_flop_notreks_empty_and_invalid_inputs():
             flopsearch.flop_notreks(data, 2.0, pairs, restarts=0)
 
 
-def test_fixed_signature_a_and_reserved_versions():
+def test_legacy_search_versions_are_not_public_options():
     data = np.random.default_rng(8).normal(size=(100, 4))
-    dag, diagnostics = flopsearch.flop_notreks(
-        data, 2.0, [(0, 1)], restarts=0, seed=3,
-        search_version="fixed_signature_a", return_dag=True,
-        return_diagnostics=True)
-    assert diagnostics["search_version"] == "fixed_signature_a"
-    assert diagnostics["number_of_signature_rounds"] == 0
-    assert diagnostics["number_of_accepted_promotions"] == 0
-    assert not _has_common_ancestor(dag, 0, 1)
-    for version in ("incremental_c", "hybrid_bc", "unknown"):
+    for version in ("fixed_signature_a", "alternating_full_refit_b", "cached_repair_c", "unknown"):
         with pytest.raises(ValueError):
             flopsearch.flop_notreks(
                 data, 2.0, [(0, 1)], restarts=0, search_version=version)

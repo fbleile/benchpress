@@ -11,8 +11,8 @@
       "timeout": {"$ref": "#/$defs/flexnonnegnumnull"},
       "algorithm_seed": {"$ref": "#/$defs/flexnonnegint"},
       "search_strategy": {
-        "enum": ["global_greedy", "signature_alternating"],
-        "default": "signature_alternating"
+        "const": "global_greedy_rust",
+        "description": "Fixed production implementation; not user-configurable."
       },
       "max_sweeps": {"$ref": "#/$defs/flexnonnegint", "default": 4},
       "signature_top_k": {"$ref": "#/$defs/flexnonnegint"},
@@ -22,8 +22,8 @@
       "initial_signature_max_size": {"$ref": "#/$defs/flexnonnegint"},
       "n_jobs": {"$ref": "#/$defs/flexnonnegint"},
       "search_version": {
-        "enum": ["fixed_signature_a", "alternating_full_refit_b"],
-        "default": "alternating_full_refit_b"
+        "const": "global_greedy_rust",
+        "description": "Fixed production implementation; not user-configurable."
       },
       "knowledge_source": {"enum": ["oracle_true_graph", "file", "none"]},
       "knowledge_file": {"type": ["string", "null"]},

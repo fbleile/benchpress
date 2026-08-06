@@ -1,18 +1,21 @@
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use nalgebra::DMatrix;
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 use crate::algo::reinsert;
 use crate::bic::Bic;
 use crate::error::FlopError;
-use crate::fit_parents::perm_to_dag_constrained;
+use crate::fit_parents::{perm_to_dag, perm_to_dag_constrained};
 use crate::graph::Dag;
 use crate::no_treks::{
     ancestor_cone, canonical_signatures, count_no_trek_violations, signatures_respect_edges,
     NoTrekConstraints,
 };
+use crate::scores::{GlobalScore, LocalScore};
 use crate::{pivoted_cholesky, utils};
 
 const EPS: f64 = 1e-9;
@@ -21,6 +24,12 @@ const EPS: f64 = 1e-9;
 pub enum NoTreksVersion {
     FixedSignatureA,
     AlternatingFullRefitB,
+    /// FLOP-style order reinsertion with the hard-feasible global-greedy
+    /// inner search, executed entirely inside Rust.
+    GlobalGreedyRust,
+    /// Run ordinary FLOP first, then delete a small number of edges using
+    /// the path-sum no-trek value and cached local BIC scores.
+    CachedRepairC,
 }
 
 impl NoTreksVersion {
@@ -28,6 +37,8 @@ impl NoTreksVersion {
         match self {
             Self::FixedSignatureA => "fixed_signature_a",
             Self::AlternatingFullRefitB => "alternating_full_refit_b",
+            Self::GlobalGreedyRust => "global_greedy_rust",
+            Self::CachedRepairC => "cached_repair_c",
         }
     }
 }
@@ -78,6 +89,12 @@ pub struct NoTreksDiagnostics {
     pub search_version: String,
     pub number_of_canonical_compressions: usize,
     pub number_of_post_promotion_order_blocks: usize,
+    pub repair_edges_removed: usize,
+    pub repair_continuous_evaluations: usize,
+    pub repair_initial_violation_count: usize,
+    pub repair_initial_continuous_value: f64,
+    pub repair_final_continuous_value: f64,
+    pub repair_fallback_used: bool,
 }
 
 impl NoTreksDiagnostics {
@@ -94,6 +111,338 @@ impl NoTreksDiagnostics {
 pub struct NoTreksResult {
     pub dag: Dag,
     pub diagnostics: NoTreksDiagnostics,
+}
+
+fn dag_adjacency(dag: &Dag) -> Vec<u8> {
+    let mut matrix = vec![0u8; dag.p * dag.p];
+    for (child, parents) in dag.parents.iter().enumerate() {
+        for &parent in parents {
+            matrix[parent * dag.p + child] = 1;
+        }
+    }
+    matrix
+}
+
+fn order_key(order: &[usize]) -> Vec<usize> {
+    order.to_vec()
+}
+
+#[allow(clippy::needless_range_loop)]
+fn transitive_reach(g: &GlobalScore, order: &[usize]) -> Vec<Vec<bool>> {
+    let p = g.p;
+    let mut reach = vec![vec![false; p]; p];
+    for node in 0..p {
+        reach[node][node] = true;
+    }
+    for &node in order {
+        for child in 0..p {
+            if g.local_scores[child].parents.contains(&node) {
+                for ancestor in 0..p {
+                    if reach[ancestor][node] {
+                        reach[ancestor][child] = true;
+                    }
+                }
+            }
+        }
+    }
+    reach
+}
+
+fn addition_violates(
+    reach: &[Vec<bool>],
+    source: usize,
+    target: usize,
+    pairs: &[(usize, usize)],
+) -> bool {
+    for &(left, right) in pairs {
+        let left_affected = reach[target][left];
+        let right_affected = reach[target][right];
+        if left_affected && right_affected {
+            return true;
+        }
+        if left_affected
+            && (0..reach.len()).any(|ancestor| {
+                reach[ancestor][source] && reach[ancestor][right]
+            })
+        {
+            return true;
+        }
+        if right_affected
+            && (0..reach.len()).any(|ancestor| {
+                reach[ancestor][source] && reach[ancestor][left]
+            })
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Complete Rust implementation of the FLOP-style outer loop around the
+/// fixed-order global-greedy inner search.  This keeps all candidate-order
+/// evaluation in one extension call, avoiding Python/Rust crossings.
+fn run_global_greedy_rust(
+    data: &DMatrix<f64>,
+    pairs: &[(usize, usize)],
+    config: &FlopNoTreksConfig,
+) -> Result<NoTreksResult, FlopError> {
+    let p = data.ncols();
+    // The global-greedy kernel only needs the pair list for exact witness
+    // checks.  Do not route it through the signature prototype: that
+    // representation intentionally uses one u64 bit per constrained target
+    // and is therefore limited to 64 targets.  FLOP+NOTREKS itself should
+    // remain usable for larger graphs.
+    let canonical_pairs = canonical_pair_list(p, pairs)?;
+    let seed = config.seed.unwrap_or(0);
+    let mut rng = StdRng::seed_from_u64(seed);
+    let corr = crate::utils::corr_matrix(data);
+    pivoted_cholesky::cholesky_left_min_diag(&corr)
+        .ok_or_else(|| FlopError::InitialOrderError("Cholesky decomposition failed".into()))?;
+    let started = Instant::now();
+    let deadline = config.timeout.map(Duration::from_secs_f64);
+    let limit = config.restarts.unwrap_or(usize::MAX - 1) + 1;
+    let score = Bic::from_cov(data.nrows(), corr, config.lambda);
+    let mut best: Option<(f64, Vec<usize>, Dag)> = None;
+    let mut completed = 0usize;
+    let mut termination = "restart_limit".to_string();
+
+    for restart in 0..limit {
+        if restart > 0 && deadline.is_some_and(|d| started.elapsed() >= d) {
+            termination = "timeout".into();
+            break;
+        }
+        let mut order: Vec<usize> = (0..p).collect();
+        order.shuffle(&mut rng);
+        let mut zero = vec![0u8; p * p];
+        let (mut graph, mut current_score) = global_greedy_inner_with_score(
+            data, &zero, &order, &canonical_pairs, &score,
+        )?;
+        let mut graph_adj = dag_adjacency(&graph);
+        for _ in 0..config.max_signature_rounds.max(1) {
+            if deadline.is_some_and(|d| started.elapsed() >= d) {
+                termination = "timeout".into();
+                break;
+            }
+            let before = current_score;
+            for node in order.clone() {
+                if deadline.is_some_and(|d| started.elapsed() >= d) {
+                    termination = "timeout".into();
+                    break;
+                }
+                let old_position = order.iter().position(|&x| x == node).unwrap();
+                let mut chosen: Option<(f64, Vec<usize>, Dag, Vec<u8>)> = None;
+                for new_position in 0..p {
+                    if new_position == old_position {
+                        continue;
+                    }
+                    let mut candidate_order = order.clone();
+                    let moved = candidate_order.remove(old_position);
+                    candidate_order.insert(new_position, moved);
+                    let (candidate_graph, candidate_score) = global_greedy_inner_with_score(
+                        data, &graph_adj, &candidate_order, &canonical_pairs, &score,
+                    )?;
+                    let candidate_adj = dag_adjacency(&candidate_graph);
+                    let better = chosen.as_ref().is_none_or(|(score, ord, _, enc)| {
+                        candidate_score < *score - EPS
+                            || ((candidate_score - *score).abs() <= EPS
+                                && (order_key(&candidate_order), candidate_adj.clone())
+                                    < (order_key(ord), enc.clone()))
+                    });
+                    if better {
+                        chosen = Some((
+                            candidate_score,
+                            candidate_order,
+                            candidate_graph,
+                            candidate_adj,
+                        ));
+                    }
+                }
+                if let Some((score, candidate_order, candidate_graph, candidate_adj)) = chosen {
+                    if score < current_score - EPS {
+                        current_score = score;
+                        order = candidate_order;
+                        graph = candidate_graph;
+                        graph_adj = candidate_adj;
+                    }
+                }
+            }
+            if termination == "timeout" || before - current_score <= EPS {
+                break;
+            }
+        }
+        completed += 1;
+        let candidate = (current_score, order.clone(), graph.clone());
+        let better = best.as_ref().is_none_or(|(score, old_order, old_graph)| {
+            candidate.0 < *score - EPS
+                || ((candidate.0 - *score).abs() <= EPS
+                    && (candidate.1.clone(), dag_adjacency(&candidate.2))
+                        < (old_order.clone(), dag_adjacency(old_graph)))
+        });
+        if better {
+            best = Some(candidate);
+        }
+        zero.clear();
+    }
+    let Some((final_bic, order, dag)) = best else {
+        return Err(FlopError::InitialOrderError(
+            "global-greedy completed no restart".into(),
+        ));
+    };
+    let violations = count_no_trek_violations(&dag, &canonical_pairs);
+    if violations != 0 {
+        return Err(FlopError::ConstraintError(
+            "global-greedy returned an infeasible graph".into(),
+        ));
+    }
+    let diagnostics = NoTreksDiagnostics {
+        restarts_requested: limit,
+        restarts_completed: completed,
+        best_restart_index: 0,
+        number_of_supplied_constraints: canonical_pairs.len(),
+        final_bic,
+        selected_dag_edge_count: dag.parents.iter().map(Vec::len).sum(),
+        final_no_trek_violation_count: violations,
+        algorithm_seed: seed,
+        search_version: NoTreksVersion::GlobalGreedyRust.stable_name().into(),
+        termination_reason: termination,
+        ..Default::default()
+    };
+    let _ = order;
+    Ok(NoTreksResult { dag, diagnostics })
+}
+
+/// Optimize a graph for one fixed order using the same edge-toggle greedy
+/// inner loop as the Benchpress global-greedy comparator.  The caller owns the
+/// FLOP-style order/reinsertion loop; this function only performs the
+/// order-respecting, hard-NOTREKS-feasible inner optimization.
+fn global_greedy_inner_with_score(
+    data: &DMatrix<f64>,
+    initial: &[u8],
+    order: &[usize],
+    pairs: &[(usize, usize)],
+    score: &Bic,
+) -> Result<(Dag, f64), FlopError> {
+    let p = data.ncols();
+    if initial.len() != p * p || order.len() != p {
+        return Err(FlopError::InvalidConfig(
+            "global-greedy inner shape/order mismatch".into(),
+        ));
+    }
+    let mut position = vec![0usize; p];
+    for (idx, &node) in order.iter().enumerate() {
+        if node >= p {
+            return Err(FlopError::InvalidConfig("global-greedy order contains an invalid node".into()));
+        }
+        position[node] = idx;
+    }
+
+    let mut g = GlobalScore::new(p, score)?;
+    for child in 0..p {
+        let mut parents: Vec<usize> = (0..p)
+            .filter(|&parent| {
+                parent != child
+                    && initial[parent * p + child] != 0
+                    && position[parent] < position[child]
+            })
+            .collect();
+        parents.sort_by_key(|&parent| position[parent]);
+        for parent in parents {
+            g.local_scores[child] = score.local_score_plus(
+                child,
+                &g.local_scores[child],
+                parent,
+            )?;
+        }
+    }
+
+    let mut current_score = g.score();
+    loop {
+        let current_encoding = dag_adjacency(&Dag::from_global_score(&g));
+        let mut best: Option<(f64, Vec<u8>, usize, LocalScore)> = None;
+        let reach = transitive_reach(&g, order);
+        for source in 0..p {
+            for target in 0..p {
+                if source == target || position[source] >= position[target] {
+                    continue;
+                }
+                let adding = !g.local_scores[target].parents.contains(&source);
+                let local = if adding {
+                        score.local_score_plus(target, &g.local_scores[target], source)?
+                } else {
+                    score.local_score_minus(target, &g.local_scores[target], source)?
+                };
+                if adding && addition_violates(&reach, source, target, pairs) {
+                    continue;
+                }
+                let value = current_score - g.local_scores[target].bic + local.bic;
+                let better = best.as_ref().is_none_or(|(best_value, best_encoding, _, _)| {
+                    value < *best_value - EPS
+                        || ((value - *best_value).abs() <= EPS
+                            && {
+                                let mut encoding = current_encoding.clone();
+                                encoding[source * p + target] = u8::from(adding);
+                                encoding < *best_encoding
+                            })
+                });
+                if better {
+                    let mut encoding = current_encoding.clone();
+                    encoding[source * p + target] = u8::from(adding);
+                    best = Some((value, encoding, target, local));
+                }
+            }
+        }
+        let Some((value, _, target, local)) = best else {
+            break;
+        };
+        if value >= current_score - EPS {
+            break;
+        }
+        g.local_scores[target] = local;
+        current_score = value;
+    }
+    let dag = Dag::from_global_score(&g);
+    if count_no_trek_violations(&dag, pairs) != 0 {
+        return Err(FlopError::ConstraintError(
+            "global-greedy inner returned an infeasible graph".into(),
+        ));
+    }
+    Ok((dag, current_score))
+}
+
+/// Public one-shot fixed-order Rust kernel used for focused profiling and
+/// equivalence tests.
+pub fn global_greedy_inner(
+    data: &DMatrix<f64>,
+    initial: &[u8],
+    order: &[usize],
+    pairs: &[(usize, usize)],
+    lambda: f64,
+) -> Result<(Dag, f64), FlopError> {
+    let canonical_pairs = canonical_pair_list(data.ncols(), pairs)?;
+    let score = Bic::from_cov(
+        data.nrows(),
+        crate::utils::corr_matrix(data),
+        lambda,
+    );
+    global_greedy_inner_with_score(data, initial, order, &canonical_pairs, &score)
+}
+
+fn canonical_pair_list(p: usize, pairs: &[(usize, usize)]) -> Result<Vec<(usize, usize)>, FlopError> {
+    let mut canonical = BTreeSet::new();
+    for &(a, b) in pairs {
+        if a >= p || b >= p {
+            return Err(FlopError::ConstraintError(format!(
+                "no-trek pair ({a}, {b}) is outside 0..{p}"
+            )));
+        }
+        if a == b {
+            return Err(FlopError::ConstraintError(format!(
+                "self no-trek pair ({a}, {b}) is invalid"
+            )));
+        }
+        canonical.insert(if a < b { (a, b) } else { (b, a) });
+    }
+    Ok(canonical.into_iter().collect())
 }
 
 fn order_search(
@@ -118,7 +467,260 @@ fn order_search(
     Ok(improved_any)
 }
 
+fn unconstrained_order_search(
+    perm: &mut Vec<usize>,
+    g: &mut crate::scores::GlobalScore,
+    score: &Bic,
+    rng: &mut StdRng,
+) -> Result<(), FlopError> {
+    loop {
+        let last = g.score();
+        let mut value = last;
+        for node in perm.clone() {
+            reinsert(perm, g, score, &mut value, node, rng, None)?;
+        }
+        if last - value <= EPS {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Fit the standardized linear parent coefficients represented by a DAG.
+/// The resulting matrix uses the FLOP convention `W[parent, child]`.
+fn regression_weights(cov: &DMatrix<f64>, dag: &Dag) -> DMatrix<f64> {
+    let mut weights = DMatrix::<f64>::zeros(dag.p, dag.p);
+    for child in 0..dag.p {
+        refit_weight_column(cov, dag, child, &mut weights);
+    }
+    weights
+}
+
+fn refit_weight_column(cov: &DMatrix<f64>, dag: &Dag, child: usize, weights: &mut DMatrix<f64>) {
+    for parent in 0..dag.p {
+        weights[(parent, child)] = 0.0;
+    }
+    let parents = &dag.parents[child];
+    if parents.is_empty() {
+        return;
+    }
+    let parent_cov = utils::submatrix(cov, parents);
+    let rhs = DMatrix::from_iterator(
+        parents.len(),
+        1,
+        parents.iter().map(|&parent| cov[(parent, child)]),
+    );
+    if let Some(beta) = parent_cov.lu().solve(&rhs) {
+        for (row, &parent) in parents.iter().enumerate() {
+            weights[(parent, child)] = beta[(row, 0)];
+        }
+    }
+}
+
+/// Continuous inverse-resolvent NOTREKS value for a weighted DAG.
+///
+/// The weights are fitted parent-regression coefficients and the nonnegative
+/// map is `abs(W)`, rather than `W * W`. Since the graph is acyclic, the
+/// resolvent is well-defined and its off-diagonal Gram entries measure shared
+/// weighted ancestry. This value guides repair only; exact ancestry remains
+/// the final certificate.
+fn continuous_notreks_value(weights: &DMatrix<f64>, pairs: &[(usize, usize)]) -> f64 {
+    if pairs.is_empty() {
+        return 0.0;
+    }
+    let nonnegative = weights.map(|x| x.abs());
+    let p = nonnegative.nrows();
+    let identity = DMatrix::<f64>::identity(p, p);
+    let Some(resolvent) = (identity - nonnegative).try_inverse() else {
+        return f64::INFINITY;
+    };
+    let gram = resolvent.transpose() * resolvent;
+    pairs
+        .iter()
+        .map(|&(i, j)| gram[(i, j)] + gram[(j, i)])
+        .sum()
+}
+
+fn cached_repair(
+    data: &DMatrix<f64>,
+    pairs: &[(usize, usize)],
+    config: &FlopNoTreksConfig,
+) -> Result<NoTreksResult, FlopError> {
+    let p = data.ncols();
+    let n = data.nrows();
+    let canonical_pairs = NoTrekConstraints::new(p, pairs)
+        .map_err(FlopError::ConstraintError)?
+        .pairs;
+    let seed = config.seed.unwrap_or(0);
+    let mut rng = StdRng::seed_from_u64(seed);
+    let corr = utils::corr_matrix(data);
+    let (_, initial_perm) = pivoted_cholesky::cholesky_left_min_diag(&corr)
+        .ok_or_else(|| FlopError::InitialOrderError("Cholesky decomposition failed".into()))?;
+    let score = Bic::from_cov(n, corr, config.lambda);
+    let started = Instant::now();
+    let deadline = config.timeout.map(Duration::from_secs_f64);
+    let limit = config.restarts.unwrap_or(usize::MAX - 1) + 1;
+    let perturbations = (p as f64).ln().round() as usize;
+    let mut best: Option<(f64, crate::scores::GlobalScore, usize)> = None;
+    let mut diagnostics = NoTreksDiagnostics {
+        restarts_requested: limit,
+        number_of_supplied_constraints: canonical_pairs.len(),
+        number_of_distinct_constrained_targets: canonical_pairs
+            .iter()
+            .flat_map(|&(a, b)| [a, b])
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        algorithm_seed: seed,
+        search_version: config.search_version.stable_name().into(),
+        termination_reason: "restart_limit".into(),
+        ..Default::default()
+    };
+
+    for restart in 0..limit {
+        if restart > 0 && deadline.is_some_and(|d| started.elapsed() >= d) {
+            diagnostics.termination_reason = "timeout".into();
+            break;
+        }
+        let mut perm = initial_perm.clone();
+        if restart > 0 {
+            for _ in 0..perturbations {
+                perm.swap(rng.gen_range(0..p), rng.gen_range(0..p));
+            }
+        }
+        let mut g = perm_to_dag(&perm, &score, &mut rng)?;
+        unconstrained_order_search(&mut perm, &mut g, &score, &mut rng)?;
+        let mut dag = Dag::from_global_score(&g);
+        let mut weights = regression_weights(score.covariance(), &dag);
+        let initial_violations = count_no_trek_violations(&dag, &canonical_pairs);
+        let initial_path = continuous_notreks_value(&weights, &canonical_pairs);
+        diagnostics.repair_initial_violation_count += initial_violations;
+        diagnostics.repair_initial_continuous_value += initial_path;
+        let mut path_value = initial_path;
+        let max_steps = g
+            .local_scores
+            .iter()
+            .map(|x| x.parents.len())
+            .sum::<usize>();
+        let mut removed = 0usize;
+        for _ in 0..max_steps {
+            let current_violations = count_no_trek_violations(&dag, &canonical_pairs);
+            if current_violations == 0 {
+                break;
+            }
+            let mut best_move: Option<(usize, f64, f64, crate::scores::LocalScore, usize, usize)> =
+                None;
+            for child in 0..p {
+                for &parent in &g.local_scores[child].parents {
+                    let candidate_local =
+                        score.local_score_minus(child, &g.local_scores[child], parent)?;
+                    let mut candidate_g = g.clone();
+                    candidate_g.local_scores[child] = candidate_local.clone();
+                    let candidate_dag = Dag::from_global_score(&candidate_g);
+                    let mut candidate_weights = weights.clone();
+                    refit_weight_column(
+                        score.covariance(),
+                        &candidate_dag,
+                        child,
+                        &mut candidate_weights,
+                    );
+                    let candidate_path =
+                        continuous_notreks_value(&candidate_weights, &canonical_pairs);
+                    diagnostics.repair_continuous_evaluations += 1;
+                    let candidate_violations =
+                        count_no_trek_violations(&candidate_dag, &canonical_pairs);
+                    // Deletion is allowed only when it reduces the exact hard
+                    // violation count. The continuous value ranks those
+                    // necessary repairs; it is never an independent sparsity
+                    // objective.
+                    if candidate_violations >= current_violations {
+                        continue;
+                    }
+                    let bic_cost = candidate_local.bic - g.local_scores[child].bic;
+                    let better = best_move.as_ref().is_none_or(|x| {
+                        candidate_violations < x.0
+                            || (candidate_violations == x.0
+                                && (candidate_path < x.1 - EPS
+                                    || ((candidate_path - x.1).abs() <= EPS && bic_cost < x.2)))
+                    });
+                    if better {
+                        best_move = Some((
+                            candidate_violations,
+                            candidate_path,
+                            bic_cost,
+                            candidate_local,
+                            parent,
+                            child,
+                        ));
+                    }
+                }
+            }
+            let Some((_, candidate_path, _, candidate_local, _parent, child)) = best_move else {
+                break;
+            };
+            g.local_scores[child] = candidate_local;
+            dag = Dag::from_global_score(&g);
+            refit_weight_column(score.covariance(), &dag, child, &mut weights);
+            path_value = candidate_path;
+            removed += 1;
+        }
+        let final_violations = count_no_trek_violations(&dag, &canonical_pairs);
+        if final_violations == 0 {
+            diagnostics.repair_edges_removed += removed;
+            diagnostics.repair_final_continuous_value += path_value;
+            diagnostics.restarts_completed += 1;
+            diagnostics.restart_bics.push(g.score());
+            if best.as_ref().is_none_or(|x| g.score() + EPS < x.0) {
+                diagnostics.best_restart_index = restart;
+                best = Some((g.score(), g, restart));
+            }
+        }
+    }
+    if let Some((final_bic, g, restart)) = best {
+        let dag = Dag::from_global_score(&g);
+        diagnostics.best_restart_index = restart;
+        diagnostics.final_bic = final_bic;
+        diagnostics.selected_dag_edge_count = dag.parents.iter().map(Vec::len).sum();
+        diagnostics.final_no_trek_violation_count =
+            count_no_trek_violations(&dag, &canonical_pairs);
+        return Ok(NoTreksResult { dag, diagnostics });
+    }
+    // The repair is deliberately conservative: if it cannot certify a result,
+    // use the established constrained search rather than returning an invalid graph.
+    diagnostics.repair_fallback_used = true;
+    let mut fallback = config.clone();
+    fallback.search_version = NoTreksVersion::AlternatingFullRefitB;
+    let mut result = run_notreks_constrained(data, pairs, fallback)?;
+    result.diagnostics.repair_fallback_used = true;
+    result.diagnostics.search_version = NoTreksVersion::CachedRepairC.stable_name().into();
+    result.diagnostics.termination_reason = "repair_fallback_constrained".into();
+    Ok(result)
+}
+
 pub fn run_notreks(
+    data: &DMatrix<f64>,
+    pairs: &[(usize, usize)],
+    config: FlopNoTreksConfig,
+) -> Result<NoTreksResult, FlopError> {
+    if config.search_version == NoTreksVersion::GlobalGreedyRust {
+        if config.restarts.is_none() && config.timeout.is_none() {
+            return Err(FlopError::InvalidConfig(
+                "global-greedy Rust requires restarts or timeout".into(),
+            ));
+        }
+        return run_global_greedy_rust(data, pairs, &config);
+    }
+    if config.search_version == NoTreksVersion::CachedRepairC {
+        if config.restarts.is_none() && config.timeout.is_none() && !config.manual_termination {
+            return Err(FlopError::InvalidConfig(
+                "repair requires restarts or timeout".into(),
+            ));
+        }
+        return cached_repair(data, pairs, &config);
+    }
+    run_notreks_constrained(data, pairs, config)
+}
+
+fn run_notreks_constrained(
     data: &DMatrix<f64>,
     pairs: &[(usize, usize)],
     config: FlopNoTreksConfig,
@@ -428,5 +1030,24 @@ mod tests {
         assert_eq!(result.diagnostics.number_of_accepted_promotions, 0);
         assert_eq!(result.diagnostics.number_of_canonical_compressions, 0);
         assert_eq!(result.diagnostics.search_version, "fixed_signature_a");
+    }
+
+    #[test]
+    fn global_greedy_pair_validation_has_no_u64_target_limit() {
+        let pairs: Vec<_> = (0..99).map(|i| (i, i + 1)).collect();
+        let canonical = canonical_pair_list(100, &pairs).unwrap();
+        assert_eq!(canonical.len(), 99);
+        assert_eq!(canonical.first(), Some(&(0, 1)));
+        assert_eq!(canonical.last(), Some(&(98, 99)));
+    }
+
+    #[test]
+    fn cached_repair_certifies_the_returned_graph() {
+        let mut cfg = config(1);
+        cfg.search_version = NoTreksVersion::CachedRepairC;
+        let result = run_notreks(&data(), &[(0, 1), (2, 3)], cfg).unwrap();
+        assert_eq!(result.diagnostics.search_version, "cached_repair_c");
+        assert_eq!(result.diagnostics.final_no_trek_violation_count, 0);
+        assert_eq!(count_no_trek_violations(&result.dag, &[(0, 1), (2, 3)]), 0);
     }
 }

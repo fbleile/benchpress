@@ -37,7 +37,7 @@ def flop_notreks(
     max_signature_rounds: int = 20,
     initial_signature_mean_size: float = 3.0,
     initial_signature_max_size: int = 6,
-    search_version: str = "alternating_full_refit_b",
+    search_version: str = "global_greedy_rust",
     return_dag: bool = False,
     return_diagnostics: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:

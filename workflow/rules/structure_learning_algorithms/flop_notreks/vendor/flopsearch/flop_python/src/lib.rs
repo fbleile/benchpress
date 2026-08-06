@@ -55,6 +55,38 @@ fn flop<'py>(
     PyArray2::from_vec2(py, &res).map_err(|e| PyRuntimeError::new_err(e.to_string()))
 }
 
+/// Optimize one fixed order with the Rust implementation of the global-
+/// greedy inner edge-toggle search.  The FLOP-style outer reinsertion loop is
+/// intentionally left to the caller.
+#[pyfunction]
+#[pyo3(signature = (data, initial, order, no_trek_pairs, *, lambda_bic=2.0, return_dag=true))]
+fn global_greedy_inner<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    initial: PyReadonlyArray2<u8>,
+    order: Vec<usize>,
+    no_trek_pairs: &Bound<'py, PyAny>,
+    lambda_bic: f64,
+    return_dag: bool,
+) -> PyResult<Bound<'py, PyArray2<f64>>> {
+    let p = data.shape()[1];
+    if initial.shape() != [p, p] {
+        return Err(PyValueError::new_err("initial adjacency must be d x d"));
+    }
+    let pairs = parse_pairs(no_trek_pairs, p)?;
+    let initial_vec: Vec<u8> = initial.as_array().iter().copied().collect();
+    let data_matrix = DMatrix::from(data.as_matrix());
+    let (dag, _) = ::flop::constrained_algo::global_greedy_inner(
+        &data_matrix,
+        &initial_vec,
+        &order,
+        &pairs,
+        lambda_bic,
+    )
+    .map_err(|err| PyRuntimeError::new_err(format!("global-greedy inner error: {err}")))?;
+    graph_matrix(py, &dag, return_dag)
+}
+
 fn parse_pairs(obj: &Bound<'_, PyAny>, p: usize) -> PyResult<Vec<(usize, usize)>> {
     let raw: Vec<(i64, i64)> = if let Ok(pairs) = obj.extract() {
         pairs
@@ -339,6 +371,24 @@ fn diagnostics_dict<'py>(
         "number_of_post_promotion_order_blocks",
         d.number_of_post_promotion_order_blocks,
     )?;
+    result.set_item("repair_edges_removed", d.repair_edges_removed)?;
+    result.set_item(
+        "repair_continuous_evaluations",
+        d.repair_continuous_evaluations,
+    )?;
+    result.set_item(
+        "repair_initial_violation_count",
+        d.repair_initial_violation_count,
+    )?;
+    result.set_item(
+        "repair_initial_continuous_value",
+        d.repair_initial_continuous_value,
+    )?;
+    result.set_item(
+        "repair_final_continuous_value",
+        d.repair_final_continuous_value,
+    )?;
+    result.set_item("repair_fallback_used", d.repair_fallback_used)?;
     let edges: Vec<_> = dag
         .parents
         .iter()
@@ -357,7 +407,7 @@ fn diagnostics_dict<'py>(
     restarts=None, timeout=None, seed=None, signature_top_k=5,
     signature_exploration_k=0, max_signature_rounds=20,
     initial_signature_mean_size=3.0, initial_signature_max_size=6,
-    search_version="alternating_full_refit_b",
+    search_version="global_greedy_rust",
     return_dag=false, return_diagnostics=false
 ))]
 fn flop_notreks<'py>(
@@ -389,20 +439,12 @@ fn flop_notreks<'py>(
     }
     let p = data.shape()[1];
     let pairs = parse_pairs(no_trek_pairs, p)?;
-    let search_version = match search_version {
-        "fixed_signature_a" => NoTreksVersion::FixedSignatureA,
-        "alternating_full_refit_b" => NoTreksVersion::AlternatingFullRefitB,
-        "incremental_c" | "hybrid_bc" => {
-            return Err(PyValueError::new_err(format!(
-                "search_version '{search_version}' is reserved and not implemented"
-            )));
-        }
-        _ => {
-            return Err(PyValueError::new_err(
-                "search_version must be 'fixed_signature_a' or 'alternating_full_refit_b'",
-            ));
-        }
-    };
+    if search_version != "global_greedy_rust" {
+        return Err(PyValueError::new_err(
+            "search_version is fixed to 'global_greedy_rust'",
+        ));
+    }
+    let search_version = NoTreksVersion::GlobalGreedyRust;
     let config = FlopNoTreksConfig {
         lambda: lambda_bic,
         restarts,
@@ -433,6 +475,7 @@ fn flop_notreks<'py>(
 #[pymodule]
 fn flopsearch(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::flop, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::global_greedy_inner, m)?)?;
     m.add_function(wrap_pyfunction!(crate::flop_notreks, m)?)?;
     m.add_function(wrap_pyfunction!(crate::prune_parents_bic, m)?)?;
     Ok(())

@@ -202,6 +202,40 @@ class BaseNoTreksKernel:
             inverse_epsilon=inverse_epsilon)
         return result.penalty_value, result.gradient_W
 
+    def value_grad_from_resolvent(
+        self, W: np.ndarray, resolvent: np.ndarray,
+    ) -> tuple[float, np.ndarray]:
+        """Evaluate the inverse PST gradient from a validated resolvent.
+
+        This is used when DAGMA has already computed and domain-checked
+        ``(s I - W*W)^-1`` with the same shift as the NOTREKS inverse kernel.
+        It deliberately does not perform an additional factorization or
+        spectral/conditioning check.  Callers must only use it with a
+        validated resolvent and ``trek_function='inv'``.
+        """
+        if self.empty:
+            return 0.0, np.zeros_like(W)
+        W = np.asarray(W, dtype=float)
+        F = np.asarray(resolvent, dtype=float)
+        if W.shape != (self.d, self.d) or F.shape != (self.d, self.d):
+            raise ValueError(f"W and resolvent must have shape {(self.d, self.d)}")
+        if not np.all(np.isfinite(F)):
+            raise ValueError("resolvent contains non-finite values")
+        Y = F[:, self.nodes]
+        node_pos = {int(node): idx for idx, node in enumerate(self.nodes)}
+        B = np.zeros((len(self.nodes), len(self.nodes)), dtype=float)
+        weights = (np.ones(len(self.pairs), dtype=float)
+                   if self.pair_weights is None else np.asarray(self.pair_weights, dtype=float))
+        for (i, j), weight in zip(self.pairs, weights):
+            a, b = node_pos[int(i)], node_pos[int(j)]
+            B[a, b] += weight
+            if self.semantics == "unordered":
+                B[b, a] += weight
+        value = 0.5 * self.scale * float(np.sum(B * (Y.T @ Y)))
+        GY = self.scale * (Y @ B)
+        GX = (F.T @ GY) @ Y.T
+        return value, 2.0 * W * GX
+
     def diagnostics(self) -> dict[str, object]:
         return {} if self._last is None else dict(self._last.__dict__)
 

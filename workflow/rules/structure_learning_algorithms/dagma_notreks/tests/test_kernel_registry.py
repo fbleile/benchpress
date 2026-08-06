@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import scipy.linalg as sla
 
 from workflow.rules.structure_learning_algorithms.dagma.shared import (
     SharedDagmaLinear,
@@ -65,6 +66,20 @@ def test_selected_inverse_matches_dense_reference_value_and_gradient():
     assert result.diagnostics.selected_column_count < W.shape[0]
 
 
+def test_selected_inverse_can_reuse_a_validated_resolvent():
+    rng = np.random.default_rng(121)
+    W = rng.normal(scale=0.04, size=(8, 8))
+    np.fill_diagonal(W, 0.0)
+    pairs = [(0, 1), (0, 7), (3, 6)]
+    kernel = make_notreks_kernel("selected_inv", pairs, 8)
+    F = sla.solve(np.eye(8) - W * W, np.eye(8))
+    expected_value, expected_gradient = kernel.value_grad(
+        W, "inv", inverse_epsilon=0.0)
+    value, gradient = kernel.value_grad_from_resolvent(W, F)
+    assert value == pytest.approx(expected_value, rel=1e-12, abs=1e-14)
+    np.testing.assert_allclose(gradient, expected_gradient, rtol=1e-11, atol=1e-13)
+
+
 def test_selected_inverse_directional_derivative():
     rng = np.random.default_rng(13)
     W = rng.normal(scale=0.03, size=(6, 6))
@@ -121,3 +136,16 @@ def test_zero_notreks_weight_reproduces_reference_kernel_fit():
     selected = SharedDagmaLinear("l2").fit(
         X.copy(), trek_kernel="selected_inv", **settings)
     np.testing.assert_allclose(selected, reference, rtol=0.0, atol=0.0)
+
+
+def test_dagma_fit_uses_the_shared_resolvent_at_matching_shift():
+    rng = np.random.default_rng(16)
+    X = rng.normal(size=(80, 4))
+    settings = dict(
+        no_trek_pairs=[(0, 1)], trek_weight=0.2, trek_function="inv",
+        trek_inverse_epsilon=0.0, trek_kernel="selected_inv", T=1,
+        warm_iter=5, max_iter=5, checkpoint=5, w_threshold=0.0,
+        lambda1=0.01, lr=0.0003, s=(1.0,))
+    model = SharedDagmaLinear("l2")
+    model.fit(X.copy(), **settings)
+    assert model.stage_diagnostics[-1]["shared_resolvent_iterations"] > 0

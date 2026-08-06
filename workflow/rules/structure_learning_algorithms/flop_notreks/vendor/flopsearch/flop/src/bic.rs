@@ -33,6 +33,10 @@ impl Bic {
         }
     }
 
+    pub fn covariance(&self) -> &DMatrix<f64> {
+        &self.cov
+    }
+
     pub fn local_score_init(
         &self,
         v: usize,

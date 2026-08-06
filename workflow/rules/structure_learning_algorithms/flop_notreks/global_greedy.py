@@ -31,6 +31,12 @@ class GlobalGreedyConfig:
     max_sweeps: int = 4
     lambda_bic: float = 2.0
     seed: int = 1729
+    time_limit_seconds: float | None = None
+    # Keep the reference implementation as the production default.  The Rust
+    # kernel is available explicitly for one-shot fixed-order profiling; using
+    # it for every Python outer-loop proposal would repeatedly allocate Rust
+    # score state and is not yet a safe d=50 path.
+    inner_backend: str = "python"
 
 
 @dataclass
@@ -48,6 +54,7 @@ class GlobalGreedyResult:
     accepted_reinsertions: int
     termination_reason: str
     notreks_violation_count: int
+    inner_backend: str
 
 
 def _project_to_order(graph: np.ndarray, order: Sequence[int]) -> np.ndarray:
@@ -162,11 +169,22 @@ def fit_global_greedy_notreks(
         raise ValueError("X must be a two-dimensional numeric array")
     if config.restarts < 1 or config.max_sweeps < 1:
         raise ValueError("restarts and max_sweeps must be positive")
+    if config.time_limit_seconds is not None and config.time_limit_seconds <= 0:
+        raise ValueError("time_limit_seconds must be positive")
     d = data.shape[1]
     constraints = CompositeFeasibility((
         DagConstraint(), NoTreksConstraint(no_trek_pairs)))
     scorer = GaussianBICGraphScore(data, lambda_bic=config.lambda_bic)
     local_scorer = _LocalGaussianBIC(data, config.lambda_bic)
+    rust_inner = None
+    if config.inner_backend in {"auto", "rust"}:
+        try:
+            import flopsearch  # type: ignore
+            rust_inner = getattr(flopsearch, "global_greedy_inner", None)
+        except ImportError:
+            rust_inner = None
+        if config.inner_backend == "rust" and rust_inner is None:
+            raise RuntimeError("requested Rust global-greedy inner kernel is unavailable")
     canonical_pairs = np.asarray(sorted({
         tuple(sorted(map(int, pair))) for pair in no_trek_pairs
     }), dtype=int).reshape(-1, 2)
@@ -175,6 +193,16 @@ def fit_global_greedy_notreks(
 
     def improve(graph: np.ndarray, order: Sequence[int]):
         nonlocal score_evaluations, feasibility_rejections, accepted_moves
+        if rust_inner is not None:
+            result = np.asarray(rust_inner(
+                data,
+                np.asarray(graph, dtype=np.uint8),
+                list(map(int, order)),
+                [tuple(map(int, pair)) for pair in canonical_pairs.tolist()],
+                lambda_bic=config.lambda_bic,
+                return_dag=True,
+            ), dtype=np.uint8)
+            return result, local_scorer.graph_score(result)
         current = _project_to_order(graph, order)
         current_score = local_scorer.graph_score(current)
         position = np.empty(d, dtype=int)
@@ -186,13 +214,19 @@ def fit_global_greedy_notreks(
             reach = _transitive_reach(current)
             invalid_additions = _invalid_notreks_additions(
                 reach, canonical_pairs)
-            best = (current_score, current.tobytes(), None)
+            current_bytes = current.tobytes()
+            best = (current_score, current_bytes, None)
+            # The same parent set is queried for every candidate edge into a
+            # child.  Materialising these once avoids O(d^2) repeated scans.
+            parents_by_child = [
+                np.flatnonzero(current[:, child]) for child in range(d)
+            ]
             for i, j in edges:
                 adding = not bool(current[i, j])
                 if adding and invalid_additions[i, j]:
                     feasibility_rejections += 1
                     continue
-                old_parents = np.flatnonzero(current[:, j])
+                old_parents = parents_by_child[j]
                 if adding:
                     new_parents = np.append(old_parents, i)
                 else:
@@ -201,11 +235,19 @@ def fit_global_greedy_notreks(
                          - local_scorer.score(j, old_parents)
                          + local_scorer.score(j, new_parents))
                 score_evaluations += 1
-                proposal = current.copy()
-                proposal[i, j] ^= 1
-                candidate = (value, proposal.tobytes(), proposal)
-                if candidate[:2] < best[:2]:
-                    best = candidate
+                # Most proposals are worse than the incumbent.  Defer the
+                # full matrix copy and bytewise tie key until a proposal can
+                # actually compete with the current best.
+                if value < best[0] - 1e-12:
+                    proposal = current.copy()
+                    proposal[i, j] ^= 1
+                    best = (value, proposal.tobytes(), proposal)
+                elif abs(value - best[0]) <= 1e-12:
+                    proposal = current.copy()
+                    proposal[i, j] ^= 1
+                    candidate = (value, proposal.tobytes(), proposal)
+                    if candidate[1] < best[1]:
+                        best = candidate
             if best[2] is None or best[0] >= current_score - 1e-10:
                 return current, current_score
             current, current_score = best[2], best[0]
@@ -214,15 +256,22 @@ def fit_global_greedy_notreks(
 
     rng = np.random.default_rng(config.seed)
     started = perf_counter()
+    deadline = (started + config.time_limit_seconds
+                if config.time_limit_seconds is not None else None)
     winner = None
     accepted_reinsertions = 0
     for restart in range(config.restarts):
+        if restart > 0 and deadline is not None and perf_counter() >= deadline:
+            break
         order = list(map(int, rng.permutation(d)))
         graph, current = improve(np.zeros((d, d), dtype=np.uint8), order)
         termination = "maximum_sweeps"
         for _ in range(config.max_sweeps):
             before = current
             for node in order.copy():
+                if deadline is not None and perf_counter() >= deadline:
+                    termination = "time_limit"
+                    break
                 old_position = order.index(node)
                 best = (current, tuple(order), graph, order)
                 for new_position in range(d):
@@ -239,6 +288,8 @@ def fit_global_greedy_notreks(
                 if best[0] < current - 1e-10:
                     current, graph, order = best[0], best[2], best[3]
                     accepted_reinsertions += 1
+            if termination == "time_limit":
+                break
             if before - current <= 1e-10:
                 termination = "joint_plateau"
                 break
@@ -264,4 +315,5 @@ def fit_global_greedy_notreks(
         accepted_reinsertions=accepted_reinsertions,
         termination_reason=winner[5],
         notreks_violation_count=int(summary["notreks_violation_count"]),
+        inner_backend="rust" if rust_inner is not None else "python",
     )

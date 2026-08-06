@@ -157,7 +157,14 @@ class FitDiagnostics:
 
 
 class SharedDagmaLinear(DagmaLinear):
-    """Official linear DAGMA loop with one additive, optional NOTREKS gradient."""
+    """Linear DAGMA with an additive NOTREKS gradient.
+
+    For inverse NOTREKS with the log-det DAG constraint, the NOTREKS
+    continuation uses the current DAGMA shift ``s``.  This makes the two
+    penalties share the validated resolvent at every central-path stage;
+    the final objective is therefore a central-path homotopy of the fixed
+    ``s=1`` NOTREKS objective.
+    """
 
     def __init__(self, loss_type: str, verbose: bool = False,
                  dtype: type = np.float64):
@@ -236,6 +243,7 @@ class SharedDagmaLinear(DagmaLinear):
             self, "terminal_zero_stage", False))
         termination_reason = "maximum iterations"
         iteration = 0
+        shared_resolvent_iterations = 0
         for iteration in range(1, int(max_iter) + 1):
             inverse_result = None
             if self.dag_constraint == "inverse_trace":
@@ -281,11 +289,20 @@ class SharedDagmaLinear(DagmaLinear):
                 G_nt = np.zeros_like(W)
             else:
                 started = time.perf_counter()
-                _, G_nt = self._trek_kernel.value_grad(
-                    W, self.trek_function,
-                    log_terms=self.trek_log_terms,
-                    inverse_epsilon=self.trek_inverse_epsilon,
+                can_share = (
+                    self.trek_function == "inv"
+                    and self.dag_constraint == "logdet"
+                    and hasattr(self._trek_kernel, "value_grad_from_resolvent")
                 )
+                if can_share:
+                    _, G_nt = self._trek_kernel.value_grad_from_resolvent(W, M)
+                    shared_resolvent_iterations += 1
+                else:
+                    _, G_nt = self._trek_kernel.value_grad(
+                        W, self.trek_function,
+                        log_terms=self.trek_log_terms,
+                        inverse_epsilon=self.trek_inverse_epsilon,
+                    )
                 if profile:
                     component_times["notreks_value_gradient_seconds"] += time.perf_counter() - started
             G_l1 = mu * self.lambda1 * np.sign(W)
@@ -456,6 +473,7 @@ class SharedDagmaLinear(DagmaLinear):
                 self.domain_rejections - domain_rejections_before),
             "backtracking_steps": int(
                 self.backtracking_steps - backtracking_before),
+            "shared_resolvent_iterations": int(shared_resolvent_iterations),
             "matrix_factorizations": int(
                 self._inverse_structural_kernel.matrix_factorizations
                 - inverse_counters_before["factorizations"]),

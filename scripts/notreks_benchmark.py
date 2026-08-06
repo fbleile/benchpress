@@ -105,7 +105,7 @@ def _algorithms(scenario: dict, defaults: dict, smoke: bool) -> dict:
         "trek_regularizer": "pst", "trek_function": "inv",
         "trek_kernel": "fast", "trek_weight": defaults["dagma_trek_weight"],
         "trek_log_terms": 2 * int(scenario["d"]),
-        "trek_inverse_epsilon": 1e-8,
+        "trek_inverse_epsilon": 0.0,
     }
     flop_restarts = 2 if smoke else int(defaults["flop_restarts"])
     flop_notreks_restarts = (1 if smoke else int(
@@ -119,7 +119,8 @@ def _algorithms(scenario: dict, defaults: dict, smoke: bool) -> dict:
         "restarts": flop_notreks_restarts, "search_timeout": None,
         "timeout": None,
         "algorithm_seed": int(defaults["algorithm_seed"]),
-        "search_strategy": "global_greedy",
+        # FLOP+NOTREKS uses the single production Rust implementation.
+        "search_strategy": "global_greedy_rust",
         "max_sweeps": int(defaults["flop_notreks_max_sweeps"]),
         "signature_top_k": int(defaults["flop_notreks_signature_top_k"]),
         "signature_exploration_k": int(
@@ -129,7 +130,7 @@ def _algorithms(scenario: dict, defaults: dict, smoke: bool) -> dict:
         "initial_signature_mean_size": 3.0,
         "initial_signature_max_size": 6,
         "n_jobs": int(defaults.get("n_jobs", 1)),
-        "search_version": "alternating_full_refit_b",
+        "search_version": "global_greedy_rust",
     }
     return {"flop": [flop], "flop_notreks": [flop_notreks],
             "dagma": [dagma], "dagma_notreks": [dagma_notreks]}
@@ -260,7 +261,8 @@ def collect_results(manifest_path: Path, results_root: Path, output_path: Path) 
                     if method not in METHOD_IDS:
                         continue
                     true_path = next((path for path in true_files
-                                      if f"seed={seed}.csv" in str(path)), None)
+                                      if scenario in str(path)
+                                      and f"seed={seed}.csv" in str(path)), None)
                     if true_path is None:
                         continue
                     metrics = _python_metrics(true_path, raw_path)
