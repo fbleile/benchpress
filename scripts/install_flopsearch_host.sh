@@ -9,8 +9,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 VENDOR_DIR="$ROOT_DIR/workflow/rules/structure_learning_algorithms/flop_notreks/vendor/flopsearch/flop_python"
 
-if "$PYTHON_BIN" -c 'import flopsearch' >/dev/null 2>&1; then
-  echo "flopsearch already available: $($PYTHON_BIN -c 'import flopsearch; print(getattr(flopsearch, "__version__", "installed"))')"
+if "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+import flopsearch
+import numpy as np
+
+# Importing an old wheel is not enough: the production path must expose the
+# Rust global-greedy backend introduced in this checkout.
+data = np.random.default_rng(1).normal(size=(32, 3))
+flopsearch.flop_notreks(
+    data, 2.0, [], restarts=0, seed=1,
+    search_version="global_greedy_rust", return_diagnostics=True)
+PY
+then
+  echo "flopsearch global_greedy_rust backend already available"
   exit 0
 fi
 
