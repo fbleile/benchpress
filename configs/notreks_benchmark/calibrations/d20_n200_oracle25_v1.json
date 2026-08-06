@@ -14,7 +14,7 @@
   "dagma_trek_function": "inv",
   "dagma_trek_kernel": "fast",
   "flop_restarts": 16,
-  "flop_notreks_search_strategy": "global_greedy",
+  "flop_notreks_search_strategy": "global_greedy_rust",
   "flop_notreks_restarts": 2,
   "flop_notreks_max_sweeps": 2,
   "flop_notreks_signature_top_k": 32,

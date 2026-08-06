@@ -5,9 +5,8 @@ is the editable design template. Both define reusable named model and graph fami
 Cartesian grid, and an optional `scenarios` list for targeted additions.  The
 compiler emits one normal Benchpress JSON configuration per scenario.  Every
 configuration contains exactly four IDs: `flop`, `flop_notreks`, `dagma`, and
-`dagma_notreks`. The FLOP+NOTREKS arm uses the hard-feasible
-`global_greedy` strategy; the older signature-alternating implementation is a
-diagnostic only.
+`dagma_notreks`. The FLOP+NOTREKS arm uses the fixed hard-feasible Rust
+global-greedy implementation.
 
 Prior-knowledge fractions deterministically subsample the full oracle no-trek
 sidecar with the same dataset-derived seed in both constrained methods. A positive fraction
@@ -49,12 +48,10 @@ and is suitable as the command source for a scheduler array. The repository
 and input resources should be transferred together so the fixed scenario IDs
 and seeds remain unchanged.
 
-Every command explicitly runs `workflow/Snakefile` with `--use-apptainer`.
-Thus the cluster execution is native Benchpress: Benchpress generates the
-graph and SEM data, constructs the oracle knowledge sidecar, executes the four
-registered structure-learning rules in their containers, and runs the normal
-Benchpress evaluation rules. `run_notreks_pipeline_smoke.py` is only a local
-container-free integration check and is not used by the cluster array.
+Every command runs `workflow/Snakefile` using the locally selected execution
+environment. Benchpress generates the graph and SEM data, constructs the
+oracle knowledge sidecar, executes the four registered structure-learning
+rules, and runs the normal Benchpress evaluation rules.
 
 The canonical submission command compiles the frozen design, submits the
 Benchpress array, and submits a dependent analysis job. No second cluster

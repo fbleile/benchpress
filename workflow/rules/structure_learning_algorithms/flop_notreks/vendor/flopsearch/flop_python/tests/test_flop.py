@@ -59,12 +59,11 @@ def test_flop_notreks_empty_and_invalid_inputs():
             flopsearch.flop_notreks(data, 2.0, pairs, restarts=0)
 
 
-def test_legacy_search_versions_are_not_public_options():
+def test_search_version_is_fixed():
     data = np.random.default_rng(8).normal(size=(100, 4))
-    for version in ("fixed_signature_a", "alternating_full_refit_b", "cached_repair_c", "unknown"):
-        with pytest.raises(ValueError):
-            flopsearch.flop_notreks(
-                data, 2.0, [(0, 1)], restarts=0, search_version=version)
+    with pytest.raises(ValueError):
+        flopsearch.flop_notreks(
+            data, 2.0, [(0, 1)], restarts=0, search_version="unsupported")
 
 
 def test_prune_parents_bic_is_deterministic_and_deletion_only():

@@ -1,32 +1,27 @@
 FLOP-NOTREKS
 =============
 
-FLOP-NOTREKS has one production implementation: the Rust global-greedy
-search. It keeps FLOP's order/reinsertion outer loop and performs a complete
+FLOP-NOTREKS has one production implementation: a Rust global-greedy
+search. It keeps FLOP's order-reinsertion outer loop and performs a complete
 BIC edge-toggle search for each fixed order. Every proposed parent addition is
 checked with the exact discrete ancestry witness test, so the returned DAG has
 zero violations before it is converted once to the Benchpress CPDAG format.
 
-The Rust implementation receives the canonical list of supplied NOTREKS
-pairs directly. It does not use the old 64-bit signature prototype, so the
-production path is not limited to 64 constrained targets. Runtime still grows
-with dimension because each order evaluates many local parent regressions;
-larger dimensions therefore need an appropriate restart count and wall-time
-budget.
+The implementation accepts arbitrary graph dimensions and receives the
+canonical supplied NOTREKS pair list directly. Runtime grows with dimension
+because each order evaluates many local parent regressions; larger jobs need
+an appropriate restart count and wall-time budget.
 
-The continuous DAGMA inverse kernel is not used by FLOP-NOTREKS. FLOP needs an
-exact hard certificate, and the Boolean ancestry closure is both exact and
-cheaper than recomputing a dense inverse for every candidate edge.
+The continuous DAGMA kernel is not part of FLOP-NOTREKS. FLOP uses its exact
+hard certificate and Boolean ancestry closure during the discrete search.
 
 Configuration
 -------------
 
-``search_strategy`` and ``search_version`` are retained in serialized paths
-for Benchpress compatibility, but both are fixed to ``global_greedy_rust`` and
-are not tuning knobs. The only production controls are the data, supplied
-pair fraction, BIC penalty, deterministic seed, restart count, and the outer
-reinsertion sweep count.
+The serialized implementation fields are fixed to ``global_greedy_rust`` by
+the schema and compiler. They are provenance fields, not tuning controls.
+The production controls are the data, supplied-pair fraction, BIC penalty,
+deterministic seed, restart count, and outer reinsertion sweep count.
 
-The method never receives graph truth. Incorrect prior pairs can exclude the
-true graph, so knowledge quality remains a scientific assumption rather than
-an optimizer fallback.
+The method never receives graph truth. Supplied pairs are the only structural
+prior, so their quality remains an explicit scientific assumption.

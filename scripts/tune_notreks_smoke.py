@@ -17,9 +17,6 @@ from workflow.rules.structure_learning_algorithms.dagma.shared import SharedDagm
 from workflow.rules.structure_learning_algorithms.flop_notreks.adapter import (
     count_no_trek_violations, selected_dag_from_diagnostics,
 )
-from workflow.rules.structure_learning_algorithms.flop_notreks.global_greedy import (
-    GlobalGreedyConfig, fit_global_greedy_notreks,
-)
 from workflow.rules.structure_learning_algorithms.notreks import subsample_no_trek_pairs
 
 
@@ -74,7 +71,7 @@ def run(output_dir: Path, write_defaults: Path | None = None):
     output_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     dagma_weights = (0.3, 3.0, 10.0)
-    flop_settings = ((1, 1), (2, 1), (2, 2))
+    flop_settings = ((2, 2),)
     for seed in (9101, 9102, 9103, 9104, 9105):
         data, truth, pairs = dataset(seed)
         model = SharedDagmaLinear("l2")
@@ -117,11 +114,14 @@ def run(output_dir: Path, write_defaults: Path | None = None):
                      **truth_metrics(truth, flop_graph)})
         for restarts, sweeps in flop_settings:
             started = time.perf_counter()
-            result = fit_global_greedy_notreks(
-                data, pairs, GlobalGreedyConfig(
-                    restarts=restarts, max_sweeps=sweeps,
-                    lambda_bic=2.0, seed=seed + 9137))
-            graph = result.adjacency
+            raw, diagnostics = flopsearch.flop_notreks(
+                data, 2.0, pairs, restarts=restarts, seed=seed + 9137,
+                max_signature_rounds=sweeps,
+                search_version="global_greedy_rust",
+                return_diagnostics=True, return_dag=True)
+            graph = np.zeros((data.shape[1], data.shape[1]), dtype=np.uint8)
+            for parent, child in diagnostics["selected_dag_edges"]:
+                graph[int(parent), int(child)] = 1
             bic, _ = gaussian_bic(data, graph, lambda_bic=2.0)
             rows.append({"seed": seed, "family": "flop_notreks",
                          "setting": f"restarts={restarts},sweeps={sweeps}",

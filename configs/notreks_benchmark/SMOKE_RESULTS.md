@@ -8,8 +8,8 @@ the truth metrics below are diagnostic.
 
 ## What FLOP+NOTREKS means here
 
-The benchmark uses `search_strategy=global_greedy`, not the historical Rust
-signature search. It is a standalone FLOP-style method:
+The benchmark uses the fixed Rust global-greedy implementation. It is a
+standalone FLOP-style method:
 
 1. propose node reinsertions in a causal order;
 2. for each order, greedily toggle edges using complete-graph Gaussian BIC;
@@ -17,9 +17,8 @@ signature search. It is a standalone FLOP-style method:
    no-trek pair;
 4. select the best restart by BIC.
 
-It does not call vanilla FLOP internally. The older
-`signature_alternating` implementation remains available as a diagnostic but
-is not selected by the paper benchmark configurations.
+It does not call FLOP internally; it performs the complete constrained search
+in one Rust call.
 
 ## Frozen calibration
 

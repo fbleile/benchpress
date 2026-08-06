@@ -20,9 +20,6 @@ from workflow.rules.structure_learning_algorithms.flop.adapter import convert_fl
 from workflow.rules.structure_learning_algorithms.flop_notreks.adapter import (
     count_no_trek_violations,
 )
-from workflow.rules.structure_learning_algorithms.flop_notreks.global_greedy import (
-    GlobalGreedyConfig, fit_global_greedy_notreks,
-)
 
 
 def run(output_dir: Path) -> None:
@@ -50,13 +47,16 @@ def run(output_dir: Path) -> None:
     runtime["flop"] = time.perf_counter() - started
 
     started = time.perf_counter()
-    greedy = fit_global_greedy_notreks(
-        data, pairs, GlobalGreedyConfig(
-            restarts=int(calibration["flop_notreks_restarts"]),
-            max_sweeps=int(calibration["flop_notreks_max_sweeps"]),
-            lambda_bic=2.0,
-            seed=int(calibration["algorithm_seed"]) + 9201))
-    estimates["flop_notreks"] = greedy.adjacency
+    raw, diagnostics = flopsearch.flop_notreks(
+        data, 2.0, pairs,
+        restarts=int(calibration["flop_notreks_restarts"]),
+        max_signature_rounds=int(calibration["flop_notreks_max_sweeps"]),
+        seed=int(calibration["algorithm_seed"]) + 9201,
+        search_version="global_greedy_rust", return_diagnostics=True,
+        return_dag=True)
+    estimates["flop_notreks"] = np.zeros((data.shape[1], data.shape[1]), dtype=np.uint8)
+    for parent, child in diagnostics["selected_dag_edges"]:
+        estimates["flop_notreks"][int(parent), int(child)] = 1
     runtime["flop_notreks"] = time.perf_counter() - started
 
     fit = dict(lambda1=.03, w_threshold=0., T=5,
