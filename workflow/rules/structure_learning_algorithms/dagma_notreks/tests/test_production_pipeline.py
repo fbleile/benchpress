@@ -16,7 +16,7 @@ def test_production_defaults_are_explicit():
     assert config.lambda1 == 0.03
     assert config.restarts == 5
     assert config.trek_function == "inv"
-    assert config.trek_weight == 10
+    assert config.trek_weight == 1
     assert config.screening_floor == 0.01
 
 

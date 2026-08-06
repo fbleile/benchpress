@@ -43,7 +43,11 @@ class ProductionConfig:
     """Stable production settings; diagnostic runners may override these."""
 
     lambda1: float = 0.03
-    trek_weight: float = 10.0
+    # The constrained objective is calibrated on the same standardized scale
+    # as vanilla DAGMA.  A weight of 10 overwhelms the data term and caused
+    # the NOTREKS variant to collapse on dense graphs; 1 is the production
+    # baseline used by the benchmark calibration.
+    trek_weight: float = 1.0
     trek_function: str = "inv"
     trek_kernel: str = "fast"
     restarts: int = 5

@@ -88,7 +88,7 @@ fit_args = dict(
     feasibility_threshold_tolerance=float(value(
         "feasibility_threshold_tolerance", 1e-6)),
     gradient_tolerance=float(value("gradient_tolerance", 1e-8)),
-    no_trek_pairs=pairs, trek_weight=float(value("trek_weight", .1)),
+    no_trek_pairs=pairs, trek_weight=float(value("trek_weight", 1.0)),
     trek_function=str(value("trek_function", "inv")),
     trek_kernel=str(value("trek_kernel", "fast")),
     trek_log_terms=int(value("trek_log_terms", 2 * len(df.columns))),

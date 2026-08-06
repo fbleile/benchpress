@@ -13,7 +13,8 @@ are:
 
 - log-det DAGMA with the ordinary five-stage positive-\(\mu\) path;
 - L2 loss, `lambda1=0.03`, and five deterministic restarts;
-- analytic inverse NOTREKS with `trek_weight=10` and `trek_kernel=fast`;
+- analytic inverse NOTREKS with the calibrated `trek_weight=1` and
+  `trek_kernel=fast`;
 - candidate threshold
   \(\tau=\max(\tau_{\mathrm{feas}},0.01)\);
 - deletion-only, fixed-order FLOP parent shrinking;

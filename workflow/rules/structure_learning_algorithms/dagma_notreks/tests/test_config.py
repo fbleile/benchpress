@@ -15,7 +15,7 @@ def test_production_configuration_is_unambiguous():
     assert config["dag_constraint"] == "logdet"
     assert config["lambda1"] == 0.03
     assert config["trek_function"] == "inv"
-    assert config["trek_weight"] == 10
+    assert config["trek_weight"] == 1
     assert config["restarts"] == 5
     assert config["screening_floor"] == 0.01
     assert config["postprocessing"] == "fixed_order_parent_shrink"

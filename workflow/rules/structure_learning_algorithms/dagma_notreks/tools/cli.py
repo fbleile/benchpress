@@ -193,7 +193,7 @@ def expand(grid_path):
         rows = [
             {"family": "dagma", "id": "dagma_multistart", "trek_weight": ""},
             {"family": "dagma_notreks", "id": "dagma_notreks_multistart",
-             "trek_weight": 10.0},
+             "trek_weight": 1.0},
             {"family": "pc_mi_oracle", "id": "pc_mi_oracle", "trek_weight": ""},
             {"family": "flop", "id": "flop_official_r64", "trek_weight": ""},
         ] + [{"family": "flop_notreks", "id": x["id"], "trek_weight": ""}

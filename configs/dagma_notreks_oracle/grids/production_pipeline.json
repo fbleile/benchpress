@@ -4,7 +4,7 @@
   "loss_type": "l2",
   "lambda1": 0.03,
   "trek_function": "inv",
-  "trek_weight": 10.0,
+  "trek_weight": 1.0,
   "restarts": 5,
   "screening_floor": 0.01,
   "candidate_policy": "max_feasibility_threshold_and_screening_floor",

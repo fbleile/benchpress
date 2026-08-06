@@ -10,7 +10,7 @@
     "knowledge_fraction": 0.25,
     "seeds": [9101, 9102, 9103, 9104, 9105]
   },
-  "dagma_trek_weight": 10.0,
+  "dagma_trek_weight": 1.0,
   "dagma_trek_function": "inv",
   "dagma_trek_kernel": "fast",
   "flop_restarts": 16,

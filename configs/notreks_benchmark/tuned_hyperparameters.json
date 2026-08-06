@@ -1,6 +1,6 @@
 {
   "calibration_status": "frozen_from_d20_smoke_9101_9105",
-  "dagma_trek_weight": 10.0,
+  "dagma_trek_weight": 1.0,
   "flop_restarts": 16,
   "flop_notreks_restarts": 2,
   "flop_notreks_max_sweeps": 2,
