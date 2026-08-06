@@ -127,49 +127,56 @@ fn order_key(order: &[usize]) -> Vec<usize> {
     order.to_vec()
 }
 
-#[allow(clippy::needless_range_loop)]
-fn transitive_reach(g: &GlobalScore, order: &[usize]) -> Vec<Vec<bool>> {
+/// Triangular path-sum representation for a fixed-order binary DAG.
+///
+/// In causal order, ``I - B`` is triangular and its inverse is
+/// ``I + B + B^2 + ...``.  This recurrence computes that inverse without a
+/// generic factorization.  All updates are nonnegative additions starting
+/// from one on the diagonal, so a reachable entry cannot become a numerical
+/// zero.  Positive entries are used only as a fast reachability predicate;
+/// the exact final certificate remains Boolean.
+fn triangular_path_counts(g: &GlobalScore, order: &[usize]) -> Vec<Vec<f64>> {
     let p = g.p;
-    let mut reach = vec![vec![false; p]; p];
-    for node in 0..p {
-        reach[node][node] = true;
+    let mut paths = vec![vec![0.0_f64; p]; p];
+    for (node, row) in paths.iter_mut().enumerate() {
+        row[node] = 1.0;
     }
     for &node in order {
         for child in 0..p {
             if g.local_scores[child].parents.contains(&node) {
-                for ancestor in 0..p {
-                    if reach[ancestor][node] {
-                        reach[ancestor][child] = true;
-                    }
+                let source: Vec<f64> = paths.iter().map(|row| row[node]).collect();
+                for (row, value) in paths.iter_mut().zip(source) {
+                    row[child] += value;
                 }
             }
         }
     }
-    reach
+    paths
 }
 
-fn addition_violates(
-    reach: &[Vec<bool>],
+#[allow(clippy::needless_range_loop)]
+fn addition_violates_path_counts(
+    paths: &[Vec<f64>],
     source: usize,
     target: usize,
     pairs: &[(usize, usize)],
 ) -> bool {
     for &(left, right) in pairs {
-        let left_affected = reach[target][left];
-        let right_affected = reach[target][right];
+        let left_affected = paths[target][left] > 0.0;
+        let right_affected = paths[target][right] > 0.0;
         if left_affected && right_affected {
             return true;
         }
         if left_affected
-            && (0..reach.len()).any(|ancestor| {
-                reach[ancestor][source] && reach[ancestor][right]
+            && (0..paths.len()).any(|ancestor| {
+                paths[ancestor][source] > 0.0 && paths[ancestor][right] > 0.0
             })
         {
             return true;
         }
         if right_affected
-            && (0..reach.len()).any(|ancestor| {
-                reach[ancestor][source] && reach[ancestor][left]
+            && (0..paths.len()).any(|ancestor| {
+                paths[ancestor][source] > 0.0 && paths[ancestor][left] > 0.0
             })
         {
             return true;
@@ -359,7 +366,7 @@ fn global_greedy_inner_with_score(
     loop {
         let current_encoding = dag_adjacency(&Dag::from_global_score(&g));
         let mut best: Option<(f64, Vec<u8>, usize, LocalScore)> = None;
-        let reach = transitive_reach(&g, order);
+        let path_counts = triangular_path_counts(&g, order);
         for source in 0..p {
             for target in 0..p {
                 if source == target || position[source] >= position[target] {
@@ -371,7 +378,10 @@ fn global_greedy_inner_with_score(
                 } else {
                     score.local_score_minus(target, &g.local_scores[target], source)?
                 };
-                if adding && addition_violates(&reach, source, target, pairs) {
+                if adding
+                    && addition_violates_path_counts(
+                        &path_counts, source, target, pairs)
+                {
                     continue;
                 }
                 let value = current_score - g.local_scores[target].bic + local.bic;
@@ -1039,6 +1049,27 @@ mod tests {
         assert_eq!(canonical.len(), 99);
         assert_eq!(canonical.first(), Some(&(0, 1)));
         assert_eq!(canonical.last(), Some(&(98, 99)));
+    }
+
+    #[test]
+    fn triangular_path_counts_match_exact_reachability() {
+        let matrix = DMatrix::from_fn(80, 4, |r, c| ((r + 3 * c) as f64).sin());
+        let score = Bic::new(&matrix, 2.0);
+        let mut global = GlobalScore::new(4, &score).unwrap();
+        global.local_scores[1] = score
+            .local_score_plus(1, &global.local_scores[1], 0)
+            .unwrap();
+        global.local_scores[2] = score
+            .local_score_plus(2, &global.local_scores[2], 1)
+            .unwrap();
+        global.local_scores[3] = score
+            .local_score_plus(3, &global.local_scores[3], 2)
+            .unwrap();
+        let paths = triangular_path_counts(&global, &[0, 1, 2, 3]);
+        assert!(paths[0][3] > 0.0);
+        assert!(paths[1][3] > 0.0);
+        assert_eq!(paths[3][0], 0.0);
+        assert_eq!(paths[0][0], 1.0);
     }
 
     #[test]

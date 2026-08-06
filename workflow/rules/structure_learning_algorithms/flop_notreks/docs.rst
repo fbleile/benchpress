@@ -59,13 +59,18 @@ ancestry lookup supplies the independent NOTREKS certificate.
 How the lookup is used efficiently
 -----------------------------------
 
-The lookup table stores only Boolean reachability; it never stores matrix
-inverses, floating-point trek values, or regression coefficients. In the Rust
-implementation, closure for the current fixed-order DAG is built by dynamic
-programming in causal order. Starting with the identity relation, the
-ancestors of a child are formed by taking the union of the ancestor rows of
-its parents. Because the order is already acyclic, this produces the exact
-transitive closure without a general graph-search loop for every pair.
+The lookup state stores path support, not regression coefficients. In the Rust
+implementation, the current fixed-order binary DAG is processed by the
+triangular recurrence
+
+``F = I;  F[:, child] += F[:, parent]``
+
+in causal order. This is the triangular solve ``(I - B) F = I`` written as a
+dynamic program. Every update is a nonnegative addition from an initial
+diagonal one, so a reachable entry cannot become a false numerical zero.
+Testing ``F[a, b] > 0`` therefore gives the same reachability support as the
+Boolean ancestry table for the binary DAG. The final result is still checked
+with the exact Boolean ancestry certificate.
 
 For a proposed ``u -> v``, only ancestry relations that can change need to be
 considered: ancestors of ``u`` can become ancestors of ``v`` and of the
@@ -76,12 +81,13 @@ ancestor, so they do not need a NOTREKS rejection test. The BIC candidate is
 then compared using FLOP's local parent-score update; no dense NOTREKS inverse
 or gradient is evaluated.
 
-The current ``global_greedy_rust`` implementation rebuilds the Boolean closure
-after each accepted inner-loop move. This is deliberate and simple: moves may
-add or delete edges, and rebuilding guarantees that the table is never stale.
-The table is therefore an exact feasibility cache, not an approximation. The
-dominant cost at larger dimensions is usually the many BIC parent-set
-proposals, rather than the Boolean operations themselves.
+The current ``global_greedy_rust`` implementation rebuilds these triangular
+path counts after each accepted inner-loop move. This is deliberate and
+simple: moves may add or delete edges, and rebuilding guarantees that the
+state is never stale. The path counts are used only as an exact-support
+prefilter; the complete Boolean ancestry certificate remains the final hard
+check. The dominant cost at larger dimensions is usually the many BIC
+parent-set proposals, rather than these support operations.
 
 Bit-packed ancestry tables are a natural further optimization. With one bitset
 per node, a union of ancestor sets becomes a word-level OR, and pair checks
