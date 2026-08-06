@@ -137,7 +137,9 @@ def run(run_dir: Path, output_dir: Path, limit: int | None = None) -> pd.DataFra
         "# Post-hoc NOTREKS feasibility projection\n\n"
         "This diagnostic starts from completed FLOP and DAGMA graphs and deletes "
         "edges carrying the largest number of exact forbidden-trek witnesses. "
-        "It is not an optimizer and does not alter primary benchmark outputs.\n\n"
+        "It is not an optimizer and does not alter primary benchmark outputs. "
+        "The saved projection is a DAG diagnostic; primary CPDAG results remain "
+        "the benchmark source of truth.\n\n"
         + (frame.groupby("method")["final_violations"].max().to_string() if len(frame) else "No completed source graphs found.")
         + "\n")
     return frame
