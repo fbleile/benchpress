@@ -27,7 +27,7 @@ rm -rf -- "$GENERATED_DIR"
   --spec "$SPEC" --output-dir "$GENERATED_DIR"
 
 RUN_ABS="$ROOT_DIR/$RUN_DIR"
-ANALYSIS_COMMAND="$PYTHON_BIN scripts/notreks_benchmark.py collect --manifest '$MANIFEST' --results-root '$RUN_ABS' --output '$RUN_ABS/results.csv' && $PYTHON_BIN scripts/notreks_benchmark.py analyse --results-csv '$RUN_ABS/results.csv' --output-dir '$RUN_ABS/analysis'"
+ANALYSIS_COMMAND="$PYTHON_BIN scripts/notreks_benchmark.py collect --manifest '$MANIFEST' --results-root '$RUN_ABS' --output '$RUN_ABS/results.csv' && $PYTHON_BIN scripts/notreks_benchmark.py analyse --results-csv '$RUN_ABS/results.csv' --output-dir '$RUN_ABS/analysis' && PYTHONPATH='$ROOT_DIR' $PYTHON_BIN scripts/notreks_feasibility_projection.py --run-dir '$RUN_ABS' --output-dir '$RUN_ABS/analysis/feasibility_projection'"
 
 exec "$PYTHON_BIN" workflow/rules/structure_learning_algorithms/notreks/tools/farm.py \
   --repo "$ROOT_DIR" --run-dir "$RUN_DIR" \
