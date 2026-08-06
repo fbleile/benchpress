@@ -8,6 +8,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 VENDOR_DIR="$ROOT_DIR/workflow/rules/structure_learning_algorithms/flop_notreks/vendor/flopsearch/flop_python"
+MATURIN_BIN="${MATURIN_BIN:-}"
+if [[ -z "$MATURIN_BIN" && -x "$ROOT_DIR/.venv-local-smoke/bin/maturin" ]]; then
+  MATURIN_BIN="$ROOT_DIR/.venv-local-smoke/bin/maturin"
+fi
+CARGO_BIN="${CARGO_BIN:-$(command -v cargo || true)}"
+if [[ -z "$CARGO_BIN" && -x "$HOME/.cargo/bin/cargo" ]]; then
+  CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+if [[ -n "$CARGO_BIN" ]]; then
+  export PATH="$(dirname "$CARGO_BIN"):$PATH"
+fi
 
 backend_available() {
   "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
@@ -38,12 +49,12 @@ if "$PYTHON_BIN" -m pip install --no-cache-dir "flopsearch==0.3.0"; then
   echo "Installed wheel lacks global_greedy_rust; building vendored source." >&2
 fi
 
-command -v maturin >/dev/null 2>&1 || {
+[[ -n "$MATURIN_BIN" && -x "$MATURIN_BIN" ]] || {
   echo "ERROR: no compatible flopsearch wheel and maturin is unavailable." >&2
-  echo "Install maturin and Rust/cargo, then rerun this script." >&2
+  echo "Set MATURIN_BIN to a maturin executable, then rerun this script." >&2
   exit 1
 }
-command -v cargo >/dev/null 2>&1 || {
+[[ -n "$CARGO_BIN" && -x "$CARGO_BIN" ]] || {
   echo "ERROR: no compatible flopsearch wheel and cargo is unavailable." >&2
   exit 1
 }
@@ -55,7 +66,8 @@ test -f "$VENDOR_DIR/pyproject.toml" || {
 wheel_dir="$(mktemp -d)"
 trap 'rm -rf "$wheel_dir"' EXIT
 echo "Building vendored flopsearch from $VENDOR_DIR"
-maturin build --manifest-path "$VENDOR_DIR/Cargo.toml" --release --out "$wheel_dir"
+"$MATURIN_BIN" build --interpreter "$PYTHON_BIN" \
+  --manifest-path "$VENDOR_DIR/Cargo.toml" --release --out "$wheel_dir"
 "$PYTHON_BIN" -m pip install --no-cache-dir "$wheel_dir"/*.whl
 backend_available || {
   echo "ERROR: vendored flopsearch build does not expose global_greedy_rust." >&2
