@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-SPEC="$ROOT_DIR/configs/notreks_benchmark/linear_gaussian_d20_d50_v1.json"
-GENERATED_DIR="$ROOT_DIR/configs/notreks_benchmark/generated_linear_gaussian_d20_d50_v1"
+SPEC="${NOTREKS_SPEC:-$ROOT_DIR/configs/notreks_benchmark/linear_gaussian_d20_d50_v1.json}"
+GENERATED_DIR="${NOTREKS_GENERATED_DIR:-$ROOT_DIR/configs/notreks_benchmark/generated_linear_gaussian_d20_d50_v1}"
 MANIFEST="$GENERATED_DIR/scenario_manifest.csv"
 RUN_DIR="${1:-results/notreks/linear_gaussian_d20_d50_v1}"
 WORKERS="${NOTREKS_WORKERS:-3}"
