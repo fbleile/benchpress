@@ -14,6 +14,8 @@ export PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export NOTREKS_CONTAINER_MODE=host
 export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 OMP_NUM_THREADS=1
 
+PYTHON_BIN="$PYTHON_BIN" bash "$ROOT_DIR/scripts/install_flopsearch_host.sh"
+
 "$PYTHON_BIN" -c 'import dagma, flopsearch' >/dev/null || {
   echo "ERROR: dagma and flopsearch must be importable in the active environment." >&2
   echo "Run: PYTHON_BIN=$PYTHON_BIN bash scripts/install_flopsearch_host.sh" >&2
