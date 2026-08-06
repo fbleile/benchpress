@@ -81,6 +81,48 @@ moves may add or delete edges, and rebuilding guarantees that the state is
 never stale. The dominant cost at larger dimensions is usually the many BIC
 parent-set proposals, rather than these word-level support operations.
 
+Relation to the power-series trek criterion
+--------------------------------------------
+
+The packed lookup is an exact Boolean implementation of the support criterion
+in :ref:`sec:Power Series Trek constraint`. For a binary adjacency matrix
+``B`` in a DAG, let
+
+``A = I + B + ... + B**(d-1)``.
+
+With ordinary arithmetic, ``A[c, j]`` is the number of directed paths from
+``c`` to ``j`` (including the length-zero path). Therefore
+
+``(A.T @ A)[i, j] > 0``
+
+if and only if ``i`` and ``j`` have a common ancestor, which is precisely the
+existence of an ``i``-``j`` trek. The packed implementation computes the same
+zero/nonzero information over the Boolean semiring. It stores the support of
+each column of ``A`` as an ancestor bitset ``a_j`` and evaluates
+
+``(a_i & a_j) != 0``.
+
+This implementation answers the feasibility question only: it records each
+ancestor once and therefore does not reproduce the multiplicity in the
+numeric value ``(A.T @ A)[i, j]``. That distinction is intentional. FLOP-
+NOTREKS needs to know whether a forbidden trek exists, not how many paths
+realize it. Since FLOP's order construction is a DAG, the truncated series is
+finite and the Boolean closure is exact; no inverse convergence condition,
+matrix exponential, eigenvalue test, or floating-point threshold is needed.
+
+The correspondence is therefore:
+
+``power series / A.T A``
+    path-support calculation used to characterize trek existence;
+``packed ancestry / bitset intersection``
+    exact word-level implementation of the same support test for the discrete
+    FLOP search.
+
+The continuous ``h_inv`` and ``h_exp`` penalties in DAGMA-NOTREKS are a
+separate optimization device. They operate on dense real-valued matrices and
+provide gradients; the FLOP-NOTREKS lookup is a hard certificate on the
+current discrete graph.
+
 Incrementally updating the closure after an edge addition is also possible by
 propagating the affected ancestor/descendant region. Deletions are harder:
 removing an edge can invalidate reachability that has another supporting path,
