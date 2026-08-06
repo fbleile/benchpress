@@ -56,6 +56,49 @@ production result is accepted only when the exact certificate reports zero
 violations. The forward-edge order rule supplies the DAG certificate; the
 ancestry lookup supplies the independent NOTREKS certificate.
 
+How the lookup is used efficiently
+-----------------------------------
+
+The lookup table stores only Boolean reachability; it never stores matrix
+inverses, floating-point trek values, or regression coefficients. In the Rust
+implementation, closure for the current fixed-order DAG is built by dynamic
+programming in causal order. Starting with the identity relation, the
+ancestors of a child are formed by taking the union of the ancestor rows of
+its parents. Because the order is already acyclic, this produces the exact
+transitive closure without a general graph-search loop for every pair.
+
+For a proposed ``u -> v``, only ancestry relations that can change need to be
+considered: ancestors of ``u`` can become ancestors of ``v`` and of the
+descendants of ``v``. The feasibility test checks those affected relations
+against the supplied forbidden pairs. It rejects an addition as soon as one
+pair would have a common ancestor. Edge deletions cannot create a new common
+ancestor, so they do not need a NOTREKS rejection test. The BIC candidate is
+then compared using FLOP's local parent-score update; no dense NOTREKS inverse
+or gradient is evaluated.
+
+The current ``global_greedy_rust`` implementation rebuilds the Boolean closure
+after each accepted inner-loop move. This is deliberate and simple: moves may
+add or delete edges, and rebuilding guarantees that the table is never stale.
+The table is therefore an exact feasibility cache, not an approximation. The
+dominant cost at larger dimensions is usually the many BIC parent-set
+proposals, rather than the Boolean operations themselves.
+
+Bit-packed ancestry tables are a natural further optimization. With one bitset
+per node, a union of ancestor sets becomes a word-level OR, and pair checks
+become bit intersections. Incrementally updating the closure after an edge
+addition is also possible by propagating the affected ancestor/descendant
+region. Deletions are harder: removing an edge can invalidate reachability
+that has another supporting path, so a safe implementation must either track
+path support counts or rebuild the affected closure. These optimizations can
+reduce constants, but they do not change the exact certificate or the search
+problem. The production implementation currently favors the simpler exact
+rebuild over an unvalidated dynamic-closure cache.
+
+The bit-packed signature representation in other constrained-search code is a
+different optimization for a different search path. It must not be confused
+with the arbitrary-dimension Boolean closure used by the production global
+greedy implementation.
+
 What is and is not shared
 -------------------------
 
