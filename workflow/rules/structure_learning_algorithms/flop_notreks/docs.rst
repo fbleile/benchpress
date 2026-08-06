@@ -59,18 +59,12 @@ ancestry lookup supplies the independent NOTREKS certificate.
 How the lookup is used efficiently
 -----------------------------------
 
-The lookup state stores path support, not regression coefficients. In the Rust
-implementation, the current fixed-order binary DAG is processed by the
-triangular recurrence
-
-``F = I;  F[:, child] += F[:, parent]``
-
-in causal order. This is the triangular solve ``(I - B) F = I`` written as a
-dynamic program. Every update is a nonnegative addition from an initial
-diagonal one, so a reachable entry cannot become a false numerical zero.
-Testing ``F[a, b] > 0`` therefore gives the same reachability support as the
-Boolean ancestry table for the binary DAG. The final result is still checked
-with the exact Boolean ancestry certificate.
+The lookup state stores only ancestry support, not regression coefficients or
+floating-point path values. In the Rust implementation, each node owns a
+packed bitset of its ancestors. Starting with one diagonal bit, a child bitset
+is formed by word-level OR operations with the bitsets of its parents. This is
+the Boolean triangular solve in causal order. It is exact for arbitrary
+dimensions and has no numerical zeros or thresholds.
 
 For a proposed ``u -> v``, only ancestry relations that can change need to be
 considered: ancestors of ``u`` can become ancestors of ``v`` and of the
@@ -81,24 +75,18 @@ ancestor, so they do not need a NOTREKS rejection test. The BIC candidate is
 then compared using FLOP's local parent-score update; no dense NOTREKS inverse
 or gradient is evaluated.
 
-The current ``global_greedy_rust`` implementation rebuilds these triangular
-path counts after each accepted inner-loop move. This is deliberate and
-simple: moves may add or delete edges, and rebuilding guarantees that the
-state is never stale. The path counts are used only as an exact-support
-prefilter; the complete Boolean ancestry certificate remains the final hard
-check. The dominant cost at larger dimensions is usually the many BIC
-parent-set proposals, rather than these support operations.
+The current ``global_greedy_rust`` implementation rebuilds these packed
+bitsets after each accepted inner-loop move. This is deliberate and simple:
+moves may add or delete edges, and rebuilding guarantees that the state is
+never stale. The dominant cost at larger dimensions is usually the many BIC
+parent-set proposals, rather than these word-level support operations.
 
-Bit-packed ancestry tables are a natural further optimization. With one bitset
-per node, a union of ancestor sets becomes a word-level OR, and pair checks
-become bit intersections. Incrementally updating the closure after an edge
-addition is also possible by propagating the affected ancestor/descendant
-region. Deletions are harder: removing an edge can invalidate reachability
-that has another supporting path, so a safe implementation must either track
-path support counts or rebuild the affected closure. These optimizations can
-reduce constants, but they do not change the exact certificate or the search
-problem. The production implementation currently favors the simpler exact
-rebuild over an unvalidated dynamic-closure cache.
+Incrementally updating the closure after an edge addition is also possible by
+propagating the affected ancestor/descendant region. Deletions are harder:
+removing an edge can invalidate reachability that has another supporting path,
+so a safe implementation must either track path support counts or rebuild the
+affected closure. The production implementation uses the simpler exact
+rebuild rather than an unvalidated dynamic-closure cache.
 
 The bit-packed signature representation in other constrained-search code is a
 different optimization for a different search path. It must not be confused

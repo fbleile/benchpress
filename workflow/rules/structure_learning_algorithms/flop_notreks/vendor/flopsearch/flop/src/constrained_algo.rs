@@ -127,57 +127,59 @@ fn order_key(order: &[usize]) -> Vec<usize> {
     order.to_vec()
 }
 
-/// Triangular path-sum representation for a fixed-order binary DAG.
+/// Exact packed-bitset ancestry state for a fixed-order binary DAG.
 ///
-/// In causal order, ``I - B`` is triangular and its inverse is
-/// ``I + B + B^2 + ...``.  This recurrence computes that inverse without a
-/// generic factorization.  All updates are nonnegative additions starting
-/// from one on the diagonal, so a reachable entry cannot become a numerical
-/// zero.  Positive entries are used only as a fast reachability predicate;
-/// the exact final certificate remains Boolean.
-fn triangular_path_counts(g: &GlobalScore, order: &[usize]) -> Vec<Vec<f64>> {
+/// Each row contains the ancestors of one node. Since the graph is processed
+/// in causal order, a child row is formed by OR-ing its parent rows. This is
+/// the Boolean triangular solve, with `u64` words replacing scalar Boolean
+/// entries. It is exact for arbitrary dimensions and has no numerical zeros.
+fn packed_ancestry(g: &GlobalScore, order: &[usize]) -> Vec<Vec<u64>> {
     let p = g.p;
-    let mut paths = vec![vec![0.0_f64; p]; p];
-    for (node, row) in paths.iter_mut().enumerate() {
-        row[node] = 1.0;
+    let words = p.div_ceil(64);
+    let mut ancestors = vec![vec![0_u64; words]; p];
+    for (node, row) in ancestors.iter_mut().enumerate() {
+        row[node / 64] |= 1_u64 << (node % 64);
     }
     for &node in order {
         for child in 0..p {
             if g.local_scores[child].parents.contains(&node) {
-                let source: Vec<f64> = paths.iter().map(|row| row[node]).collect();
-                for (row, value) in paths.iter_mut().zip(source) {
-                    row[child] += value;
+                let source = ancestors[node].clone();
+                for (word, value) in source.into_iter().enumerate() {
+                    ancestors[child][word] |= value;
                 }
             }
         }
     }
-    paths
+    ancestors
 }
 
-#[allow(clippy::needless_range_loop)]
-fn addition_violates_path_counts(
-    paths: &[Vec<f64>],
+fn addition_violates_packed(
+    ancestors: &[Vec<u64>],
     source: usize,
     target: usize,
     pairs: &[(usize, usize)],
 ) -> bool {
     for &(left, right) in pairs {
-        let left_affected = paths[target][left] > 0.0;
-        let right_affected = paths[target][right] > 0.0;
+        let target_word = target / 64;
+        let target_mask = 1_u64 << (target % 64);
+        let left_affected = ancestors[left][target_word] & target_mask != 0;
+        let right_affected = ancestors[right][target_word] & target_mask != 0;
         if left_affected && right_affected {
             return true;
         }
         if left_affected
-            && (0..paths.len()).any(|ancestor| {
-                paths[ancestor][source] > 0.0 && paths[ancestor][right] > 0.0
-            })
+            && ancestors[source]
+                .iter()
+                .zip(&ancestors[right])
+                .any(|(a, b)| a & b != 0)
         {
             return true;
         }
         if right_affected
-            && (0..paths.len()).any(|ancestor| {
-                paths[ancestor][source] > 0.0 && paths[ancestor][left] > 0.0
-            })
+            && ancestors[source]
+                .iter()
+                .zip(&ancestors[left])
+                .any(|(a, b)| a & b != 0)
         {
             return true;
         }
@@ -366,7 +368,7 @@ fn global_greedy_inner_with_score(
     loop {
         let current_encoding = dag_adjacency(&Dag::from_global_score(&g));
         let mut best: Option<(f64, Vec<u8>, usize, LocalScore)> = None;
-        let path_counts = triangular_path_counts(&g, order);
+        let ancestors = packed_ancestry(&g, order);
         for source in 0..p {
             for target in 0..p {
                 if source == target || position[source] >= position[target] {
@@ -379,8 +381,8 @@ fn global_greedy_inner_with_score(
                     score.local_score_minus(target, &g.local_scores[target], source)?
                 };
                 if adding
-                    && addition_violates_path_counts(
-                        &path_counts, source, target, pairs)
+                    && addition_violates_packed(
+                        &ancestors, source, target, pairs)
                 {
                     continue;
                 }
@@ -1052,7 +1054,7 @@ mod tests {
     }
 
     #[test]
-    fn triangular_path_counts_match_exact_reachability() {
+    fn packed_ancestry_matches_exact_reachability() {
         let matrix = DMatrix::from_fn(80, 4, |r, c| ((r + 3 * c) as f64).sin());
         let score = Bic::new(&matrix, 2.0);
         let mut global = GlobalScore::new(4, &score).unwrap();
@@ -1065,11 +1067,11 @@ mod tests {
         global.local_scores[3] = score
             .local_score_plus(3, &global.local_scores[3], 2)
             .unwrap();
-        let paths = triangular_path_counts(&global, &[0, 1, 2, 3]);
-        assert!(paths[0][3] > 0.0);
-        assert!(paths[1][3] > 0.0);
-        assert_eq!(paths[3][0], 0.0);
-        assert_eq!(paths[0][0], 1.0);
+        let ancestors = packed_ancestry(&global, &[0, 1, 2, 3]);
+        assert_ne!(ancestors[3][0] & 1, 0);
+        assert_ne!(ancestors[3][0] & (1 << 1), 0);
+        assert_eq!(ancestors[0][0] & (1 << 3), 0);
+        assert_ne!(ancestors[0][0] & 1, 0);
     }
 
     #[test]
