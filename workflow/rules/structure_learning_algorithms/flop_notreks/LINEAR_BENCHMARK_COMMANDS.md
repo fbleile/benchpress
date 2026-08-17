@@ -54,8 +54,9 @@ for both the DAGMA acyclicity and NOTREKS path constraints, including the
 chain-rule derivative. Select it with `--adjacency-mapping phi_log`.
 
 For reheating, add `--dagma-reheat --dagma-reheat-mu .1`. The fast optimizer
-then uses `1 -> .1 -> .01 -> 0 -> .1 -> .01 -> 0`; the first zero stage
-provides a structural warm-start before the data term is reintroduced.
+then uses `1 -> .1 -> .01 -> 0 -> .1 -> .01`; the zero stage provides a
+structural warm-start before the data term is reintroduced, and the final
+positive stage prevents structural-only collapse.
 
 ## First real d=20 smoke
 
