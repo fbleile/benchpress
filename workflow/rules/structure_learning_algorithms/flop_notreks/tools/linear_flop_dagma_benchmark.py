@@ -163,42 +163,52 @@ def dagma_run(X, truth, pairs, seed, args, method):
     objective = LinearL2Objective(X)
     best = None
     for restart in range(args.dagma_restarts):
-        components = []
-        if fit_pairs:
-            components.append(NoTreksPenalty(
-                fit_pairs, X.shape[1], weight=args.notreks_weight,
+        W = deterministic_initial_adjacency(X.shape[1], seed + restart)
+        # NOTREKS is used as a continuation force, not as a cold-start edge
+        # deletion objective.  The unconstrained basin is followed by a
+        # gradual ramp to the requested weight, retaining every stage for
+        # thresholding/postselection.
+        stage_weights = ((0.0,) if not fit_pairs else
+                         (0.0, args.notreks_weight * .25,
+                          args.notreks_weight))
+        stage_results = []
+        for stage_weight in stage_weights:
+            components = [] if stage_weight == 0.0 else [NoTreksPenalty(
+                fit_pairs, X.shape[1], weight=stage_weight,
                 function="inv", kernel="fast",
-                adjacency_mapping=args.adjacency_mapping))
-        result = fit_weighted_adjacency(
-            objective,
-            DagmaFastConfig(
-                lambda1=args.dagma_lambda1,
-                dag_penalty_weight=args.dagma_weight,
-                T=5,
-                warm_iter=args.dagma_warm_iter,
-                max_iter=args.dagma_max_iter,
-                optimizer_tol=args.dagma_tol),
-            initialization=deterministic_initial_adjacency(
-                X.shape[1], seed + restart),
-            dag_penalty=LogDetDagPenalty(
-                X.shape[1], adjacency_mapping=args.adjacency_mapping),
-            structural_penalties=components)
+                adjacency_mapping=args.adjacency_mapping)]
+            result = fit_weighted_adjacency(
+                objective,
+                DagmaFastConfig(
+                    lambda1=args.dagma_lambda1,
+                    dag_penalty_weight=args.dagma_weight,
+                    T=5,
+                    warm_iter=args.dagma_warm_iter,
+                    max_iter=args.dagma_max_iter,
+                    optimizer_tol=args.dagma_tol),
+                initialization=W,
+                dag_penalty=LogDetDagPenalty(
+                    X.shape[1], adjacency_mapping=args.adjacency_mapping),
+                structural_penalties=components)
+            W = result.weighted_adjacency
+            stage_results.append((stage_weight, result))
         scorer = LinearCandidateScorer(
             X, regularizer_type="L1",
             regularizer_weight=args.dagma_lambda1)
-        postselection = select_postselection_candidate(
-            result.weighted_adjacency,
-            scorer=scorer,
-            config=PostselectionConfig(
-                policy="PS5_fixed_threshold_joint_feasible",
-                fixed_threshold=args.dagma_threshold,
-                notreks_constraint_active=bool(fit_pairs)),
-            model_class="linear_dagma", notreks_pairs=fit_pairs)
-        candidate = (postselection.candidate_score, restart, result,
-                     postselection)
-        if best is None or candidate[:2] < best[:2]:
-            best = candidate
-    _, _, result, postselection = best
+        for stage_weight, result in stage_results:
+            postselection = select_postselection_candidate(
+                result.weighted_adjacency,
+                scorer=scorer,
+                config=PostselectionConfig(
+                    policy="PS5_fixed_threshold_joint_feasible",
+                    fixed_threshold=args.dagma_threshold,
+                    notreks_constraint_active=bool(fit_pairs)),
+                model_class="linear_dagma", notreks_pairs=fit_pairs)
+            candidate = (postselection.candidate_score, restart,
+                         stage_weight, result, postselection)
+            if best is None or candidate[:3] < best[:3]:
+                best = candidate
+    _, _, selected_weight, result, postselection = best
     graph = postselection.adjacency
     return {
         "method": method, "runtime": perf_counter() - started,
@@ -209,6 +219,7 @@ def dagma_run(X, truth, pairs, seed, args, method):
         "dagma_lambda1": args.dagma_lambda1,
         "dagma_weight": args.dagma_weight,
         "adjacency_mapping": args.adjacency_mapping,
+        "notreks_continuation_weight": selected_weight,
         **metrics(graph, truth, pairs, X),
     }
 
@@ -289,8 +300,9 @@ def main():
     for graph_seed in args.graph_seeds:
         for algorithm_seed in args.algorithm_seeds:
             for fraction in args.knowledge_fractions:
-                rows.extend(run_case(args, graph_seed, algorithm_seed, fraction))
-                print(pd.DataFrame(rows[-4:]).to_string(index=False), flush=True)
+                case_rows = run_case(args, graph_seed, algorithm_seed, fraction)
+                rows.extend(case_rows)
+                print(pd.DataFrame(case_rows).to_string(index=False), flush=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     path = args.output_dir / "per_run.csv"
     frame = pd.DataFrame(rows)

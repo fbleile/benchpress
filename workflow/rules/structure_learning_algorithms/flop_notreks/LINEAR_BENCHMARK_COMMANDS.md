@@ -35,6 +35,12 @@ the DAG and NOTREKS constraints remain independently verified after
 postselection. DAGMA's existing postselection and
 independent DAG/NOTREKS verification are retained.
 
+For positive knowledge fractions, DAGMA+NOTREKS now follows a soft
+continuation: unconstrained DAGMA, then 25% of the requested NOTREKS weight,
+then the requested weight. All stages are retained for fixed-threshold
+postselection, so NOTREKS can steer the basin without automatically forcing
+the final graph to be the most aggressively pruned stage.
+
 The default `hadamard` mapping uses (W\circ W). The alternative
 `phi_log` mapping uses
 
