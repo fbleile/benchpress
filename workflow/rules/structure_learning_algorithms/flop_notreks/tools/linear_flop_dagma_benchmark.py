@@ -200,8 +200,10 @@ def dagma_run(X, truth, pairs, seed, args, method):
                 result.weighted_adjacency,
                 scorer=scorer,
                 config=PostselectionConfig(
-                    policy="PS1_joint_feasible_greedy_score",
-                    threshold_grid=args.dagma_threshold_grid,
+                    policy="PS4_joint_violation_repair",
+                    candidate_edge_pool="low_threshold_supergraph",
+                    low_threshold=args.dagma_low_threshold,
+                    threshold_grid=(),
                     fixed_threshold=args.dagma_threshold,
                     notreks_constraint_active=bool(fit_pairs)),
                 model_class="linear_dagma", notreks_pairs=fit_pairs)
@@ -286,9 +288,8 @@ def main():
                         help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
                         help="first (highest) DAGMA support threshold")
-    parser.add_argument("--dagma-threshold-grid", nargs="+", type=float,
-                        default=[.30, .20, .10, .05, .03, .01],
-                        help="thresholds tested in descending order")
+    parser.add_argument("--dagma-low-threshold", type=float, default=.01,
+                        help="lowest support level used for edge-wise deletion")
     parser.add_argument("--dagma-weight", type=float, default=0.5,
                         help="continuous DAGMA acyclicity penalty coefficient")
     parser.add_argument("--notreks-weight", type=float, default=0.5,
@@ -300,9 +301,6 @@ def main():
                         default=Path("results/flop_dagma_notreks"))
     parser.add_argument("--append", action="store_true")
     args = parser.parse_args()
-    args.dagma_threshold_grid = sorted(
-        {float(args.dagma_threshold), *map(float, args.dagma_threshold_grid)},
-        reverse=True)
     rows = []
     for graph_seed in args.graph_seeds:
         for algorithm_seed in args.algorithm_seeds:
