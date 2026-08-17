@@ -175,6 +175,8 @@ def dagma_run(X, truth, pairs, seed, args, method):
                 lambda1=args.dagma_lambda1,
                 dag_penalty_weight=args.dagma_weight,
                 T=5,
+                mu_schedule=(tuple(args.dagma_mu_schedule)
+                             if args.dagma_mu_schedule is not None else None),
                 warm_iter=args.dagma_warm_iter,
                 max_iter=args.dagma_max_iter,
                 optimizer_tol=args.dagma_tol),
@@ -270,6 +272,9 @@ def main():
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
     parser.add_argument("--dagma-tol", type=float, default=1e-6,
                         help="fast-DAGMA checkpoint convergence tolerance")
+    parser.add_argument("--dagma-mu-schedule", nargs="+", type=float,
+                        default=None,
+                        help="explicit ordered mu schedule overriding DAGMA default")
     parser.add_argument("--dagma-lambda1", type=float, default=0.03,
                         help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
