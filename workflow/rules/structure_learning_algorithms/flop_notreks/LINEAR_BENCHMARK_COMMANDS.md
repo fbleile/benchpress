@@ -35,6 +35,16 @@ the DAG and NOTREKS constraints remain independently verified after
 postselection. DAGMA's existing postselection and
 independent DAG/NOTREKS verification are retained.
 
+The default `hadamard` mapping uses (W\circ W). The alternative
+`phi_log` mapping uses
+
+\[
+\phi_d(x)=\frac{2}{d}\log(1+|x|),
+\]
+
+for both the DAGMA acyclicity and NOTREKS path constraints, including the
+chain-rule derivative. Select it with `--adjacency-mapping phi_log`.
+
 ## First real d=20 smoke
 
 Run one graph and one algorithm seed across all knowledge levels:

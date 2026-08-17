@@ -23,6 +23,7 @@ class NoTreksPenalty:
     weight: float = 1.0
     function: str = "inv"
     kernel: str = FAST_KERNEL
+    adjacency_mapping: str = "hadamard"
     inverse_epsilon: float = 1e-8
     log_terms: int | None = None
     _implementation: BaseNoTreksKernel = field(init=False, repr=False)
@@ -31,7 +32,8 @@ class NoTreksPenalty:
         if not np.isfinite(self.weight) or self.weight < 0:
             raise ValueError("NOTREKS weight must be finite and non-negative")
         self._implementation = make_notreks_kernel(
-            self.kernel, self.pairs, self.dimension)
+            self.kernel, self.pairs, self.dimension,
+            adjacency_mapping=self.adjacency_mapping)
 
     def value_and_grad(self, W: np.ndarray) -> tuple[float, np.ndarray]:
         result = self._implementation.value_and_grad(
@@ -50,5 +52,6 @@ class NoTreksPenalty:
             "kernel": self.kernel,
             "function": self.function,
             "weight": self.weight,
+            "adjacency_mapping": self.adjacency_mapping,
             **self._implementation.diagnostics(),
         }

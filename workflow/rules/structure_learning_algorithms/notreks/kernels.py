@@ -122,6 +122,7 @@ class BaseNoTreksKernel:
     pairs: np.ndarray
     semantics: PairSemantics = "unordered"
     pair_weights: np.ndarray | None = None
+    adjacency_mapping: str = "hadamard"
     scale: float = field(init=False)
     mask: np.ndarray = field(init=False)
     nodes: np.ndarray = field(init=False)
@@ -130,6 +131,8 @@ class BaseNoTreksKernel:
     _last: KernelDiagnostics | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
+        if self.adjacency_mapping not in {"hadamard", "phi_log"}:
+            raise ValueError("unknown adjacency mapping")
         self.scale = 2.0 / (self.d - 1) if self.d > 1 else 0.0
         self.mask = pair_mask(
             self.pairs, self.d, semantics=self.semantics,
@@ -144,10 +147,19 @@ class BaseNoTreksKernel:
         *,
         semantics: PairSemantics = "unordered",
         pair_weights: Sequence[float] | None = None,
+        adjacency_mapping: str = "hadamard",
     ):
         canonical = validate_pairs(pairs, d, semantics=semantics)
         weights = None if pair_weights is None else np.asarray(pair_weights, dtype=float)
-        return cls(d, canonical, semantics=semantics, pair_weights=weights)
+        return cls(d, canonical, semantics=semantics, pair_weights=weights,
+                   adjacency_mapping=adjacency_mapping)
+
+    def _mapped_adjacency(self, W):
+        if self.adjacency_mapping == "hadamard":
+            return W * W, 2.0 * W
+        scale = 2.0 / max(1, self.d)
+        return (scale * np.log1p(np.abs(W)),
+                scale * np.sign(W) / (1.0 + np.abs(W)))
 
     @property
     def empty(self) -> bool:
@@ -292,7 +304,7 @@ class DenseCurrentNoTreksKernel(BaseNoTreksKernel):
         K = 2 * self.d if log_terms is None else int(log_terms)
         if K < 1 or inverse_epsilon < 0:
             raise ValueError("log_terms must be positive and inverse_epsilon non-negative")
-        A = W * W
+        A, jacobian = self._mapped_adjacency(W)
         matrix_function_evaluations = 1
         factorizations = 0
         solves = 0
@@ -324,7 +336,7 @@ class DenseCurrentNoTreksKernel(BaseNoTreksKernel):
                 Ga += _power_adjoint(A, Gf, k, 1.0 / k)
         else:
             Ga = _power_adjoint(np.eye(self.d) + A, Gf, self.d)
-        grad = 2.0 * W * Ga
+        grad = jacobian * Ga
         finished = time.perf_counter()
         diag = KernelDiagnostics(
             name=self.name,
@@ -359,7 +371,7 @@ class SelectedInverseNoTreksKernel(BaseNoTreksKernel):
             raise ValueError(f"W must have shape {(self.d, self.d)}")
         if self.empty:
             return self._empty_result(W, self.name, function)
-        A = W * W
+        A, jacobian = self._mapped_adjacency(W)
         alpha = 1.0 + inverse_epsilon
         system = alpha * np.eye(self.d) - A
         rho = float(max(abs(np.linalg.eigvals(A)), default=0.0))
@@ -397,7 +409,7 @@ class SelectedInverseNoTreksKernel(BaseNoTreksKernel):
         GY = self.scale * (Y @ B)
         Z = sla.lu_solve((lu, piv), GY, trans=1, check_finite=False)
         GX = Z @ Y.T
-        grad = 2.0 * W * GX
+        grad = jacobian * GX
         finished = time.perf_counter()
         diag = KernelDiagnostics(
             name=self.name,
@@ -451,7 +463,7 @@ class PolynomialSelectedNoTreksKernel(BaseNoTreksKernel):
         if self.empty:
             return self._empty_result(W, self.name, function)
         coeffs = self._coefficients(function, log_terms)
-        X = W * W
+        X, jacobian = self._mapped_adjacency(W)
         E = np.eye(self.d)[:, self.nodes]
         powers = [E]
         Y = coeffs[0] * E
@@ -476,7 +488,7 @@ class PolynomialSelectedNoTreksKernel(BaseNoTreksKernel):
             total = adj + coeffs[k] * GY
             GX += total @ powers[k - 1].T
             adj = X.T @ total
-        grad = 2.0 * W * GX
+        grad = jacobian * GX
         finished = time.perf_counter()
         diag = KernelDiagnostics(
             name=self.name,
@@ -514,13 +526,15 @@ def make_notreks_kernel(
     *,
     semantics: PairSemantics = "unordered",
     pair_weights: Sequence[float] | None = None,
+    adjacency_mapping: str = "hadamard",
 ) -> BaseNoTreksKernel:
     """Instantiate a named benchmarkable NOTREKS kernel."""
     if name not in KERNEL_REGISTRY:
         raise ValueError(
             f"unknown NOTREKS kernel {name!r}; expected one of {sorted(KERNEL_REGISTRY)}")
     return KERNEL_REGISTRY[name].from_pairs(
-        pairs, d, semantics=semantics, pair_weights=pair_weights)
+        pairs, d, semantics=semantics, pair_weights=pair_weights,
+        adjacency_mapping=adjacency_mapping)
 
 
 def notreks_value_grad_kernel(

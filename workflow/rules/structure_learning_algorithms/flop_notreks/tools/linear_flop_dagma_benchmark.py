@@ -21,6 +21,9 @@ from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import (
 from workflow.rules.structure_learning_algorithms.dagma_fast import (
     DagmaFastConfig, LinearL2Objective, fit_weighted_adjacency,
 )
+from workflow.rules.structure_learning_algorithms.dagma_fast.penalties import (
+    LogDetDagPenalty,
+)
 from workflow.rules.structure_learning_algorithms.dagma.shared import (
     deterministic_initial_adjacency,
 )
@@ -164,7 +167,8 @@ def dagma_run(X, truth, pairs, seed, args, method):
         if fit_pairs:
             components.append(NoTreksPenalty(
                 fit_pairs, X.shape[1], weight=args.notreks_weight,
-                function="inv", kernel="fast"))
+                function="inv", kernel="fast",
+                adjacency_mapping=args.adjacency_mapping))
         result = fit_weighted_adjacency(
             objective,
             DagmaFastConfig(
@@ -176,6 +180,8 @@ def dagma_run(X, truth, pairs, seed, args, method):
                 optimizer_tol=args.dagma_tol),
             initialization=deterministic_initial_adjacency(
                 X.shape[1], seed + restart),
+            dag_penalty=LogDetDagPenalty(
+                X.shape[1], adjacency_mapping=args.adjacency_mapping),
             structural_penalties=components)
         scorer = LinearCandidateScorer(
             X, regularizer_type="L1",
@@ -202,6 +208,7 @@ def dagma_run(X, truth, pairs, seed, args, method):
         "notreks_weight": args.notreks_weight if fit_pairs else 0.,
         "dagma_lambda1": args.dagma_lambda1,
         "dagma_weight": args.dagma_weight,
+        "adjacency_mapping": args.adjacency_mapping,
         **metrics(graph, truth, pairs, X),
     }
 
@@ -271,6 +278,9 @@ def main():
                         help="continuous DAGMA acyclicity penalty coefficient")
     parser.add_argument("--notreks-weight", type=float, default=0.5,
                         help="continuous NOTREKS penalty coefficient")
+    parser.add_argument("--adjacency-mapping", choices=("hadamard", "phi_log"),
+                        default="hadamard",
+                        help="map used by both DAG and NOTREKS constraints")
     parser.add_argument("--output-dir", type=Path,
                         default=Path("results/flop_dagma_notreks"))
     parser.add_argument("--append", action="store_true")
