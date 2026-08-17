@@ -105,7 +105,7 @@ def violation_count(graph, pairs):
                    for left, right in pairs))
 
 
-def metrics(graph, truth, pairs, X):
+def metrics(graph, truth, pairs, X, adjacency_mapping="hadamard"):
     skeleton = (graph | graph.T).astype(bool)
     target = (truth | truth.T).astype(bool)
     upper = np.triu(np.ones_like(truth, dtype=bool), 1)
@@ -113,6 +113,10 @@ def metrics(graph, truth, pairs, X):
     fp = int(np.sum(skeleton & ~target & upper))
     fn = int(np.sum(~skeleton & target & upper))
     bic, _ = gaussian_bic(X, graph, lambda_bic=2.)
+    notreks_measure, _ = NoTreksPenalty(
+        pairs, graph.shape[0], weight=1.0, function="inv", kernel="fast",
+        adjacency_mapping=adjacency_mapping).value_and_grad(
+            graph.astype(float))
     return {
         "gaussian_bic": float(bic), "edge_count": int(graph.sum()),
         "skeleton_shd": fp + fn,
@@ -120,6 +124,7 @@ def metrics(graph, truth, pairs, X):
         "directed_shd": int(np.sum(graph != truth)),
         "is_dag": bool(is_dag(graph)),
         "notreks_violations": violation_count(graph, pairs),
+        "notreks_measure": float(notreks_measure),
         "representation": "DAG",
     }
 
@@ -211,7 +216,7 @@ def dagma_run(X, truth, pairs, seed, args, method):
         "dagma_lambda1": args.dagma_lambda1,
         "dagma_weight": args.dagma_weight,
         "adjacency_mapping": args.adjacency_mapping,
-        **metrics(graph, truth, pairs, X),
+        **metrics(graph, truth, pairs, X, args.adjacency_mapping),
     }
 
 
