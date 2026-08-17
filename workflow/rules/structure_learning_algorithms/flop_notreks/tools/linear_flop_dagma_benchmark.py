@@ -261,7 +261,7 @@ def main():
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
     parser.add_argument("--dagma-tol", type=float, default=1e-6,
                         help="fast-DAGMA checkpoint convergence tolerance")
-    parser.add_argument("--dagma-lambda1", type=float, default=0.10,
+    parser.add_argument("--dagma-lambda1", type=float, default=0.03,
                         help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
                         help="fixed DAGMA support threshold before feasibility repair")
