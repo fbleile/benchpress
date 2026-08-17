@@ -181,7 +181,8 @@ def run_case(args, graph_seed, algorithm_seed, knowledge_fraction):
         warm_iter=args.dagma_warm_iter,
         max_iter=args.dagma_max_iter,
         optimizer_tol=args.dagma_tol,
-        postselection_policy="PS1_joint_feasible_greedy_score",
+        postselection_policy="PS5_fixed_threshold_joint_feasible",
+        fixed_threshold=args.dagma_threshold,
     )
     if knowledge_fraction == 0:
         rows.append({**base, **dagma_run(
@@ -199,7 +200,7 @@ def run_case(args, graph_seed, algorithm_seed, knowledge_fraction):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dimension", type=int, default=20)
-    parser.add_argument("--sample-size", type=int, default=500)
+    parser.add_argument("--sample-size", type=int, default=200)
     parser.add_argument("--graph-family", choices=(
         "er", "hub", "chain_fork", "preferential"), default="er")
     parser.add_argument("--noise-scale-spread", type=float, default=.2)
@@ -218,6 +219,8 @@ def main():
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
     parser.add_argument("--dagma-tol", type=float, default=0.0,
                         help="0 forces every configured DAGMA stage to use its full budget")
+    parser.add_argument("--dagma-threshold", type=float, default=0.30,
+                        help="fixed DAGMA support threshold before feasibility repair")
     parser.add_argument("--notreks-weight", type=float, default=1.0)
     parser.add_argument("--output-dir", type=Path,
                         default=Path("results/dagma_notreks_oracle/linear_flop_dagma"))

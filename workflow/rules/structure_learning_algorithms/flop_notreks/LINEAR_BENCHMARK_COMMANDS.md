@@ -27,9 +27,10 @@ python -c 'import dagma, flopsearch; print("DAGMA/FLOP imports OK")'
 
 The script uses production DAGMA settings (30000 warm iterations, 60000
 maximum iterations, five restarts by default) and 100 FLOP sweeps per
-restart. `--notreks-weight 1.0` is deliberate; 10 over-penalized the earlier
-experiments. DAGMA's existing postselection and independent DAG/NOTREKS
-verification are retained.
+restart. It forces the standard 0.30 DAGMA support threshold, followed by
+NOTREKS feasibility repair when needed. `--notreks-weight 1.0` is deliberate;
+10 over-penalized the earlier experiments. DAGMA's existing postselection and
+independent DAG/NOTREKS verification are retained.
 
 ## First real d=20 smoke
 
@@ -37,7 +38,7 @@ Run one graph and one algorithm seed across all knowledge levels:
 
 ```bash
 python workflow/rules/structure_learning_algorithms/flop_notreks/tools/linear_flop_dagma_benchmark.py \
-  --dimension 20 --sample-size 500 \
+  --dimension 20 --sample-size 200 \
   --graph-seeds 2001 --algorithm-seeds 7001 \
   --knowledge-fractions 0 .25 .75 --knowledge-seed 9101 \
   --graph-family er --noise-scale-spread .2 \
@@ -55,7 +56,7 @@ knowledge, graph family, and method.
 ```bash
 for g in 2001 2002 2003 2004 2005; do
   python workflow/rules/structure_learning_algorithms/flop_notreks/tools/linear_flop_dagma_benchmark.py \
-    --dimension 20 --sample-size 500 --graph-seeds "$g" --algorithm-seeds 7001 8017 \
+    --dimension 20 --sample-size 200 --graph-seeds "$g" --algorithm-seeds 7001 8017 \
     --knowledge-fractions 0 .25 .75 --knowledge-seed 9101 \
     --graph-family er --flop-restarts 4 --flop-sweeps 100 --dagma-restarts 5 \
     --notreks-weight 1.0 --append \
