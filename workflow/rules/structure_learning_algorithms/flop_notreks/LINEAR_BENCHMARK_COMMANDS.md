@@ -53,10 +53,9 @@ The default `hadamard` mapping uses (W\circ W). The alternative
 for both the DAGMA acyclicity and NOTREKS path constraints, including the
 chain-rule derivative. Select it with `--adjacency-mapping phi_log`.
 
-For reheating, add `--dagma-reheat --dagma-reheat-mu .1`. The fast optimizer
-then uses `1 -> .1 -> .01 -> 0 -> .1 -> .01`; the zero stage provides a
-structural warm-start before the data term is reintroduced, and the final
-positive stage prevents structural-only collapse.
+For reheating, add `--dagma-reheat`. The fast optimizer then uses
+`1 -> .001 -> .1 -> .0001`; the final positive stage keeps the data term
+active.
 
 ## First real d=20 smoke
 

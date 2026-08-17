@@ -181,10 +181,8 @@ def dagma_run(X, truth, pairs, seed, args, method):
                     lambda1=args.dagma_lambda1,
                     dag_penalty_weight=args.dagma_weight,
                     T=5,
-                    mu_schedule=(
-                        (1.0, .1, .01, 0.0, args.dagma_reheat_mu,
-                         args.dagma_reheat_mu * .1)
-                        if args.dagma_reheat else None),
+                    mu_schedule=((1.0, .001, .1, .0001)
+                                 if args.dagma_reheat else None),
                     warm_iter=args.dagma_warm_iter,
                     max_iter=args.dagma_max_iter,
                     optimizer_tol=args.dagma_tol),
@@ -277,9 +275,9 @@ def main():
     parser.add_argument("--dagma-tol", type=float, default=1e-6,
                         help="fast-DAGMA checkpoint convergence tolerance")
     parser.add_argument("--dagma-reheat", action="store_true",
-                        help="use mu: 1 -> .1 -> .01 -> 0 -> c -> .1c")
+                        help="use mu: 1 -> .001 -> .1 -> .0001")
     parser.add_argument("--dagma-reheat-mu", type=float, default=.1,
-                        help="positive c in the reheated mu schedule")
+                        help="deprecated compatibility option (schedule is fixed)")
     parser.add_argument("--dagma-lambda1", type=float, default=0.03,
                         help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
