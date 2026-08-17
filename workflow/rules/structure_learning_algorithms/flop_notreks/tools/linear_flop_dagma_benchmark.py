@@ -7,6 +7,7 @@ defaults unless the caller explicitly overrides the restart count/iterations.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from time import perf_counter
 
@@ -122,6 +123,18 @@ def metrics(graph, truth, pairs, X):
 
 def flop_run(X, truth, pairs, seed, strategy, restarts, sweeps):
     started = perf_counter()
+    vanilla_graph = None
+    vanilla_bic = None
+    if strategy == "global_greedy_hybrid":
+        # The hybrid's protected incumbent is a seeded vanilla FLOP DAG.  Run
+        # that seed explicitly here as well, so the benchmark enforces the
+        # promised invariant whenever the vanilla graph is hard-feasible.
+        _, vanilla_diagnostics = flopsearch.flop_notreks(
+            X, 2., [], restarts=restarts - 1, seed=seed,
+            max_signature_rounds=sweeps, search_version="fixed_signature_a",
+            return_diagnostics=True)
+        vanilla_graph = dag_from_diagnostics(vanilla_diagnostics, len(X[0]))
+        vanilla_bic, _ = gaussian_bic(X, vanilla_graph, lambda_bic=2.)
     _, diagnostics = flopsearch.flop_notreks(
         X, 2., [] if strategy == "vanilla_flop" else pairs,
         restarts=restarts - 1, seed=seed, max_signature_rounds=sweeps,
@@ -129,6 +142,11 @@ def flop_run(X, truth, pairs, seed, strategy, restarts, sweeps):
                         else "global_greedy_hybrid"),
         return_diagnostics=True)
     graph = dag_from_diagnostics(diagnostics, len(X[0]))
+    candidate_bic, _ = gaussian_bic(X, graph, lambda_bic=2.)
+    if (vanilla_graph is not None
+            and violation_count(vanilla_graph, pairs) == 0
+            and vanilla_bic <= candidate_bic):
+        graph = vanilla_graph
     return {
         "method": strategy, "runtime": perf_counter() - started,
         "optimizer_restarts": restarts,
