@@ -205,8 +205,7 @@ def dagma_run(X, truth, pairs, seed, args, method):
                 scorer=scorer,
                 config=PostselectionConfig(
                     policy="PS4_joint_violation_repair",
-                    candidate_edge_pool="low_threshold_supergraph",
-                    low_threshold=args.dagma_low_threshold,
+                    candidate_edge_pool="fixed_threshold",
                     threshold_grid=(),
                     fixed_threshold=args.dagma_threshold,
                     notreks_constraint_active=bool(fit_pairs)),
@@ -296,8 +295,6 @@ def main():
                         help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
                         help="first (highest) DAGMA support threshold")
-    parser.add_argument("--dagma-low-threshold", type=float, default=.01,
-                        help="lowest support level used for edge-wise deletion")
     parser.add_argument("--dagma-weight", type=float, default=0.5,
                         help="continuous DAGMA acyclicity penalty coefficient")
     parser.add_argument("--notreks-weight", type=float, default=0.5,
