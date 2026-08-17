@@ -21,6 +21,7 @@ ALIASES = {
 class DagmaFastConfig:
     method: str = "dagma_fast"
     lambda1: float = 0.03
+    dag_penalty_weight: float = 1.0
     T: int = 5
     mu_init: float = 1.0
     mu_factor: float = 0.1
@@ -116,6 +117,8 @@ def fit_weighted_adjacency(
             data_value, data_gradient = objective.data_loss_value_and_grad(W)
             dag_value, dag_gradient = penalty.value_and_grad(
                 W, schedule[stage])
+            dag_value *= config.dag_penalty_weight
+            dag_gradient *= config.dag_penalty_weight
             structural_values = []
             structural_gradient = np.zeros_like(W)
             for component in structural_penalties:

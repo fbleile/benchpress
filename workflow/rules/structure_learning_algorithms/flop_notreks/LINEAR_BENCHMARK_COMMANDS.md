@@ -29,8 +29,10 @@ The script uses the separate fused `dagma_fast` optimizer, with ordinary
 checkpoint convergence (not forced full-budget execution), five restarts by
 default, with canonical L1 value `0.03`. It forces the standard
 0.30 DAGMA support threshold, followed by
-NOTREKS feasibility repair when needed. `--notreks-weight 1.0` is deliberate;
-10 over-penalized the earlier experiments. DAGMA's existing postselection and
+NOTREKS feasibility repair when needed. The current exploratory coefficients
+are `--dagma-weight 0.5` and `--notreks-weight 0.5` to reduce over-deletion;
+the DAG and NOTREKS constraints remain independently verified after
+postselection. DAGMA's existing postselection and
 independent DAG/NOTREKS verification are retained.
 
 ## First real d=20 smoke
@@ -44,7 +46,7 @@ python workflow/rules/structure_learning_algorithms/flop_notreks/tools/linear_fl
   --knowledge-fractions 0 .25 .75 --knowledge-seed 9101 \
   --graph-family er --noise-scale-spread .2 \
   --flop-restarts 2 --flop-sweeps 100 --dagma-restarts 2 \
-  --dagma-lambda1 0.03 --notreks-weight 1.0 \
+  --dagma-lambda1 0.03 --dagma-weight 0.5 --notreks-weight 0.5 \
   --output-dir results/dagma_notreks_oracle/linear_d20_smoke
 ```
 
@@ -60,7 +62,7 @@ for g in 2001 2002 2003 2004 2005; do
     --dimension 20 --sample-size 200 --graph-seeds "$g" --algorithm-seeds 7001 8017 \
     --knowledge-fractions 0 .25 .75 --knowledge-seed 9101 \
     --graph-family er --flop-restarts 2 --flop-sweeps 100 --dagma-restarts 2 \
-    --dagma-lambda1 0.03 --notreks-weight 1.0 --append \
+    --dagma-lambda1 0.03 --dagma-weight 0.5 --notreks-weight 0.5 --append \
     --output-dir results/dagma_notreks_oracle/linear_d20_multiseed
 done
 ```

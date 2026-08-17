@@ -169,6 +169,7 @@ def dagma_run(X, truth, pairs, seed, args, method):
             objective,
             DagmaFastConfig(
                 lambda1=args.dagma_lambda1,
+                dag_penalty_weight=args.dagma_weight,
                 T=5,
                 warm_iter=args.dagma_warm_iter,
                 max_iter=args.dagma_max_iter,
@@ -200,6 +201,7 @@ def dagma_run(X, truth, pairs, seed, args, method):
         "optimizer_iterations": result.iterations,
         "notreks_weight": args.notreks_weight if fit_pairs else 0.,
         "dagma_lambda1": args.dagma_lambda1,
+        "dagma_weight": args.dagma_weight,
         **metrics(graph, truth, pairs, X),
     }
 
@@ -265,7 +267,10 @@ def main():
                         help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
                         help="fixed DAGMA support threshold before feasibility repair")
-    parser.add_argument("--notreks-weight", type=float, default=1.0)
+    parser.add_argument("--dagma-weight", type=float, default=0.5,
+                        help="continuous DAGMA acyclicity penalty coefficient")
+    parser.add_argument("--notreks-weight", type=float, default=0.5,
+                        help="continuous NOTREKS penalty coefficient")
     parser.add_argument("--output-dir", type=Path,
                         default=Path("results/flop_dagma_notreks"))
     parser.add_argument("--append", action="store_true")
