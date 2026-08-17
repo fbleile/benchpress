@@ -27,6 +27,9 @@ from workflow.rules.structure_learning_algorithms.dagma_fast.penalties import (
 from workflow.rules.structure_learning_algorithms.dagma.shared import (
     deterministic_initial_adjacency,
 )
+from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
+    LinearCandidateScorer, PostselectionConfig, select_postselection_candidate,
+)
 from workflow.rules.structure_learning_algorithms.notreks import NoTreksPenalty
 
 
@@ -109,8 +112,7 @@ def metrics(graph, truth, pairs, X):
     tp = int(np.sum(skeleton & target & upper))
     fp = int(np.sum(skeleton & ~target & upper))
     fn = int(np.sum(~skeleton & target & upper))
-    bic = (gaussian_bic(X, graph, lambda_bic=2.)[0]
-           if is_dag(graph) else float("nan"))
+    bic, _ = gaussian_bic(X, graph, lambda_bic=2.)
     return {
         "gaussian_bic": float(bic), "edge_count": int(graph.sum()),
         "skeleton_shd": fp + fn,
@@ -161,50 +163,43 @@ def dagma_run(X, truth, pairs, seed, args, method):
     objective = LinearL2Objective(X)
     best = None
     for restart in range(args.dagma_restarts):
-        W = deterministic_initial_adjacency(X.shape[1], seed + restart)
-        # NOTREKS is used as a continuation force, not as a cold-start edge
-        # deletion objective.  The unconstrained basin is followed by a
-        # gradual ramp to the requested weight, retaining every stage for
-        # thresholding/postselection.
-        stage_weights = ((0.0,) if not fit_pairs else
-                         (0.0, args.notreks_weight * .25,
-                          args.notreks_weight))
-        stage_results = []
-        for stage_weight in stage_weights:
-            components = [] if stage_weight == 0.0 else [NoTreksPenalty(
-                fit_pairs, X.shape[1], weight=stage_weight,
+        components = []
+        if fit_pairs:
+            components.append(NoTreksPenalty(
+                fit_pairs, X.shape[1], weight=args.notreks_weight,
                 function="inv", kernel="fast",
-                adjacency_mapping=args.adjacency_mapping)]
-            result = fit_weighted_adjacency(
-                objective,
-                DagmaFastConfig(
-                    lambda1=args.dagma_lambda1,
-                    dag_penalty_weight=args.dagma_weight,
-                    T=5,
-                    mu_schedule=(
-                        tuple(args.dagma_mu_schedule)
-                        if args.dagma_mu_schedule is not None else
-                        ((1.0, .001, .1, .0001)
-                         if args.dagma_reheat else None)),
-                    warm_iter=args.dagma_warm_iter,
-                    max_iter=args.dagma_max_iter,
-                    optimizer_tol=args.dagma_tol),
-                initialization=W,
-                dag_penalty=LogDetDagPenalty(
-                    X.shape[1], adjacency_mapping=args.adjacency_mapping),
-                structural_penalties=components)
-            W = result.weighted_adjacency
-            stage_results.append((stage_weight, result))
-        for stage_weight, result in stage_results:
-            graph = (np.abs(result.weighted_adjacency)
-                     >= args.dagma_threshold).astype(np.uint8)
-            np.fill_diagonal(graph, 0)
-            candidate_bic = (gaussian_bic(X, graph, lambda_bic=2.)[0]
-                             if is_dag(graph) else float("inf"))
-            candidate = (candidate_bic, restart, stage_weight, result, graph)
-            if best is None or candidate[:3] < best[:3]:
-                best = candidate
-    _, _, selected_weight, result, graph = best
+                adjacency_mapping=args.adjacency_mapping))
+        result = fit_weighted_adjacency(
+            objective,
+            DagmaFastConfig(
+                lambda1=args.dagma_lambda1,
+                dag_penalty_weight=args.dagma_weight,
+                T=5,
+                warm_iter=args.dagma_warm_iter,
+                max_iter=args.dagma_max_iter,
+                optimizer_tol=args.dagma_tol),
+            initialization=deterministic_initial_adjacency(
+                X.shape[1], seed + restart),
+            dag_penalty=LogDetDagPenalty(
+                X.shape[1], adjacency_mapping=args.adjacency_mapping),
+            structural_penalties=components)
+        scorer = LinearCandidateScorer(
+            X, regularizer_type="L1",
+            regularizer_weight=args.dagma_lambda1)
+        postselection = select_postselection_candidate(
+            result.weighted_adjacency,
+            scorer=scorer,
+            config=PostselectionConfig(
+                policy="PS5_fixed_threshold_joint_feasible",
+                fixed_threshold=args.dagma_threshold,
+                notreks_constraint_active=bool(fit_pairs)),
+            model_class="linear_dagma", notreks_pairs=fit_pairs)
+        candidate = (postselection.candidate_score, restart, result,
+                     postselection)
+        if best is None or candidate[:2] < best[:2]:
+            best = candidate
+    _, _, result, postselection = best
+    graph = postselection.adjacency
     return {
         "method": method, "runtime": perf_counter() - started,
         "optimizer_restarts": args.dagma_restarts,
@@ -214,8 +209,6 @@ def dagma_run(X, truth, pairs, seed, args, method):
         "dagma_lambda1": args.dagma_lambda1,
         "dagma_weight": args.dagma_weight,
         "adjacency_mapping": args.adjacency_mapping,
-        "notreks_continuation_weight": selected_weight,
-        "threshold_only": True,
         **metrics(graph, truth, pairs, X),
     }
 
@@ -277,17 +270,10 @@ def main():
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
     parser.add_argument("--dagma-tol", type=float, default=1e-6,
                         help="fast-DAGMA checkpoint convergence tolerance")
-    parser.add_argument("--dagma-reheat", action="store_true",
-                        help="use mu: 1 -> .001 -> .1 -> .0001")
-    parser.add_argument("--dagma-mu-schedule", nargs="+", type=float,
-                        default=None,
-                        help="explicit ordered mu schedule, overriding --dagma-reheat")
-    parser.add_argument("--dagma-reheat-mu", type=float, default=.1,
-                        help="deprecated compatibility option (schedule is fixed)")
     parser.add_argument("--dagma-lambda1", type=float, default=0.03,
                         help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
-                        help="first (highest) DAGMA support threshold")
+                        help="fixed DAGMA support threshold before feasibility repair")
     parser.add_argument("--dagma-weight", type=float, default=0.5,
                         help="continuous DAGMA acyclicity penalty coefficient")
     parser.add_argument("--notreks-weight", type=float, default=0.5,
@@ -303,9 +289,8 @@ def main():
     for graph_seed in args.graph_seeds:
         for algorithm_seed in args.algorithm_seeds:
             for fraction in args.knowledge_fractions:
-                case_rows = run_case(args, graph_seed, algorithm_seed, fraction)
-                rows.extend(case_rows)
-                print(pd.DataFrame(case_rows).to_string(index=False), flush=True)
+                rows.extend(run_case(args, graph_seed, algorithm_seed, fraction))
+                print(pd.DataFrame(rows[-4:]).to_string(index=False), flush=True)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     path = args.output_dir / "per_run.csv"
     frame = pd.DataFrame(rows)
