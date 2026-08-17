@@ -109,7 +109,8 @@ def metrics(graph, truth, pairs, X):
     tp = int(np.sum(skeleton & target & upper))
     fp = int(np.sum(skeleton & ~target & upper))
     fn = int(np.sum(~skeleton & target & upper))
-    bic, _ = gaussian_bic(X, graph, lambda_bic=2.)
+    bic = (gaussian_bic(X, graph, lambda_bic=2.)[0]
+           if is_dag(graph) else float("nan"))
     return {
         "gaussian_bic": float(bic), "edge_count": int(graph.sum()),
         "skeleton_shd": fp + fn,
