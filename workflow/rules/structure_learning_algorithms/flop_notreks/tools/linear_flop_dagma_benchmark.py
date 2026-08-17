@@ -105,7 +105,7 @@ def violation_count(graph, pairs):
                    for left, right in pairs))
 
 
-def metrics(graph, truth, pairs, X, adjacency_mapping="hadamard"):
+def metrics(graph, truth, pairs, X):
     skeleton = (graph | graph.T).astype(bool)
     target = (truth | truth.T).astype(bool)
     upper = np.triu(np.ones_like(truth, dtype=bool), 1)
@@ -113,10 +113,6 @@ def metrics(graph, truth, pairs, X, adjacency_mapping="hadamard"):
     fp = int(np.sum(skeleton & ~target & upper))
     fn = int(np.sum(~skeleton & target & upper))
     bic, _ = gaussian_bic(X, graph, lambda_bic=2.)
-    notreks_measure, _ = NoTreksPenalty(
-        pairs, graph.shape[0], weight=1.0, function="inv", kernel="fast",
-        adjacency_mapping=adjacency_mapping).value_and_grad(
-            graph.astype(float))
     return {
         "gaussian_bic": float(bic), "edge_count": int(graph.sum()),
         "skeleton_shd": fp + fn,
@@ -124,7 +120,6 @@ def metrics(graph, truth, pairs, X, adjacency_mapping="hadamard"):
         "directed_shd": int(np.sum(graph != truth)),
         "is_dag": bool(is_dag(graph)),
         "notreks_violations": violation_count(graph, pairs),
-        "notreks_measure": float(notreks_measure),
         "representation": "DAG",
     }
 
@@ -180,8 +175,6 @@ def dagma_run(X, truth, pairs, seed, args, method):
                 lambda1=args.dagma_lambda1,
                 dag_penalty_weight=args.dagma_weight,
                 T=5,
-                mu_schedule=(tuple(args.dagma_mu_schedule)
-                             if args.dagma_mu_schedule is not None else None),
                 warm_iter=args.dagma_warm_iter,
                 max_iter=args.dagma_max_iter,
                 optimizer_tol=args.dagma_tol),
@@ -216,7 +209,7 @@ def dagma_run(X, truth, pairs, seed, args, method):
         "dagma_lambda1": args.dagma_lambda1,
         "dagma_weight": args.dagma_weight,
         "adjacency_mapping": args.adjacency_mapping,
-        **metrics(graph, truth, pairs, X, args.adjacency_mapping),
+        **metrics(graph, truth, pairs, X),
     }
 
 
@@ -277,9 +270,6 @@ def main():
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
     parser.add_argument("--dagma-tol", type=float, default=1e-6,
                         help="fast-DAGMA checkpoint convergence tolerance")
-    parser.add_argument("--dagma-mu-schedule", nargs="+", type=float,
-                        default=None,
-                        help="explicit ordered mu schedule overriding DAGMA default")
     parser.add_argument("--dagma-lambda1", type=float, default=0.03,
                         help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
