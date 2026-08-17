@@ -7,8 +7,6 @@ defaults unless the caller explicitly overrides the restart count/iterations.
 from __future__ import annotations
 
 import argparse
-import json
-from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
@@ -19,9 +17,16 @@ import pandas as pd
 from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import (
     gaussian_bic, is_dag,
 )
-from workflow.rules.structure_learning_algorithms.dagma_notreks.pipeline import (
-    ProductionConfig, run_production_pipeline,
+from workflow.rules.structure_learning_algorithms.dagma_fast import (
+    DagmaFastConfig, LinearL2Objective, fit_weighted_adjacency,
 )
+from workflow.rules.structure_learning_algorithms.dagma.shared import (
+    deterministic_initial_adjacency,
+)
+from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
+    LinearCandidateScorer, PostselectionConfig, select_postselection_candidate,
+)
+from workflow.rules.structure_learning_algorithms.notreks import NoTreksPenalty
 
 
 def make_case(dimension, sample_size, graph_seed, graph_family="er",
@@ -131,19 +136,52 @@ def flop_run(X, truth, pairs, seed, strategy, restarts, sweeps):
     }
 
 
-def dagma_run(X, truth, pairs, seed, config, method):
+def dagma_run(X, truth, pairs, seed, args, method):
     fit_pairs = pairs if method == "dagma_notreks" else []
     started = perf_counter()
-    selected, restart_rows = run_production_pipeline(X, fit_pairs, config)
-    graph = selected.adjacency
+    objective = LinearL2Objective(X)
+    best = None
+    for restart in range(args.dagma_restarts):
+        components = []
+        if fit_pairs:
+            components.append(NoTreksPenalty(
+                fit_pairs, X.shape[1], weight=args.notreks_weight,
+                function="inv", kernel="fast"))
+        result = fit_weighted_adjacency(
+            objective,
+            DagmaFastConfig(
+                lambda1=args.dagma_lambda1,
+                T=5,
+                warm_iter=args.dagma_warm_iter,
+                max_iter=args.dagma_max_iter,
+                optimizer_tol=args.dagma_tol),
+            initialization=deterministic_initial_adjacency(
+                X.shape[1], seed + restart),
+            structural_penalties=components)
+        scorer = LinearCandidateScorer(
+            X, regularizer_type="L1",
+            regularizer_weight=args.dagma_lambda1)
+        postselection = select_postselection_candidate(
+            result.weighted_adjacency,
+            scorer=scorer,
+            config=PostselectionConfig(
+                policy="PS5_fixed_threshold_joint_feasible",
+                fixed_threshold=args.dagma_threshold,
+                notreks_constraint_active=bool(fit_pairs)),
+            model_class="linear_dagma", notreks_pairs=fit_pairs)
+        candidate = (postselection.candidate_score, restart, result,
+                     postselection)
+        if best is None or candidate[:2] < best[:2]:
+            best = candidate
+    _, _, result, postselection = best
+    graph = postselection.adjacency
     return {
         "method": method, "runtime": perf_counter() - started,
-        "optimizer_restarts": config.restarts,
-        "optimizer_seconds": sum(row.runtime for row in restart_rows),
-        "optimizer_iterations": int(sum(
-            d.get("iterations_performed", 0)
-            for row in restart_rows for d in row.stage_diagnostics)),
-        "notreks_weight": config.trek_weight if fit_pairs else 0.,
+        "optimizer_restarts": args.dagma_restarts,
+        "optimizer_seconds": result.runtime_seconds,
+        "optimizer_iterations": result.iterations,
+        "notreks_weight": args.notreks_weight if fit_pairs else 0.,
+        "dagma_lambda1": args.dagma_lambda1,
         **metrics(graph, truth, pairs, X),
     }
 
@@ -174,26 +212,12 @@ def run_case(args, graph_seed, algorithm_seed, knowledge_fraction):
         rows.append({**base, **flop_run(
             X, truth, pairs, algorithm_seed, strategy, args.flop_restarts,
             args.flop_sweeps)})
-    dagma_config = ProductionConfig(
-        restarts=args.dagma_restarts,
-        seed=algorithm_seed,
-        trek_weight=args.notreks_weight,
-        warm_iter=args.dagma_warm_iter,
-        max_iter=args.dagma_max_iter,
-        optimizer_tol=args.dagma_tol,
-        postselection_policy="PS5_fixed_threshold_joint_feasible",
-        fixed_threshold=args.dagma_threshold,
-    )
     if knowledge_fraction == 0:
         rows.append({**base, **dagma_run(
-            X, truth, pairs, algorithm_seed,
-            replace(dagma_config, notreks_constraint_active=False,
-                    trek_weight=0.), "dagma")})
+            X, truth, pairs, algorithm_seed, args, "dagma")})
     else:
         rows.append({**base, **dagma_run(
-            X, truth, pairs, algorithm_seed,
-            replace(dagma_config, notreks_constraint_active=True),
-            "dagma_notreks")})
+            X, truth, pairs, algorithm_seed, args, "dagma_notreks")})
     return rows
 
 
@@ -217,8 +241,10 @@ def main():
     parser.add_argument("--dagma-restarts", type=int, default=5)
     parser.add_argument("--dagma-warm-iter", type=int, default=30000)
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
-    parser.add_argument("--dagma-tol", type=float, default=0.0,
-                        help="0 forces every configured DAGMA stage to use its full budget")
+    parser.add_argument("--dagma-tol", type=float, default=1e-6,
+                        help="fast-DAGMA checkpoint convergence tolerance")
+    parser.add_argument("--dagma-lambda1", type=float, default=0.10,
+                        help="L1 strength for fast DAGMA and support scoring")
     parser.add_argument("--dagma-threshold", type=float, default=0.30,
                         help="fixed DAGMA support threshold before feasibility repair")
     parser.add_argument("--notreks-weight", type=float, default=1.0)

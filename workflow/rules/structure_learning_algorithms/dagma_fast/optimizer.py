@@ -31,6 +31,7 @@ class DagmaFastConfig:
     beta_1: float = 0.99
     beta_2: float = 0.999
     checkpoint: int = 1000
+    optimizer_tol: float = 1e-6
     max_runtime_seconds: float | None = None
 
 
@@ -148,7 +149,7 @@ def fit_weighted_adjacency(
                     float("inf") if not np.isfinite(previous)
                     else abs(previous - full_value) / max(
                         abs(previous), 1.0))
-                if relative <= 1e-6:
+                if relative <= config.optimizer_tol:
                     termination = "converged"
                     break
                 previous = full_value

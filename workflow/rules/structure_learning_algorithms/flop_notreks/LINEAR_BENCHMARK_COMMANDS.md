@@ -25,9 +25,10 @@ export PYTHONPATH=.
 python -c 'import dagma, flopsearch; print("DAGMA/FLOP imports OK")'
 ```
 
-The script uses production DAGMA settings (30000 warm iterations, 60000
-maximum iterations, five restarts by default) and 100 FLOP sweeps per
-restart. It forces the standard 0.30 DAGMA support threshold, followed by
+The script uses the separate fused `dagma_fast` optimizer, with ordinary
+checkpoint convergence (not forced full-budget execution), five restarts by
+default, and a stronger exploratory L1 value of `0.10`. It forces the standard
+0.30 DAGMA support threshold, followed by
 NOTREKS feasibility repair when needed. `--notreks-weight 1.0` is deliberate;
 10 over-penalized the earlier experiments. DAGMA's existing postselection and
 independent DAG/NOTREKS verification are retained.
@@ -43,7 +44,7 @@ python workflow/rules/structure_learning_algorithms/flop_notreks/tools/linear_fl
   --knowledge-fractions 0 .25 .75 --knowledge-seed 9101 \
   --graph-family er --noise-scale-spread .2 \
   --flop-restarts 4 --flop-sweeps 100 --dagma-restarts 5 \
-  --notreks-weight 1.0 \
+  --dagma-lambda1 0.10 --notreks-weight 1.0 \
   --output-dir results/dagma_notreks_oracle/linear_d20_smoke
 ```
 
@@ -59,7 +60,7 @@ for g in 2001 2002 2003 2004 2005; do
     --dimension 20 --sample-size 200 --graph-seeds "$g" --algorithm-seeds 7001 8017 \
     --knowledge-fractions 0 .25 .75 --knowledge-seed 9101 \
     --graph-family er --flop-restarts 4 --flop-sweeps 100 --dagma-restarts 5 \
-    --notreks-weight 1.0 --append \
+    --dagma-lambda1 0.10 --notreks-weight 1.0 --append \
     --output-dir results/dagma_notreks_oracle/linear_d20_multiseed
 done
 ```
