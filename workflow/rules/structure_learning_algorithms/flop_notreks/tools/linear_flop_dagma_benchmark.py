@@ -253,10 +253,10 @@ def main():
     parser.add_argument("--knowledge-fractions", nargs="+", type=float,
                         default=[0., .25, .75])
     parser.add_argument("--knowledge-seed", type=int, default=9101)
-    parser.add_argument("--flop-restarts", type=int, default=4)
+    parser.add_argument("--flop-restarts", type=int, default=2)
     parser.add_argument("--flop-sweeps", type=int, default=100,
                         help="FLOP signature/order sweeps per restart")
-    parser.add_argument("--dagma-restarts", type=int, default=5)
+    parser.add_argument("--dagma-restarts", type=int, default=2)
     parser.add_argument("--dagma-warm-iter", type=int, default=30000)
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
     parser.add_argument("--dagma-tol", type=float, default=1e-6,
@@ -267,7 +267,7 @@ def main():
                         help="fixed DAGMA support threshold before feasibility repair")
     parser.add_argument("--notreks-weight", type=float, default=1.0)
     parser.add_argument("--output-dir", type=Path,
-                        default=Path("results/dagma_notreks_oracle/linear_flop_dagma"))
+                        default=Path("results/flop_dagma_notreks"))
     parser.add_argument("--append", action="store_true")
     args = parser.parse_args()
     rows = []

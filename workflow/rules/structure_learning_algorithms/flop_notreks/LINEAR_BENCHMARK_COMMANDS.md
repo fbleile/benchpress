@@ -43,7 +43,7 @@ python workflow/rules/structure_learning_algorithms/flop_notreks/tools/linear_fl
   --graph-seeds 2001 --algorithm-seeds 7001 \
   --knowledge-fractions 0 .25 .75 --knowledge-seed 9101 \
   --graph-family er --noise-scale-spread .2 \
-  --flop-restarts 4 --flop-sweeps 100 --dagma-restarts 5 \
+  --flop-restarts 2 --flop-sweeps 100 --dagma-restarts 2 \
   --dagma-lambda1 0.03 --notreks-weight 1.0 \
   --output-dir results/dagma_notreks_oracle/linear_d20_smoke
 ```
@@ -59,7 +59,7 @@ for g in 2001 2002 2003 2004 2005; do
   python workflow/rules/structure_learning_algorithms/flop_notreks/tools/linear_flop_dagma_benchmark.py \
     --dimension 20 --sample-size 200 --graph-seeds "$g" --algorithm-seeds 7001 8017 \
     --knowledge-fractions 0 .25 .75 --knowledge-seed 9101 \
-    --graph-family er --flop-restarts 4 --flop-sweeps 100 --dagma-restarts 5 \
+    --graph-family er --flop-restarts 2 --flop-sweeps 100 --dagma-restarts 2 \
     --dagma-lambda1 0.03 --notreks-weight 1.0 --append \
     --output-dir results/dagma_notreks_oracle/linear_d20_multiseed
 done
@@ -83,14 +83,14 @@ seed; add seeds only after inspecting the paired table.
 python workflow/rules/structure_learning_algorithms/flop_notreks/tools/linear_flop_dagma_benchmark.py \
   --dimension 50 --sample-size 1000 --graph-seeds 5001 5002 \
   --algorithm-seeds 7001 --knowledge-fractions 0 .25 .75 \
-  --graph-family er --flop-restarts 4 --flop-sweeps 100 --dagma-restarts 3 \
+  --graph-family er --flop-restarts 2 --flop-sweeps 100 --dagma-restarts 2 \
   --notreks-weight 1.0 --output-dir results/dagma_notreks_oracle/linear_d50_er
 
 # d=100, ER graphs (run only after d=50 is acceptable)
 python workflow/rules/structure_learning_algorithms/flop_notreks/tools/linear_flop_dagma_benchmark.py \
   --dimension 100 --sample-size 1500 --graph-seeds 10001 10002 \
   --algorithm-seeds 7001 --knowledge-fractions 0 .25 .75 \
-  --graph-family er --flop-restarts 4 --flop-sweeps 100 --dagma-restarts 3 \
+  --graph-family er --flop-restarts 2 --flop-sweeps 100 --dagma-restarts 2 \
   --notreks-weight 1.0 --output-dir results/dagma_notreks_oracle/linear_d100_er
 ```
 
