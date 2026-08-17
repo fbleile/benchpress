@@ -53,9 +53,15 @@ The default `hadamard` mapping uses (W\circ W). The alternative
 for both the DAGMA acyclicity and NOTREKS path constraints, including the
 chain-rule derivative. Select it with `--adjacency-mapping phi_log`.
 
-For reheating, add `--dagma-reheat`. The fast optimizer then uses
-`1 -> .001 -> .1 -> .0001`; the final positive stage keeps the data term
-active.
+The μ schedule can be selected directly from the shell. For the current
+experiment use:
+
+```bash
+--dagma-mu-schedule 1.0 0.0 0.1 0.01 0.001 0.0001
+```
+
+The final positive stage keeps the data term active. `--dagma-reheat` remains
+as a compatibility shortcut for the older fixed schedule.
 
 ## First real d=20 smoke
 
