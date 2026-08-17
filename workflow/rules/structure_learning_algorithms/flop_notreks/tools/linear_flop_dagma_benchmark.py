@@ -27,9 +27,6 @@ from workflow.rules.structure_learning_algorithms.dagma_fast.penalties import (
 from workflow.rules.structure_learning_algorithms.dagma.shared import (
     deterministic_initial_adjacency,
 )
-from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
-    LinearCandidateScorer, PostselectionConfig, select_postselection_candidate,
-)
 from workflow.rules.structure_learning_algorithms.notreks import NoTreksPenalty
 
 
@@ -196,26 +193,16 @@ def dagma_run(X, truth, pairs, seed, args, method):
                 structural_penalties=components)
             W = result.weighted_adjacency
             stage_results.append((stage_weight, result))
-        scorer = LinearCandidateScorer(
-            X, regularizer_type="L1",
-            regularizer_weight=args.dagma_lambda1)
         for stage_weight, result in stage_results:
-            postselection = select_postselection_candidate(
-                result.weighted_adjacency,
-                scorer=scorer,
-                config=PostselectionConfig(
-                    policy="PS4_joint_violation_repair",
-                    candidate_edge_pool="fixed_threshold",
-                    threshold_grid=(),
-                    fixed_threshold=args.dagma_threshold,
-                    notreks_constraint_active=bool(fit_pairs)),
-                model_class="linear_dagma", notreks_pairs=fit_pairs)
-            candidate = (postselection.candidate_score, restart,
-                         stage_weight, result, postselection)
+            graph = (np.abs(result.weighted_adjacency)
+                     >= args.dagma_threshold).astype(np.uint8)
+            np.fill_diagonal(graph, 0)
+            candidate_bic = (gaussian_bic(X, graph, lambda_bic=2.)[0]
+                             if is_dag(graph) else float("inf"))
+            candidate = (candidate_bic, restart, stage_weight, result, graph)
             if best is None or candidate[:3] < best[:3]:
                 best = candidate
-    _, _, selected_weight, result, postselection = best
-    graph = postselection.adjacency
+    _, _, selected_weight, result, graph = best
     return {
         "method": method, "runtime": perf_counter() - started,
         "optimizer_restarts": args.dagma_restarts,
@@ -226,6 +213,7 @@ def dagma_run(X, truth, pairs, seed, args, method):
         "dagma_weight": args.dagma_weight,
         "adjacency_mapping": args.adjacency_mapping,
         "notreks_continuation_weight": selected_weight,
+        "threshold_only": True,
         **metrics(graph, truth, pairs, X),
     }
 

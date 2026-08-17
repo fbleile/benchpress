@@ -28,9 +28,9 @@ python -c 'import dagma, flopsearch; print("DAGMA/FLOP imports OK")'
 The script uses the separate fused `dagma_fast` optimizer, with ordinary
 checkpoint convergence (not forced full-budget execution), five restarts by
 default, with canonical L1 value `0.03`. It forces the standard
-edge-wise deletion from the support at the requested threshold: the weakest
-edge is deleted one at a time until feasibility is reached. BIC is used for
-candidate scoring, not as a hidden threshold parameter, followed by
+For the current threshold-only diagnostic, the support is exactly
+`abs(W) >= --dagma-threshold`; no threshold search or edge-deletion repair is
+applied. DAG and NOTREKS violations are reported independently, followed by
 NOTREKS feasibility repair when needed. The current exploratory coefficients
 are `--dagma-weight 0.5` and `--notreks-weight 0.5` to reduce over-deletion;
 the DAG and NOTREKS constraints remain independently verified after
