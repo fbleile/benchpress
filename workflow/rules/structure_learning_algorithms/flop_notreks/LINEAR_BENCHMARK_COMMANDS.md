@@ -28,7 +28,8 @@ python -c 'import dagma, flopsearch; print("DAGMA/FLOP imports OK")'
 The script uses the separate fused `dagma_fast` optimizer, with ordinary
 checkpoint convergence (not forced full-budget execution), five restarts by
 default, with canonical L1 value `0.03`. It forces the standard
-0.30 DAGMA support threshold, followed by
+descending DAGMA threshold search beginning at 0.30 (`0.30, 0.20, 0.10,
+0.05, 0.03, 0.01`), selecting only feasible candidates by refit/BIC, followed by
 NOTREKS feasibility repair when needed. The current exploratory coefficients
 are `--dagma-weight 0.5` and `--notreks-weight 0.5` to reduce over-deletion;
 the DAG and NOTREKS constraints remain independently verified after
