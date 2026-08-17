@@ -208,3 +208,44 @@ pub fn perm_to_dag_constrained<R: Rng + ?Sized>(
     }
     Ok(g)
 }
+
+/// Fit the ordinary FLOP local models for an order while forcing its first
+/// `source_prefix` vertices to have empty parent sets.
+///
+/// This is deliberately not a NOTREKS-constrained parent search: after the
+/// prefix, parent fitting is byte-for-byte the ordinary FLOP grow/shrink
+/// routine.  The only intervention is the theorem-motivated source prefix.
+pub fn perm_to_dag_source_prefix<R: Rng + ?Sized>(
+    perm: &[usize],
+    source_prefix: usize,
+    score: &Bic,
+    rng: &mut R,
+) -> Result<GlobalScore, ScoreError> {
+    let mut g = GlobalScore::new(perm.len(), score)?;
+    for (i, &v) in perm.iter().enumerate() {
+        g.local_scores[v] = if i < source_prefix {
+            score.local_score_init(v, Vec::new())?
+        } else {
+            fit_parents(v, &perm[0..i], score, rng)?
+        };
+    }
+    Ok(g)
+}
+
+pub fn perm_to_dag_constrained_source_prefix<R: Rng + ?Sized>(
+    perm: &[usize],
+    source_prefix: usize,
+    score: &Bic,
+    rng: &mut R,
+    constraints: Option<&NoTrekConstraints>,
+) -> Result<GlobalScore, ScoreError> {
+    let mut g = GlobalScore::new(perm.len(), score)?;
+    for (i, &v) in perm.iter().enumerate() {
+        g.local_scores[v] = if i < source_prefix {
+            score.local_score_init(v, Vec::new())?
+        } else {
+            fit_parents_constrained(v, &perm[0..i], score, rng, constraints)?
+        };
+    }
+    Ok(g)
+}

@@ -57,6 +57,17 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--max-queue-size", type=int, default=1000)
     run.add_argument("--max-ambiguous-edges", type=int, default=20)
     run.add_argument("--max-indegree", type=int)
+    run.add_argument("--support-mode",
+                     choices=("unrestricted", "flop_union_support"),
+                     default="unrestricted")
+    run.add_argument("--flop-support-runs", type=int, choices=(1, 2, 4, 8),
+                     default=2)
+    run.add_argument("--flop-support-seed-stride", type=int, default=7919)
+    run.add_argument(
+        "--support-initialization",
+        choices=("zero", "zero_then_best_feasible_flop",
+                 "zero_then_masked_random"),
+        default="zero_then_best_feasible_flop")
     run.add_argument(
         "--constraint-regime",
         choices=("DAG_only", "DAG_NOTREKS_one_correct",
@@ -119,6 +130,7 @@ def _write_result(output_dir: Path, selected, restarts, config, pairs=()):
         "selection": "configured_model_refit_score",
         "selected_restart": selected.restart,
         "selected_bic": selected.exact_bic,
+        "selected_gaussian_bic": selected.gaussian_bic,
         "feasibility_threshold": selected.feasibility_threshold,
         "candidate_threshold": selected.candidate_threshold,
         "candidate_edges": selected.candidate_edges,
@@ -126,12 +138,14 @@ def _write_result(output_dir: Path, selected, restarts, config, pairs=()):
         "oracle_violations": selected.oracle_violations,
         "number_of_notreks_pairs": len(pairs),
         "constraint_regime": config.constraint_regime,
+        "support": selected.support,
         **selected.standardization,
         "postselection": selected.postselection,
         "restart_diagnostics": [
             {
                 "restart": result.restart,
                 "exact_bic": result.exact_bic,
+                "gaussian_bic": result.gaussian_bic,
                 "candidate_threshold": result.candidate_threshold,
                 "candidate_edges": result.candidate_edges,
                 "final_edges": result.final_edges,
@@ -173,6 +187,10 @@ def main(argv=None) -> int:
             max_queue_size=args.max_queue_size,
             max_ambiguous_edges=args.max_ambiguous_edges,
             max_indegree=args.max_indegree,
+            support_mode=args.support_mode,
+            flop_support_runs=args.flop_support_runs,
+            flop_support_seed_stride=args.flop_support_seed_stride,
+            support_initialization=args.support_initialization,
             constraint_regime=args.constraint_regime)
         output_dir = args.output_dir
     selected, restarts = run_production_pipeline(data, pairs, config)

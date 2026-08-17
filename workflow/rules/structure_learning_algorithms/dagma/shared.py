@@ -224,7 +224,16 @@ class SharedDagmaLinear(DagmaLinear):
         domain_rejections_before = self.domain_rejections
         backtracking_before = self.backtracking_steps
         obj_prev = 1e16
-        self.opt_m, self.opt_v = 0, 0
+        preserve_optimizer = bool(getattr(
+            self, "preserve_optimizer_state", False))
+        if not preserve_optimizer:
+            self.opt_m, self.opt_v = 0, 0
+            self.optimizer_step = 0
+        else:
+            self.opt_m = getattr(self, "opt_m", 0)
+            self.opt_v = getattr(self, "opt_v", 0)
+            self.optimizer_step = int(getattr(self, "optimizer_step", 0))
+        optimizer_step_offset = self.optimizer_step
         mask_exc = np.ones((self.d, self.d), dtype=self.dtype)
         if (not self.dag_penalty_weight
                 or self.dag_constraint == "inverse_trace"):
@@ -312,7 +321,8 @@ class SharedDagmaLinear(DagmaLinear):
             Gobj = (G_score + G_l1 + G_h
                     + mask_inc * np.sign(W) + self.trek_weight * G_nt)
             started = time.perf_counter()
-            grad = self._adam_update(Gobj, iteration, beta_1, beta_2)
+            grad = self._adam_update(
+                Gobj, optimizer_step_offset + iteration, beta_1, beta_2)
             if self.dag_constraint == "inverse_trace":
                 step_lr = lr
                 while True:
@@ -424,6 +434,7 @@ class SharedDagmaLinear(DagmaLinear):
                 obj_prev = obj_new
             if pbar is not None:
                 pbar.update(1)
+        self.optimizer_step = optimizer_step_offset + iteration
         score, _ = self._score(W)
         if self.dag_constraint == "inverse_trace":
             final_inverse = self._inverse_structural_kernel.evaluate(

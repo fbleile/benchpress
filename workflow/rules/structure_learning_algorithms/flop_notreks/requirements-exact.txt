@@ -1,0 +1,2 @@
+# Optional dependency for the persistent exact branch-and-cut experiment.
+pyscipopt==6.2.1

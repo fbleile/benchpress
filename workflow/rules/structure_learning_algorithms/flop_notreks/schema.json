@@ -11,10 +11,29 @@
       "timeout": {"$ref": "#/$defs/flexnonnegnumnull"},
       "algorithm_seed": {"$ref": "#/$defs/flexnonnegint"},
       "search_strategy": {
-        "const": "global_greedy_rust",
-        "description": "Fixed production implementation; not user-configurable."
+        "enum": ["global_greedy_rust", "global_greedy_cached", "global_greedy_parallel", "global_greedy_hybrid", "gflop", "local_window_ablation", "incremental_promotion_d", "chromatic_source_prefix_flop", "global_greedy_chromatic_sources", "fixed_signature_chromatic_sources"],
+        "description": "Hard global NOTREKS search or FLOP with a chromatic source prefix."
       },
       "max_sweeps": {"$ref": "#/$defs/flexnonnegint", "default": 4},
+      "block_size": {"enum": [4, 6, 8, 10], "default": 4},
+      "initial_flop_runs": {"enum": [1, 2, 4, 8], "default": 4},
+      "candidate_max_parents": {"$ref": "#/$defs/flexnonnegint", "default": 3},
+      "max_families_per_node": {"$ref": "#/$defs/flexnonnegint", "default": 24},
+      "block_time_limit_seconds": {"$ref": "#/$defs/flexnonnegnum", "default": 2.0},
+      "overall_time_limit_seconds": {"$ref": "#/$defs/flexnonnegnum", "default": 60.0},
+      "max_block_calls": {"$ref": "#/$defs/flexnonnegint", "default": 1000},
+      "use_notreks": {"type": "boolean", "default": true},
+      "gflop_initialization": {"enum": ["backend", "flop"], "default": "flop"},
+      "gflop_continuation_weights": {"type": "array", "items": {"type": "number", "minimum": 0}, "minItems": 1, "default": [0.0, 0.1, 1.0, 10.0]},
+      "gflop_screening_budget": {"$ref": "#/$defs/flexnonnegint", "default": 50},
+      "gflop_refinement_budget": {"$ref": "#/$defs/flexnonnegint", "default": 300},
+      "gflop_refinement_top_k": {"$ref": "#/$defs/flexnonnegint", "default": 2},
+      "gflop_finalist_postselection_seconds": {"$ref": "#/$defs/flexnonnegnum", "default": 0.05},
+      "gflop_postselection_seconds": {"$ref": "#/$defs/flexnonnegnum", "default": 1.0},
+      "gflop_lambda1": {"$ref": "#/$defs/flexnonnegnum", "default": 0.03},
+      "gflop_lr": {"$ref": "#/$defs/flexnonnegnum", "default": 0.0003},
+      "gflop_return_if_initial_feasible": {"type": "boolean", "default": false},
+      "max_chromatic_search_nodes": {"$ref": "#/$defs/flexnonnegint", "default": 2000000},
       "signature_top_k": {"$ref": "#/$defs/flexnonnegint"},
       "signature_exploration_k": {"$ref": "#/$defs/flexnonnegint"},
       "max_signature_rounds": {"$ref": "#/$defs/flexnonnegint"},
@@ -22,8 +41,8 @@
       "initial_signature_max_size": {"$ref": "#/$defs/flexnonnegint"},
       "n_jobs": {"$ref": "#/$defs/flexnonnegint"},
       "search_version": {
-        "const": "global_greedy_rust",
-        "description": "Fixed production implementation; not user-configurable."
+        "enum": ["global_greedy_rust", "global_greedy_cached", "global_greedy_parallel", "global_greedy_hybrid", "gflop", "local_window_ablation", "incremental_promotion_d", "chromatic_source_prefix_flop", "global_greedy_chromatic_sources", "fixed_signature_chromatic_sources"],
+        "description": "Compatibility alias for search_strategy."
       },
       "knowledge_source": {"enum": ["oracle_true_graph", "file", "none"]},
       "knowledge_file": {"type": ["string", "null"]},

@@ -38,10 +38,23 @@ def flop_notreks(
     initial_signature_mean_size: float = 3.0,
     initial_signature_max_size: int = 6,
     search_version: str = "global_greedy_rust",
+    source_prefix: int = 0,
     return_dag: bool = False,
     return_diagnostics: bool = False,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
     """Run FLOP with hard structural no-trek constraints."""
+    ...
+
+def flop_source_prefix(
+    data: np.ndarray,
+    lambda_bic: float,
+    source_prefix: int,
+    *,
+    restarts: int = 1,
+    seed: int = 1729,
+    return_diagnostics: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict[str, Any]]:
+    """Run FLOP with the first source_prefix order positions parentless."""
     ...
 
 def prune_parents_bic(

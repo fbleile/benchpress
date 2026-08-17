@@ -5,12 +5,17 @@ import numpy as np
 import pandas as pd
 
 from workflow.rules.structure_learning_algorithms.dagma.knowledge import load_sidecar, named_pairs_to_indices
-from workflow.rules.structure_learning_algorithms.dagma.shared import SharedDagmaLinear, notreks_value_grad
+from workflow.rules.structure_learning_algorithms.dagma.shared import (
+    SharedDagmaLinear, deterministic_initial_adjacency, notreks_value_grad,
+)
 from workflow.rules.structure_learning_algorithms.dagma.inverse_structural import lambda1_sqrt_logd_over_n
 from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
     lambda_policy, standardize_training_data,
 )
 from workflow.rules.structure_learning_algorithms.notreks import subsample_no_trek_pairs
+from workflow.rules.structure_learning_algorithms.dagma_notreks.flop_support import (
+    build_flop_union_support, excluded_edges,
+)
 
 
 def value(name, default):
@@ -49,6 +54,32 @@ pairs = subsample_no_trek_pairs(
     float(value("knowledge_fraction", 1.0)),
     int(value("knowledge_seed", 0)) + int(value("seed", 0)),
 )
+support_mode = str(value("support_mode", "unrestricted"))
+support_diagnostics = {"support_mode": "unrestricted"}
+support_fit_args = {}
+if support_mode == "flop_union_support":
+    support = build_flop_union_support(
+        df.to_numpy(dtype=float), pairs,
+        runs=int(value("flop_support_runs", 2)),
+        seed=int(value("algorithm_seed", 0)) + int(value("seed", 0)),
+        seed_stride=int(value("flop_support_seed_stride", 7919)),
+        lambda_bic=2.0)
+    support_diagnostics = support.diagnostics
+    support_fit_args["exclude_edges"] = excluded_edges(support.allowed_arcs)
+    initialization = str(value(
+        "support_initialization", "zero_then_best_feasible_flop"))
+    if (initialization == "zero_then_best_feasible_flop"
+            and support.best_feasible_coefficients is not None):
+        support_fit_args["initial_W"] = support.best_feasible_coefficients
+    elif initialization == "zero_then_masked_random":
+        support_fit_args["initial_W"] = (
+            deterministic_initial_adjacency(
+                len(df.columns), int(value("algorithm_seed", 0)), .05, 1.)
+            * support.allowed_arcs)
+    elif initialization != "zero":
+        raise ValueError("unsupported support_initialization")
+elif support_mode != "unrestricted":
+    raise ValueError("support_mode must be unrestricted or flop_union_support")
 threshold = float(value("w_threshold", .3))
 lambda_policy_name = value("lambda_policy", None)
 lambda1_scaling = str(value("lambda1_scaling", "fixed"))
@@ -94,6 +125,7 @@ fit_args = dict(
     trek_log_terms=int(value("trek_log_terms", 2 * len(df.columns))),
     trek_inverse_epsilon=float(value("trek_inverse_epsilon", 0.0)),
 )
+fit_args.update(support_fit_args)
 model = SharedDagmaLinear(str(value("loss_type", "l2")))
 start = time.perf_counter()
 W = model.fit(df.to_numpy(dtype=float, copy=True), **fit_args)
@@ -103,6 +135,9 @@ raw_scaled, _ = notreks_value_grad(
     inverse_epsilon=fit_args["trek_inverse_epsilon"])
 A = (np.abs(W) >= threshold).astype(int)
 np.fill_diagonal(A, 0)
+if support_mode == "flop_union_support":
+    if np.any((A != 0) & (support.allowed_arcs == 0)):
+        raise RuntimeError("thresholded DAGMA graph escaped FLOP union support")
 after_scaled, _ = notreks_value_grad(A.astype(float), pairs, fit_args["trek_function"],
                                      log_terms=fit_args["trek_log_terms"],
                                      inverse_epsilon=fit_args["trek_inverse_epsilon"])
@@ -149,6 +184,7 @@ diagnostics = {
     "number_of_oracle_pairs_violated_after_threshold": violations,
     "fraction_of_oracle_pairs_violated_after_threshold": violations / len(pairs) if pairs else 0.0,
     "dagma_score": score, "dagma_h_value": h, "knowledge_source": source,
+    "support": support_diagnostics,
 }
 pd.DataFrame(A, columns=df.columns).to_csv(snakemake.output["adjmat"], index=False)
 with open(snakemake.output["time"], "w") as handle:

@@ -1,6 +1,6 @@
 use ::flop::algo::FlopConfig;
 use ::flop::constrained_algo::{
-    run_notreks, FlopNoTreksConfig, NoTreksDiagnostics, NoTreksVersion,
+    run_notreks, run_notreks_source_prefix, FlopNoTreksConfig, NoTreksDiagnostics, NoTreksVersion,
 };
 use nalgebra::DMatrix;
 use numpy::{PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
@@ -53,6 +53,52 @@ fn flop<'py>(
     }
 
     PyArray2::from_vec2(py, &res).map_err(|e| PyRuntimeError::new_err(e.to_string()))
+}
+
+/// Run FLOP with the first k positions of every causal order forced to be
+/// parentless.  `source_prefix` is normally chi(H), computed by the Python
+/// adapter from the supplied no-trek graph H.
+#[pyfunction]
+#[pyo3(signature = (data, lambda_bic, source_prefix, *, restarts=1, seed=1729, return_diagnostics=false))]
+fn flop_source_prefix<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    lambda_bic: f64,
+    source_prefix: usize,
+    restarts: usize,
+    seed: u64,
+    return_diagnostics: bool,
+) -> PyResult<Py<PyAny>> {
+    let data_matrix = DMatrix::from(data.as_matrix());
+    let (dag, diagnostics) =
+        ::flop::algo::run_source_prefix(&data_matrix, lambda_bic, source_prefix, restarts, seed)
+            .map_err(|err| PyRuntimeError::new_err(format!("source-prefix FLOP error: {err}")))?;
+    let matrix = graph_matrix(py, &dag, false)?;
+    if !return_diagnostics {
+        return Ok(matrix.into_any().unbind());
+    }
+    let details = PyDict::new(py);
+    details.set_item("source_prefix", diagnostics.source_prefix)?;
+    details.set_item("restarts_completed", diagnostics.restarts_completed)?;
+    details.set_item("full_order_refits", diagnostics.full_order_refits)?;
+    details.set_item("accepted_reinsertions", diagnostics.accepted_reinsertions)?;
+    details.set_item("total_sweeps", diagnostics.total_sweeps)?;
+    details.set_item(
+        "maximum_sweeps_per_restart",
+        diagnostics.maximum_sweeps_per_restart,
+    )?;
+    details.set_item("final_bic", diagnostics.final_bic)?;
+    details.set_item("selected_order", diagnostics.selected_order)?;
+    let dag_edges: Vec<(usize, usize)> = dag
+        .parents
+        .iter()
+        .enumerate()
+        .flat_map(|(child, parents)| parents.iter().map(move |&parent| (parent, child)))
+        .collect();
+    details.set_item("selected_dag_edges", dag_edges)?;
+    Ok(PyTuple::new(py, [matrix.into_any(), details.into_any()])?
+        .into_any()
+        .unbind())
 }
 
 /// Optimize one fixed order with the Rust implementation of the global-
@@ -407,7 +453,7 @@ fn diagnostics_dict<'py>(
     restarts=None, timeout=None, seed=None, signature_top_k=5,
     signature_exploration_k=0, max_signature_rounds=20,
     initial_signature_mean_size=3.0, initial_signature_max_size=6,
-    search_version="global_greedy_rust",
+    search_version="global_greedy_rust", source_prefix=0,
     return_dag=false, return_diagnostics=false
 ))]
 fn flop_notreks<'py>(
@@ -424,6 +470,7 @@ fn flop_notreks<'py>(
     initial_signature_mean_size: f64,
     initial_signature_max_size: usize,
     search_version: &str,
+    source_prefix: usize,
     return_dag: bool,
     return_diagnostics: bool,
 ) -> PyResult<Py<PyAny>> {
@@ -439,12 +486,20 @@ fn flop_notreks<'py>(
     }
     let p = data.shape()[1];
     let pairs = parse_pairs(no_trek_pairs, p)?;
-    if search_version != "global_greedy_rust" {
-        return Err(PyValueError::new_err(
-            "search_version is fixed to 'global_greedy_rust'",
-        ));
-    }
-    let search_version = NoTreksVersion::GlobalGreedyRust;
+    // The schema keeps global_greedy_rust as the sole production path.  The
+    // fixed-signature path remains callable here as a research comparator for
+    // experiments against the historical, closest-to-FLOP formulation.
+    let search_version = match search_version {
+        "global_greedy_rust" => NoTreksVersion::GlobalGreedyRust,
+        "global_greedy_cached" => NoTreksVersion::GlobalGreedyCached,
+        "global_greedy_parallel" => NoTreksVersion::GlobalGreedyParallel,
+        "global_greedy_hybrid" => NoTreksVersion::GlobalGreedyHybrid,
+        "fixed_signature_a" => NoTreksVersion::FixedSignatureA,
+        "incremental_promotion_d" => NoTreksVersion::IncrementalPromotionD,
+        other => return Err(PyValueError::new_err(format!(
+            "unsupported search_version {other:?}; expected 'global_greedy_rust', 'global_greedy_cached', 'global_greedy_parallel', 'global_greedy_hybrid', 'fixed_signature_a', or 'incremental_promotion_d'"
+        ))),
+    };
     let config = FlopNoTreksConfig {
         lambda: lambda_bic,
         restarts,
@@ -459,11 +514,16 @@ fn flop_notreks<'py>(
         search_version,
     };
     let data_matrix = DMatrix::from(data.as_matrix());
-    let result = run_notreks(&data_matrix, &pairs, config)
-        .map_err(|err| PyRuntimeError::new_err(format!("FLOP-NOTREKS error: {err}")))?;
+    let result = if source_prefix > 0 {
+        run_notreks_source_prefix(&data_matrix, &pairs, config, source_prefix)
+    } else {
+        run_notreks(&data_matrix, &pairs, config)
+    }
+    .map_err(|err| PyRuntimeError::new_err(format!("FLOP-NOTREKS error: {err}")))?;
     let graph = graph_matrix(py, &result.dag, return_dag)?;
     if return_diagnostics {
         let diagnostics = diagnostics_dict(py, &result.diagnostics, &result.dag)?;
+        diagnostics.set_item("source_prefix", source_prefix)?;
         Ok(PyTuple::new(py, [graph.as_any(), diagnostics.as_any()])?
             .into_any()
             .unbind())
@@ -476,6 +536,7 @@ fn flop_notreks<'py>(
 fn flopsearch(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::flop, m)?)?;
     m.add_function(wrap_pyfunction!(crate::global_greedy_inner, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::flop_source_prefix, m)?)?;
     m.add_function(wrap_pyfunction!(crate::flop_notreks, m)?)?;
     m.add_function(wrap_pyfunction!(crate::prune_parents_bic, m)?)?;
     Ok(())

@@ -36,6 +36,10 @@ from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection im
     select_postselection_candidate,
     standardize_training_data,
 )
+from workflow.rules.structure_learning_algorithms.dagma_notreks.flop_support import (
+    build_flop_union_support,
+    excluded_edges,
+)
 
 
 @dataclass(frozen=True)
@@ -86,6 +90,10 @@ class ProductionConfig:
     dag_constraint_active: bool = True
     notreks_constraint_active: bool = True
     constraint_regime: str | None = None
+    support_mode: str = "unrestricted"
+    flop_support_runs: int = 2
+    flop_support_seed_stride: int = 7919
+    support_initialization: str = "zero_then_best_feasible_flop"
 
 
 @dataclass
@@ -98,6 +106,7 @@ class RestartResult:
     feasibility_threshold: float
     candidate_threshold: float
     exact_bic: float
+    gaussian_bic: float
     runtime: float
     candidate_edges: int
     final_edges: int
@@ -106,6 +115,7 @@ class RestartResult:
     postselection: dict | None = None
     lambda1_effective: float | None = None
     standardization: dict | None = None
+    support: dict | None = None
 
 
 def production_candidate_graph(
@@ -167,11 +177,20 @@ def postprocess_weighted_adjacency(
     return adjacency, refit, diagnostics
 
 
-def _initial_adjacency(config: ProductionConfig, d: int, restart: int):
+def _initial_adjacency(config: ProductionConfig, d: int, restart: int,
+                       allowed_arcs: np.ndarray,
+                       feasible_flop_coefficients: np.ndarray | None):
     if restart == 0:
         return np.zeros((d, d), dtype=np.float64)
-    return deterministic_initial_adjacency(
+    if config.support_initialization == "zero":
+        return np.zeros((d, d), dtype=np.float64)
+    if (restart == 1
+            and config.support_initialization == "zero_then_best_feasible_flop"
+            and feasible_flop_coefficients is not None):
+        return np.asarray(feasible_flop_coefficients, dtype=np.float64).copy()
+    initial = deterministic_initial_adjacency(
         d, config.seed + restart, config.initialization_scale, config.s[0])
+    return initial * allowed_arcs
 
 
 def run_production_pipeline(
@@ -202,6 +221,33 @@ def run_production_pipeline(
     # explicitly equal; registry policies otherwise determine the value.
     if config.lambda_policy == "fixed_0.03" and config.lambda1 != .03:
         effective_lambda = float(config.lambda1)
+    if config.support_mode not in {"unrestricted", "flop_union_support"}:
+        raise ValueError("support_mode must be unrestricted or flop_union_support")
+    if config.support_initialization not in {
+            "zero", "zero_then_best_feasible_flop", "zero_then_masked_random"}:
+        raise ValueError("unsupported support_initialization")
+    allowed_arcs = np.ones((data.shape[1], data.shape[1]), dtype=np.uint8)
+    np.fill_diagonal(allowed_arcs, 0)
+    support_diagnostics = {
+        "support_mode": "unrestricted",
+        "allowed_directed_arcs": int(allowed_arcs.sum()),
+        "support_density": 1.0,
+        "support_is_symmetrized": False,
+        "support_build_seconds": 0.0,
+    }
+    feasible_flop_coefficients = None
+    if config.support_mode == "flop_union_support":
+        support_started = perf_counter()
+        support = build_flop_union_support(
+            data, no_trek_pairs, runs=config.flop_support_runs,
+            seed=config.seed, seed_stride=config.flop_support_seed_stride,
+            lambda_bic=config.lambda_bic)
+        allowed_arcs = support.allowed_arcs
+        feasible_flop_coefficients = support.best_feasible_coefficients
+        support_diagnostics = support.diagnostics
+        support_diagnostics["support_build_seconds"] = (
+            perf_counter() - support_started)
+    exclusions = excluded_edges(allowed_arcs)
     results: list[RestartResult] = []
     for restart in range(config.restarts):
         started = perf_counter()
@@ -212,7 +258,9 @@ def run_production_pipeline(
             trek_weight=config.trek_weight,
             trek_function=config.trek_function,
             trek_kernel=config.trek_kernel,
-            initial_W=_initial_adjacency(config, data.shape[1], restart),
+            initial_W=_initial_adjacency(
+                config, data.shape[1], restart, allowed_arcs,
+                feasible_flop_coefficients),
             lambda1=effective_lambda,
             w_threshold=0.0,
             T=config.T,
@@ -225,8 +273,13 @@ def run_production_pipeline(
             checkpoint=config.checkpoint,
             beta_1=config.beta_1,
             beta_2=config.beta_2,
+            exclude_edges=exclusions,
         )
         weighted = np.asarray(model.W_est, dtype=np.float64).copy()
+        outside_support = ((allowed_arcs == 0)
+                           & ~np.eye(data.shape[1], dtype=bool))
+        if np.any((weighted != 0) & outside_support):
+            raise RuntimeError("DAGMA optimizer escaped the FLOP support mask")
         if config.postselection_policy == "legacy_fixed_order_parent_shrink":
             adjacency, coefficients, diagnostics = (
                 postprocess_weighted_adjacency(
@@ -271,6 +324,10 @@ def run_production_pipeline(
                 "feasibility_threshold": postselection.selected_threshold,
             }
             postselection_row = postselection.to_row()
+        if np.any((adjacency != 0) & (allowed_arcs == 0)):
+            raise RuntimeError("postselection introduced an edge outside the FLOP support")
+        gaussian_bic_score, _ = gaussian_bic(
+            data, adjacency, lambda_bic=config.lambda_bic)
         results.append(RestartResult(
             restart=restart,
             weighted_adjacency=weighted,
@@ -280,6 +337,7 @@ def run_production_pipeline(
             feasibility_threshold=diagnostics["feasibility_threshold"],
             candidate_threshold=diagnostics["candidate_threshold"],
             exact_bic=diagnostics["postprocessed_bic"],
+            gaussian_bic=float(gaussian_bic_score),
             runtime=perf_counter() - started,
             candidate_edges=diagnostics["candidate_edges"],
             final_edges=diagnostics["final_edges"],
@@ -289,6 +347,7 @@ def run_production_pipeline(
             postselection=postselection_row,
             lambda1_effective=effective_lambda,
             standardization=asdict(standardization),
+            support=dict(support_diagnostics),
         ))
     selected = min(results, key=lambda result: (
         result.exact_bic,
