@@ -534,18 +534,9 @@ def _budgeted(initial, pool, strengths, scorer, checker, config, diagnostics):
 
 def _repair(initial, strengths, scorer, checker, config, diagnostics):
     graph = initial.copy()
-    best = None
-    best_score = float("inf")
-    # Follow one deterministic weakest-edge deletion path. Retain every
-    # feasible incumbent and select the best refit/BIC score on the path.
-    while graph.any():
-        feasibility = checker.check(graph)
-        if feasibility.feasible:
-            score = float(scorer.score(graph))
-            if (score < best_score - 1e-12 or
-                    (abs(score - best_score) <= 1e-12 and
-                     (best is None or graph.sum() < best.sum()))):
-                best, best_score = graph.copy(), score
+    # Delete only until the first feasible graph; do not run a BIC-driven
+    # sparsity path during constraint repair.
+    while not checker.check(graph).feasible and graph.any():
         candidates = []
         for source, target in zip(*np.nonzero(graph)):
             candidates.append((
@@ -555,10 +546,7 @@ def _repair(initial, strengths, scorer, checker, config, diagnostics):
         graph[source, target] = 0
         diagnostics.search_nodes_expanded += 1
     diagnostics.cutoff_reason = "repaired"
-    if best is None:
-        return np.zeros_like(graph, dtype=int)
-    diagnostics.incumbent_improvements += 1
-    return best
+    return graph
 
 
 def select_postselection_candidate(

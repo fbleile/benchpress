@@ -23,6 +23,7 @@ class DagmaFastConfig:
     lambda1: float = 0.03
     dag_penalty_weight: float = 1.0
     T: int = 5
+    mu_schedule: tuple[float, ...] | None = None
     mu_init: float = 1.0
     mu_factor: float = 0.1
     s: tuple[float, ...] = (1.0, 0.9, 0.8, 0.7, 0.6)
@@ -87,12 +88,14 @@ def fit_weighted_adjacency(
     mask = np.ones_like(W)
     np.fill_diagonal(mask, 0.0)
     penalty = dag_penalty or LogDetDagPenalty(d)
-    schedule = list(config.s)
-    if len(schedule) < config.T:
-        schedule.extend([schedule[-1]] * (config.T - len(schedule)))
-    mus = [
+    mus = (list(config.mu_schedule) if config.mu_schedule is not None else [
         config.mu_init * config.mu_factor ** stage
-        for stage in range(config.T)]
+        for stage in range(config.T)])
+    if not mus or any(mu < 0 for mu in mus):
+        raise ValueError("mu_schedule must be non-empty and non-negative")
+    schedule = list(config.s)
+    if len(schedule) < len(mus):
+        schedule.extend([schedule[-1]] * (len(mus) - len(schedule)))
     started = time.perf_counter()
     total = 0
     by_stage = []
@@ -104,7 +107,7 @@ def fit_weighted_adjacency(
         v = np.zeros_like(W)
         previous = float("inf")
         stage_iterations = (
-            config.max_iter if stage == config.T - 1
+            config.max_iter if stage == len(mus) - 1
             else config.warm_iter)
         completed = 0
         for iteration in range(1, stage_iterations + 1):
