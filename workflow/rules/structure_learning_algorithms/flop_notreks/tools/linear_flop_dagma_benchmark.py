@@ -140,6 +140,9 @@ def dagma_run(X, truth, pairs, seed, config, method):
         "method": method, "runtime": perf_counter() - started,
         "optimizer_restarts": config.restarts,
         "optimizer_seconds": sum(row.runtime for row in restart_rows),
+        "optimizer_iterations": int(sum(
+            d.get("iterations_performed", 0)
+            for row in restart_rows for d in row.stage_diagnostics)),
         "notreks_weight": config.trek_weight if fit_pairs else 0.,
         **metrics(graph, truth, pairs, X),
     }
@@ -162,7 +165,12 @@ def run_case(args, graph_seed, algorithm_seed, knowledge_fraction):
         "graph_family": args.graph_family,
     }
     rows = []
-    for strategy in ("vanilla_flop", "global_greedy_hybrid"):
+    # Vanilla methods are the zero-knowledge baseline.  At positive supplied
+    # knowledge fractions only the corresponding NOTREKS-aware methods are
+    # benchmarked; vanilla methods cannot consume those pairs.
+    flop_methods = (("vanilla_flop",) if knowledge_fraction == 0
+                    else ("global_greedy_hybrid",))
+    for strategy in flop_methods:
         rows.append({**base, **flop_run(
             X, truth, pairs, algorithm_seed, strategy, args.flop_restarts,
             args.flop_sweeps)})
@@ -170,16 +178,21 @@ def run_case(args, graph_seed, algorithm_seed, knowledge_fraction):
         restarts=args.dagma_restarts,
         seed=algorithm_seed,
         trek_weight=args.notreks_weight,
+        warm_iter=args.dagma_warm_iter,
+        max_iter=args.dagma_max_iter,
+        optimizer_tol=args.dagma_tol,
         postselection_policy="PS1_joint_feasible_greedy_score",
     )
-    rows.append({**base, **dagma_run(
-        X, truth, pairs, algorithm_seed,
-        replace(dagma_config, notreks_constraint_active=False,
-                trek_weight=0.), "dagma")})
-    rows.append({**base, **dagma_run(
-        X, truth, pairs, algorithm_seed,
-        replace(dagma_config, notreks_constraint_active=bool(pairs)),
-        "dagma_notreks")})
+    if knowledge_fraction == 0:
+        rows.append({**base, **dagma_run(
+            X, truth, pairs, algorithm_seed,
+            replace(dagma_config, notreks_constraint_active=False,
+                    trek_weight=0.), "dagma")})
+    else:
+        rows.append({**base, **dagma_run(
+            X, truth, pairs, algorithm_seed,
+            replace(dagma_config, notreks_constraint_active=True),
+            "dagma_notreks")})
     return rows
 
 
@@ -201,6 +214,10 @@ def main():
     parser.add_argument("--flop-sweeps", type=int, default=100,
                         help="FLOP signature/order sweeps per restart")
     parser.add_argument("--dagma-restarts", type=int, default=5)
+    parser.add_argument("--dagma-warm-iter", type=int, default=30000)
+    parser.add_argument("--dagma-max-iter", type=int, default=60000)
+    parser.add_argument("--dagma-tol", type=float, default=0.0,
+                        help="0 forces every configured DAGMA stage to use its full budget")
     parser.add_argument("--notreks-weight", type=float, default=1.0)
     parser.add_argument("--output-dir", type=Path,
                         default=Path("results/dagma_notreks_oracle/linear_flop_dagma"))

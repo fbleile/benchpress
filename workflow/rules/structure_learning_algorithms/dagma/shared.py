@@ -605,7 +605,7 @@ class SharedDagmaLinear(DagmaLinear):
     def _fit_initialized(self, X, initial_W, lambda1=.03, w_threshold=.3, T=5,
                          mu_init=1., mu_factor=.1, s=(1., .9, .8, .7, .6),
                          warm_iter=30000, max_iter=60000, lr=.0003,
-                         checkpoint=1000, beta_1=.99, beta_2=.999,
+                         checkpoint=1000, beta_1=.99, beta_2=.999, tol=1e-6,
                          exclude_edges=None, include_edges=None,
                          mu_schedule=None):
         """Run the upstream central path from a caller-supplied valid W0."""
@@ -643,7 +643,7 @@ class SharedDagmaLinear(DagmaLinear):
             while not success:
                 candidate, success = self.minimize(
                     self.W_est.copy(), mu, budget, schedule[stage], lr_adam,
-                    beta_1=beta_1, beta_2=beta_2)
+                    tol=tol, beta_1=beta_1, beta_2=beta_2)
                 if not success:
                     lr_adam *= .5
                     if mu == 0.0 and self.terminal_zero_stage:

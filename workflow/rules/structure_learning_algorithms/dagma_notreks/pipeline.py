@@ -67,6 +67,9 @@ class ProductionConfig:
     warm_iter: int = 30000
     max_iter: int = 60000
     lr: float = 0.0003
+    # Relative objective tolerance used by the Adam inner loop.  Production
+    # callers may set this to zero when they explicitly want the full budget.
+    optimizer_tol: float = 1e-6
     checkpoint: int = 1000
     beta_1: float = 0.99
     beta_2: float = 0.999
@@ -270,6 +273,7 @@ def run_production_pipeline(
             warm_iter=config.warm_iter,
             max_iter=config.max_iter,
             lr=config.lr,
+            tol=config.optimizer_tol,
             checkpoint=config.checkpoint,
             beta_1=config.beta_1,
             beta_2=config.beta_2,
