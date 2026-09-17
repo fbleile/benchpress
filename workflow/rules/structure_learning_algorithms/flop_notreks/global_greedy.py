@@ -202,8 +202,14 @@ def fit_global_greedy_notreks(
                 lambda_bic=config.lambda_bic,
                 return_dag=True,
             ), dtype=np.uint8)
+            if not constraints.is_feasible(result):
+                raise RuntimeError(
+                    "Rust global-greedy inner returned an infeasible graph")
             return result, local_scorer.graph_score(result)
         current = _project_to_order(graph, order)
+        if not constraints.is_feasible(current):
+            raise RuntimeError(
+                "global-greedy inner received an infeasible initial graph")
         current_score = local_scorer.graph_score(current)
         position = np.empty(d, dtype=int)
         position[np.asarray(order, dtype=int)] = np.arange(d)

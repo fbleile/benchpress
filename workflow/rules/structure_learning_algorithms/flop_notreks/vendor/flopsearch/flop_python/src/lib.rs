@@ -1,6 +1,6 @@
 use ::flop::algo::FlopConfig;
 use ::flop::constrained_algo::{
-    run_notreks, FlopNoTreksConfig, NoTreksDiagnostics, NoTreksVersion,
+    run_notreks, run_source_signature_polish, FlopNoTreksConfig, NoTreksDiagnostics, NoTreksVersion,
 };
 use nalgebra::DMatrix;
 use numpy::{PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
@@ -9,6 +9,8 @@ use pyo3::{
     prelude::*,
     types::{PyAny, PyDict, PyTuple},
 };
+
+mod soft;
 
 /// Run the FLOP causal discovery algorithm.
 ///
@@ -85,6 +87,204 @@ fn global_greedy_inner<'py>(
     )
     .map_err(|err| PyRuntimeError::new_err(format!("global-greedy inner error: {err}")))?;
     graph_matrix(py, &dag, return_dag)
+}
+
+/// Run the lazy soft continuous-NOTREKS global-greedy search in Rust.
+#[pyfunction]
+#[pyo3(signature = (data, no_trek_pairs, *, restarts=8, max_sweeps=12, lambda_bic=2.0, soft_notreks_weight=100.0, lazy_top_k=12, seed=1729))]
+fn soft_global_greedy<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    no_trek_pairs: &Bound<'py, PyAny>,
+    restarts: usize,
+    max_sweeps: usize,
+    lambda_bic: f64,
+    soft_notreks_weight: f64,
+    lazy_top_k: usize,
+    seed: u64,
+) -> PyResult<Py<PyAny>> {
+    if restarts == 0 || max_sweeps == 0 || lazy_top_k == 0 {
+        return Err(PyValueError::new_err(
+            "restarts, max_sweeps and lazy_top_k must be positive",
+        ));
+    }
+    let p = data.shape()[1];
+    let pairs = parse_pairs(no_trek_pairs, p)?;
+    let matrix = DMatrix::from(data.as_matrix());
+    let (graph, evaluations) = soft::fit_soft(
+        py,
+        &matrix,
+        &pairs,
+        restarts,
+        max_sweeps,
+        lambda_bic,
+        soft_notreks_weight,
+        lazy_top_k,
+        seed,
+    )?;
+    let diagnostics = PyDict::new(py);
+    diagnostics.set_item("support_evaluations", evaluations)?;
+    diagnostics.set_item("algorithm", "soft_global_greedy_rust")?;
+    Ok(PyTuple::new(py, [graph.as_any(), diagnostics.as_any()])?
+        .into_any()
+        .unbind())
+}
+
+/// Experimental genuinely-soft search: normalized continuation and order
+/// reinsertion, without a hard FLOP safeguard.
+#[pyfunction]
+#[pyo3(signature = (data, no_trek_pairs, *, restarts=8, max_sweeps=8, lambda_bic=2.0, lazy_top_k=16, seed=1729))]
+fn soft_global_greedy_redesigned<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    no_trek_pairs: &Bound<'py, PyAny>,
+    restarts: usize,
+    max_sweeps: usize,
+    lambda_bic: f64,
+    lazy_top_k: usize,
+    seed: u64,
+) -> PyResult<Py<PyAny>> {
+    if restarts == 0 || max_sweeps == 0 || lazy_top_k == 0 {
+        return Err(PyValueError::new_err(
+            "restarts, max_sweeps and lazy_top_k must be positive",
+        ));
+    }
+    let p = data.shape()[1];
+    let pairs = parse_pairs(no_trek_pairs, p)?;
+    let matrix = DMatrix::from(data.as_matrix());
+    let (graph, evaluations) = soft::fit_soft_redesigned(
+        py, &matrix, &pairs, restarts, max_sweeps, lambda_bic, lazy_top_k, seed,
+    )?;
+    let diagnostics = PyDict::new(py);
+    diagnostics.set_item("support_evaluations", evaluations)?;
+    diagnostics.set_item("algorithm", "soft_global_greedy_redesigned_rust")?;
+    Ok(PyTuple::new(py, [graph.as_any(), diagnostics.as_any()])?
+        .into_any()
+        .unbind())
+}
+
+/// Run the hard-DAG global-greedy search with a continuous NOTREKS penalty.
+#[pyfunction]
+#[pyo3(signature = (data, lambda_bic, no_trek_pairs, *, restarts=1, max_sweeps=8, penalty_weight=1.0, seed=1729, return_diagnostics=false))]
+fn global_greedy_penalty<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    lambda_bic: f64,
+    no_trek_pairs: &Bound<'py, PyAny>,
+    restarts: usize,
+    max_sweeps: usize,
+    penalty_weight: f64,
+    seed: u64,
+    return_diagnostics: bool,
+) -> PyResult<Py<PyAny>> {
+    if restarts == 0 || max_sweeps == 0 || penalty_weight < 0.0 {
+        return Err(PyValueError::new_err(
+            "restarts and max_sweeps must be positive; penalty_weight must be nonnegative",
+        ));
+    }
+    let p = data.shape()[1];
+    let pairs = parse_pairs(no_trek_pairs, p)?;
+    let matrix = DMatrix::from(data.as_matrix());
+    let config = FlopNoTreksConfig {
+        lambda: lambda_bic,
+        restarts: Some(restarts - 1),
+        timeout: None,
+        manual_termination: false,
+        seed: Some(seed),
+        signature_top_k: 0,
+        signature_exploration_k: 0,
+        max_signature_rounds: max_sweeps,
+        initial_signature_mean_size: 0.0,
+        initial_signature_max_size: 0,
+        search_version: NoTreksVersion::GlobalGreedyPenalty,
+        local_greedy_passes: 8,
+        forbidden_edges: Vec::new(),
+        random_initial_order: false,
+        order_guided_lex_fraction: 0.5,
+        order_guided_repair_candidates: 2,
+        order_guided_coverage_starts: 0,
+        trekcut_oracle_budget: 32,
+        trekcut_refinement_passes: 4,
+        prefix_beam_width: 1,
+        trek_graph: None,
+    };
+    let result = ::flop::constrained_algo::run_global_greedy_penalty(
+        &matrix,
+        &pairs,
+        &config,
+        penalty_weight,
+    )
+    .map_err(|err| PyRuntimeError::new_err(format!("global-greedy penalty error: {err}")))?;
+    let graph = graph_matrix(py, &result.dag, true)?;
+    if return_diagnostics {
+        let diagnostics = diagnostics_dict(py, &result.diagnostics, &result.dag)?;
+        Ok(PyTuple::new(py, [graph.as_any(), diagnostics.as_any()])?
+            .into_any()
+            .unbind())
+    } else {
+        Ok(graph.into_any().unbind())
+    }
+}
+
+/// Run the hard-feasible global-greedy search while additionally evaluating
+/// the binary graph-only NOTREKS penalty for every candidate.  The penalty is
+/// not used for selection; this is a runtime-control comparison.
+#[pyfunction]
+#[pyo3(signature = (data, lambda_bic, no_trek_pairs, *, restarts=1, max_sweeps=8, seed=1729, return_diagnostics=false))]
+fn global_greedy_binary_penalty<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    lambda_bic: f64,
+    no_trek_pairs: &Bound<'py, PyAny>,
+    restarts: usize,
+    max_sweeps: usize,
+    seed: u64,
+    return_diagnostics: bool,
+) -> PyResult<Py<PyAny>> {
+    if restarts == 0 || max_sweeps == 0 {
+        return Err(PyValueError::new_err(
+            "restarts and max_sweeps must be positive",
+        ));
+    }
+    let p = data.shape()[1];
+    let pairs = parse_pairs(no_trek_pairs, p)?;
+    let matrix = DMatrix::from(data.as_matrix());
+    let config = FlopNoTreksConfig {
+        lambda: lambda_bic,
+        // Match flop_notreks semantics exactly for the paired runtime test.
+        restarts: Some(restarts),
+        timeout: None,
+        manual_termination: false,
+        seed: Some(seed),
+        signature_top_k: 0,
+        signature_exploration_k: 0,
+        max_signature_rounds: max_sweeps,
+        initial_signature_mean_size: 0.0,
+        initial_signature_max_size: 0,
+        search_version: NoTreksVersion::GlobalGreedyRust,
+        local_greedy_passes: 8,
+        random_initial_order: false,
+        forbidden_edges: Vec::new(),
+        order_guided_lex_fraction: 0.5,
+        order_guided_repair_candidates: 2,
+        order_guided_coverage_starts: 0,
+        trekcut_oracle_budget: 32,
+        trekcut_refinement_passes: 4,
+        prefix_beam_width: 1,
+        trek_graph: None,
+    };
+    let result =
+        ::flop::constrained_algo::run_global_greedy_binary_penalty(&matrix, &pairs, &config)
+            .map_err(|err| PyRuntimeError::new_err(format!("binary-penalty error: {err}")))?;
+    let graph = graph_matrix(py, &result.dag, true)?;
+    if return_diagnostics {
+        let diagnostics = diagnostics_dict(py, &result.diagnostics, &result.dag)?;
+        Ok(PyTuple::new(py, [graph.as_any(), diagnostics.as_any()])?
+            .into_any()
+            .unbind())
+    } else {
+        Ok(graph.into_any().unbind())
+    }
 }
 
 fn parse_pairs(obj: &Bound<'_, PyAny>, p: usize) -> PyResult<Vec<(usize, usize)>> {
@@ -371,24 +571,60 @@ fn diagnostics_dict<'py>(
         "number_of_post_promotion_order_blocks",
         d.number_of_post_promotion_order_blocks,
     )?;
-    result.set_item("repair_edges_removed", d.repair_edges_removed)?;
+    result.set_item("order_guided_archive_edges", &d.order_guided_archive_edges)?;
+    result.set_item("order_guided_archive_bics", &d.order_guided_archive_bics)?;
     result.set_item(
-        "repair_continuous_evaluations",
-        d.repair_continuous_evaluations,
+        "order_guided_archive_violations",
+        &d.order_guided_archive_violations,
     )?;
     result.set_item(
-        "repair_initial_violation_count",
-        d.repair_initial_violation_count,
+        "order_guided_archive_exact_violations",
+        &d.order_guided_archive_exact_violations,
     )?;
     result.set_item(
-        "repair_initial_continuous_value",
-        d.repair_initial_continuous_value,
+        "order_guided_violation_trajectory",
+        &d.order_guided_violation_trajectory,
     )?;
     result.set_item(
-        "repair_final_continuous_value",
-        d.repair_final_continuous_value,
+        "order_guided_raw_feasible_count",
+        d.order_guided_raw_feasible_count,
     )?;
-    result.set_item("repair_fallback_used", d.repair_fallback_used)?;
+    result.set_item("trekcut_witness_lengths", &d.trekcut_witness_lengths)?;
+    result.set_item("trekcut_branch_counts", &d.trekcut_branch_counts)?;
+    result.set_item("trekcut_masks", &d.trekcut_masks)?;
+    result.set_item("trekcut_archive_bics", &d.trekcut_archive_bics)?;
+    result.set_item("trekcut_archive_violations", &d.trekcut_archive_violations)?;
+    result.set_item(
+        "trekcut_feasible_state_discovery_time",
+        d.trekcut_feasible_state_discovery_time,
+    )?;
+    result.set_item("trekcut_oracle_calls", d.trekcut_oracle_calls)?;
+    result.set_item(
+        "prefix_admissible_pool_sizes",
+        &d.prefix_admissible_pool_sizes,
+    )?;
+    result.set_item(
+        "prefix_suffix_nodes_rebuilt",
+        &d.prefix_suffix_nodes_rebuilt,
+    )?;
+    result.set_item("prefix_beam_width", d.prefix_beam_width)?;
+    result.set_item(
+        "prefix_beam_alternative_count",
+        d.prefix_beam_alternative_count,
+    )?;
+    result.set_item("trek_dominance_mask_density", d.trek_dominance_mask_density)?;
+    result.set_item(
+        "source_signature_source_count",
+        d.source_signature_source_count,
+    )?;
+    result.set_item(
+        "source_signature_mask_density",
+        d.source_signature_mask_density,
+    )?;
+    result.set_item(
+        "source_signature_pair_check_passed",
+        d.source_signature_pair_check_passed,
+    )?;
     let edges: Vec<_> = dag
         .parents
         .iter()
@@ -407,7 +643,17 @@ fn diagnostics_dict<'py>(
     restarts=None, timeout=None, seed=None, signature_top_k=5,
     signature_exploration_k=0, max_signature_rounds=20,
     initial_signature_mean_size=3.0, initial_signature_max_size=6,
-    search_version="global_greedy_rust",
+    forbidden_edges=None,
+    search_version="local_greedy_rust",
+    random_initial_order=false,
+    local_greedy_passes=8,
+    order_guided_lex_fraction=0.5,
+    order_guided_repair_candidates=2,
+    order_guided_coverage_starts=0,
+    trekcut_oracle_budget=32,
+    trekcut_refinement_passes=4,
+    prefix_beam_width=1,
+    trek_graph=None,
     return_dag=false, return_diagnostics=false
 ))]
 fn flop_notreks<'py>(
@@ -423,7 +669,17 @@ fn flop_notreks<'py>(
     max_signature_rounds: usize,
     initial_signature_mean_size: f64,
     initial_signature_max_size: usize,
+    forbidden_edges: Option<&Bound<'py, PyAny>>,
     search_version: &str,
+    random_initial_order: bool,
+    local_greedy_passes: usize,
+    order_guided_lex_fraction: f64,
+    order_guided_repair_candidates: usize,
+    order_guided_coverage_starts: usize,
+    trekcut_oracle_budget: usize,
+    trekcut_refinement_passes: usize,
+    prefix_beam_width: usize,
+    trek_graph: Option<&Bound<'py, PyAny>>,
     return_dag: bool,
     return_diagnostics: bool,
 ) -> PyResult<Py<PyAny>> {
@@ -439,12 +695,107 @@ fn flop_notreks<'py>(
     }
     let p = data.shape()[1];
     let pairs = parse_pairs(no_trek_pairs, p)?;
-    if search_version != "global_greedy_rust" {
-        return Err(PyValueError::new_err(
-            "search_version is fixed to 'global_greedy_rust'",
-        ));
+    let forbidden_edges = match forbidden_edges {
+        Some(value) => parse_pairs(value, p)?,
+        None => Vec::new(),
+    };
+    let trek_graph = match trek_graph {
+        Some(value) => Some(parse_pairs(value, p)?),
+        None => None,
+    };
+    if search_version != "global_greedy_rust"
+        && search_version != "global_greedy_rust_optimized"
+        && search_version != "local_greedy_rust"
+        && search_version != "local_greedy_active_exact"
+        && search_version != "local_greedy_active_reinsert"
+        && search_version != "flop_like"
+        && search_version != "local_greedy_rust_adaptive"
+        && search_version != "alternating_full_refit_b"
+        && search_version != "global_greedy_diagnostic"
+        && search_version != "order_guided_local"
+        && search_version != "trekcut"
+        && search_version != "prefix_feasible"
+        && search_version != "trek_dominance"
+    {
+        return Err(PyValueError::new_err(concat!(
+            "search_version must be global_greedy_rust, ",
+            "global_greedy_rust_optimized, local_greedy_rust, ",
+            "local_greedy_active_exact, ",
+            "local_greedy_active_reinsert, ",
+            "flop_like, ",
+            "alternating_full_refit_b, global_greedy_diagnostic, ",
+            "or order_guided_local, trekcut, or prefix_feasible",
+            " or trekcut",
+        )));
     }
-    let search_version = NoTreksVersion::GlobalGreedyRust;
+    // With no structural constraints, use the canonical FLOP implementation
+    // directly.  This keeps FLOP+NOTREKS exactly FLOP in the empty-knowledge
+    // regime instead of routing through a slower surrogate search.
+    if pairs.is_empty() {
+        let flop_config = FlopConfig::with_forbidden_edges_seeded(
+            lambda_bic,
+            restarts,
+            timeout,
+            false,
+            forbidden_edges.clone(),
+            seed,
+        );
+        let data_matrix = DMatrix::from(data.as_matrix());
+        let dag = ::flop::algo::run(&data_matrix, flop_config)
+            .map_err(|err| PyRuntimeError::new_err(format!("FLOP error: {err}")))?;
+        let diagnostics = NoTreksDiagnostics {
+            restarts_requested: restarts.map(|value| value + 1).unwrap_or(0),
+            restarts_completed: restarts.map(|value| value + 1).unwrap_or(1),
+            number_of_supplied_constraints: forbidden_edges.len(),
+            selected_dag_edge_count: dag.parents.iter().map(Vec::len).sum(),
+            final_no_trek_violation_count: 0,
+            algorithm_seed: seed.unwrap_or(0),
+            search_version: "vanilla_flop".into(),
+            termination_reason: if forbidden_edges.is_empty() {
+                "vanilla_flop_empty_constraints".into()
+            } else {
+                "vanilla_flop_direct_mask".into()
+            },
+            ..Default::default()
+        };
+        let graph = graph_matrix(py, &dag, return_dag)?;
+        if return_diagnostics {
+            let diagnostic_dict = diagnostics_dict(py, &diagnostics, &dag)?;
+            return Ok(
+                PyTuple::new(py, [graph.as_any(), diagnostic_dict.as_any()])?
+                    .into_any()
+                    .unbind(),
+            );
+        }
+        return Ok(graph.into_any().unbind());
+    }
+    let search_version = if search_version == "global_greedy_diagnostic" {
+        NoTreksVersion::GlobalGreedyDiagnostic
+    } else if search_version == "alternating_full_refit_b" {
+        NoTreksVersion::AlternatingFullRefitB
+    } else if search_version == "order_guided_local" {
+        NoTreksVersion::OrderGuidedLocal
+    } else if search_version == "trekcut" {
+        NoTreksVersion::TrekCut
+    } else if search_version == "prefix_feasible" {
+        NoTreksVersion::PrefixFeasible
+    } else if search_version == "trek_dominance" {
+        NoTreksVersion::TrekDominance
+    } else if search_version == "global_greedy_rust_optimized" {
+        NoTreksVersion::GlobalGreedyRustOptimized
+    } else if search_version == "local_greedy_rust" {
+        NoTreksVersion::LocalGreedyRust
+    } else if search_version == "local_greedy_active_exact" {
+        NoTreksVersion::LocalGreedyActiveExact
+    } else if search_version == "local_greedy_active_reinsert" {
+        NoTreksVersion::LocalGreedyActiveReinsert
+    } else if search_version == "flop_like" {
+        NoTreksVersion::FlopLike
+    } else if search_version == "local_greedy_rust_adaptive" {
+        NoTreksVersion::LocalGreedyRustAdaptive
+    } else {
+        NoTreksVersion::GlobalGreedyRust
+    };
     let config = FlopNoTreksConfig {
         lambda: lambda_bic,
         restarts,
@@ -457,6 +808,16 @@ fn flop_notreks<'py>(
         initial_signature_mean_size,
         initial_signature_max_size,
         search_version,
+        local_greedy_passes,
+        forbidden_edges,
+        random_initial_order,
+        order_guided_lex_fraction,
+        order_guided_repair_candidates,
+        order_guided_coverage_starts,
+        trekcut_oracle_budget,
+        trekcut_refinement_passes,
+        prefix_beam_width,
+        trek_graph,
     };
     let data_matrix = DMatrix::from(data.as_matrix());
     let result = run_notreks(&data_matrix, &pairs, config)
@@ -472,11 +833,76 @@ fn flop_notreks<'py>(
     }
 }
 
+#[pyfunction]
+#[pyo3(signature = (data, initial_graph, lambda_bic, no_trek_pairs, *, seed=None, return_diagnostics=false))]
+fn flop_source_signature<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<f64>,
+    initial_graph: PyReadonlyArray2<u8>,
+    lambda_bic: f64,
+    no_trek_pairs: &Bound<'py, PyAny>,
+    seed: Option<u64>,
+    return_diagnostics: bool,
+) -> PyResult<Py<PyAny>> {
+    let p = data.shape()[1];
+    if initial_graph.shape() != [p, p] {
+        return Err(PyValueError::new_err(
+            "initial_graph must be square and match data",
+        ));
+    }
+    let pairs = parse_pairs(no_trek_pairs, p)?;
+    let initial = initial_graph
+        .as_array()
+        .iter()
+        .map(|&value| u8::from(value != 0))
+        .collect::<Vec<_>>();
+    let config = FlopNoTreksConfig {
+        lambda: lambda_bic,
+        restarts: Some(0),
+        timeout: None,
+        manual_termination: false,
+        seed,
+        signature_top_k: 0,
+        signature_exploration_k: 0,
+        max_signature_rounds: 0,
+        initial_signature_mean_size: 0.0,
+        initial_signature_max_size: 0,
+        search_version: NoTreksVersion::OrderGuidedLocal,
+        local_greedy_passes: 1,
+        forbidden_edges: Vec::new(),
+        random_initial_order: false,
+        order_guided_lex_fraction: 0.0,
+        order_guided_repair_candidates: 0,
+        order_guided_coverage_starts: 0,
+        trekcut_oracle_budget: 1,
+        trekcut_refinement_passes: 1,
+        prefix_beam_width: 1,
+        trek_graph: None,
+    };
+    let data_matrix = DMatrix::from(data.as_matrix());
+    let result = run_source_signature_polish(&data_matrix, &initial, &pairs, &config)
+        .map_err(|err| PyRuntimeError::new_err(format!("source-signature FLOP error: {err}")))?;
+    let graph = graph_matrix(py, &result.dag, true)?;
+    if return_diagnostics {
+        let diagnostics = diagnostics_dict(py, &result.diagnostics, &result.dag)?;
+        Ok(PyTuple::new(py, [graph.as_any(), diagnostics.as_any()])?
+            .into_any()
+            .unbind())
+    } else {
+        Ok(graph.into_any().unbind())
+    }
+}
+
 #[pymodule]
 fn flopsearch(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(crate::flop, m)?)?;
     m.add_function(wrap_pyfunction!(crate::global_greedy_inner, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::soft_global_greedy, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::soft_global_greedy_redesigned, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::global_greedy_penalty, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::global_greedy_binary_penalty, m)?)?;
     m.add_function(wrap_pyfunction!(crate::flop_notreks, m)?)?;
+    m.add_function(wrap_pyfunction!(crate::flop_source_signature, m)?)?;
     m.add_function(wrap_pyfunction!(crate::prune_parents_bic, m)?)?;
     Ok(())
 }

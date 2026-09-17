@@ -13,3 +13,4 @@ nalgebra = "0.34"
 numpy = { version = "0.28", features = ["nalgebra"] }
 pyo3 = "0.28"
 flop = { path = "../flop" }
+rand = "0.8"

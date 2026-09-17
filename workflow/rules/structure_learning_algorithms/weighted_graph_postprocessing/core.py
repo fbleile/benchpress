@@ -418,6 +418,9 @@ def _greedy(pool, strengths, checker, maximum, diagnostics):
 
 def _local_search(initial, pool, scorer, checker, config, diagnostics):
     graph = initial.copy()
+    if not checker.check(graph).feasible:
+        raise ValueError(
+            "feasible local search requires a feasible initial graph")
     best = scorer.score(graph)
     started = time.perf_counter()
     while diagnostics.search_nodes_expanded < config.max_expanded_nodes:
@@ -485,6 +488,9 @@ def _budgeted(initial, pool, strengths, scorer, checker, config, diagnostics):
         (strength, source, target)
         for _, _, strength, source, target
         in edges[:config.max_ambiguous_edges]]
+    if not checker.check(initial).feasible:
+        raise ValueError(
+            "budgeted feasible search requires a feasible initial graph")
     best, best_score = initial.copy(), scorer.score(initial)
     queue = [(best_score, 0, 0, np.zeros_like(pool, dtype=int))]
     serial = 1
@@ -589,9 +595,17 @@ def select_postselection_candidate(
         for pool in pools:
             projected = postprocess_graph(
                 weighted_adjacency, pool.threshold).projected_dag
+            feasibility = checker.check(projected)
+            if not feasibility.feasible:
+                continue
             bic, _ = gaussian_bic(X, projected, lambda_bic=1.)
             candidates.append((bic, pool.threshold, int(projected.sum()), projected))
-        score, threshold, _, graph = min(candidates)
+        if candidates:
+            score, threshold, _, graph = min(candidates)
+        else:
+            threshold = None
+            graph = np.zeros((d, d), dtype=int)
+            score, _ = gaussian_bic(X, graph, lambda_bic=1.)
         feasibility = checker.check(graph)
         diagnostics = SearchDiagnostics(cutoff_reason="reference_only")
         return PostselectionResult(

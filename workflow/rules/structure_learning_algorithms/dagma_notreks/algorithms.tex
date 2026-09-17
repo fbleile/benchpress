@@ -1,0 +1,55 @@
+% Publication-facing pseudocode for the verified production paths.
+% Compile with: \usepackage{algorithm}\usepackage{algpseudocode}
+
+\begin{algorithm}[t]
+\caption{FLOP with exact no-trek constraints (current constrained path)}
+\label{alg:flop-notreks}
+\begin{algorithmic}[1]
+\Require data $\mathcal D$, unordered no-trek pairs $\mathcal I$, BIC penalty $\lambda$
+\Ensure DAG support $\widehat G$ and its BIC score
+\If{$\mathcal I=\varnothing$}
+    \State $\widehat G \gets \textsc{VanillaFLOP}(\mathcal D,\lambda)$
+    \State \Return $\widehat G$
+\EndIf
+\State $\mathcal A \gets \varnothing$ \Comment{best feasible restart}
+\For{each iterated-local-search restart $r$}
+    \State draw a restart order $\pi_r$ and initialize $G_r\gets\varnothing$
+    \Repeat
+        \State $G_r\gets\textsc{GlobalGreedyInner}(\mathcal D,G_r,\pi_r,\mathcal I,\lambda)$
+        \State propose order reinsertions of each node in $\pi_r$
+        \State rebuild each proposed state and rerun \textsc{GlobalGreedyInner}
+        \State accept the best strictly improving proposal
+    \Until{no order proposal improves the BIC score}
+    \State update $\mathcal A$ with $(G_r,\operatorname{BIC}(G_r))$
+\EndFor
+\State \Return the minimum-BIC member of $\mathcal A$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{DAGMA with PSTrek regularization and exact feasible post-selection}
+\label{alg:dagma-notreks}
+\begin{algorithmic}[1]
+\Require data $\mathcal D$, unordered pairs $\mathcal I$, stages $(\mu_t,s_t)$, $\lambda_1$, $\lambda_{\mathrm{NT}}$
+\Ensure selected DAG support $\widehat G$
+\For{each deterministic restart $r$}
+    \State initialize $W_{r,0}$ and set $W_{r,t}\gets W_{r,t-1}$ between stages
+    \For{$t=1,\ldots,T$}
+        \State approximately minimize
+        \State \quad $\mu_t\{\operatorname{Score}_{\mathcal D}(W)+\lambda_1\lVert W\rVert_1\}
+        \State \quad $\qquad{}+h_{\logdet,s_t}(W)+\lambda_{\mathrm{NT}}R_{\mathcal I,s_t}(W)$
+        \State \quad over the DAGMA M-matrix domain, using warm start $W_{r,t-1}$
+        \State $W_{r,t}\gets$ the numerical optimizer output
+    \EndFor
+    \State $\widehat G_r\gets\textsc{FeasiblePostSelect}(W_{r,T},\mathcal D,\mathcal I)$
+    \State verify $\widehat G_r$ is acyclic and has no common ancestor for every pair in $\mathcal I$
+\EndFor
+\State \Return the restart graph with minimum post-selection Gaussian BIC
+\end{algorithmic}
+\end{algorithm}
+
+% In the default inverse PSTrek implementation,
+% R_{I,s}(W) = [2/(d-1)] sum_{(i,j) in I} [(sI-W\odot W)^{-T}
+% (sI-W\odot W)^{-1}]_{ij} after the shared-resolvent optimization hook.
+% The final diagnostic value is evaluated with the kernel's configured
+% inverse convention; see the audit for this continuation/reporting detail.

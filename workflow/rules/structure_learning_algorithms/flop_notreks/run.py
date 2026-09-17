@@ -42,7 +42,9 @@ pairs = subsample_no_trek_pairs(
     + int(snakemake.wildcards.get("seed", 0)),
 )
 
-strategy = "global_greedy_rust"
+search_version = snakemake.wildcards.get(
+    "search_version", "local_greedy_rust")
+strategy = "vanilla_flop" if not pairs else search_version
 seed = (int(snakemake.wildcards["seed"]) + int(snakemake.wildcards["algorithm_seed"])) % (2**64)
 restarts = snakemake.wildcards["restarts"]
 if str(restarts) in {"None", "null"}:
@@ -53,8 +55,17 @@ raw, diagnostics = flopsearch.flop_notreks(
     X, float(snakemake.wildcards["lambda_bic"]), pairs,
     restarts=int(restarts),
     seed=seed,
-    max_signature_rounds=int(snakemake.wildcards.get("max_sweeps", 4)),
-    search_version="global_greedy_rust",
+    signature_top_k=int(snakemake.wildcards.get("signature_top_k", 32)),
+    signature_exploration_k=int(
+        snakemake.wildcards.get("signature_exploration_k", 8)),
+    max_signature_rounds=int(
+        snakemake.wildcards.get("max_signature_rounds", 100)),
+    initial_signature_mean_size=float(
+        snakemake.wildcards.get("initial_signature_mean_size", 3.0)),
+    initial_signature_max_size=int(
+        snakemake.wildcards.get("initial_signature_max_size", 6)),
+    search_version=search_version,
+    local_greedy_passes=int(snakemake.wildcards.get("local_greedy_passes", 8)),
     return_diagnostics=True,
     return_dag=False,
 )

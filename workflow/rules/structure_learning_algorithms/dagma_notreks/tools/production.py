@@ -30,33 +30,25 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--output-dir", required=True, type=Path)
     run.add_argument("--restarts", type=int, default=5)
     run.add_argument("--seed", type=int, default=1729)
+    run.add_argument(
+        "--initialization-mode",
+        choices=("empty_random", "empty_feasible_random"),
+        default="empty_random",
+        help="use empty plus random weights, or empty plus supplied-NOTREKS-feasible random DAGs")
+    run.add_argument("--initialization-edge-probability", type=float, default=0.15)
+    run.add_argument(
+        "--proximal-l1", action="store_true",
+        help="use proximal-gradient soft-thresholding for the L1 term")
+    run.add_argument(
+        "--postselection-policy",
+        choices=("feasible_parent_shrink",
+                 "normalized_greedy_projection_refit",
+                 "normalized_greedy_projection_refit_shrink"),
+        default="feasible_parent_shrink")
     run.add_argument("--warm-iter", type=int, default=30000)
     run.add_argument("--max-iter", type=int, default=60000)
     run.add_argument("--lambda-policy", default="fixed_0.03")
     run.add_argument("--regularizer-type", choices=("L1", "L2"), default="L1")
-    run.add_argument(
-        "--postselection-policy",
-        choices=(
-            "PS1_joint_feasible_greedy_score",
-            "PS2_joint_feasible_local_search",
-            "PS3_joint_feasible_budgeted_search",
-            "PS4_joint_violation_repair",
-            "PS5_fixed_threshold_joint_feasible",
-            "REF_threshold_grid_scc_bic_infeasible"),
-        default="PS1_joint_feasible_greedy_score")
-    run.add_argument(
-        "--candidate-edge-pool",
-        choices=("threshold_grid", "fixed_threshold",
-                 "low_threshold_supergraph", "union_threshold_supports"),
-        default="threshold_grid")
-    run.add_argument("--threshold-grid", nargs="+", type=float,
-                     default=[.01, .03, .05, .10, .20, .30])
-    run.add_argument("--fixed-threshold", type=float, default=.30)
-    run.add_argument("--max-search-seconds", type=float, default=1.)
-    run.add_argument("--max-expanded-nodes", type=int, default=1000)
-    run.add_argument("--max-queue-size", type=int, default=1000)
-    run.add_argument("--max-ambiguous-edges", type=int, default=20)
-    run.add_argument("--max-indegree", type=int)
     run.add_argument(
         "--constraint-regime",
         choices=("DAG_only", "DAG_NOTREKS_one_correct",
@@ -111,12 +103,13 @@ def _write_result(output_dir: Path, selected, restarts, config, pairs=()):
         "regularizer_type": config.regularizer_type,
         "trek_weight": config.trek_weight,
         "restarts": config.restarts,
+        "initialization_mode": config.initialization_mode,
+        "initialization_edge_probability": config.initialization_edge_probability,
+        "proximal_l1": config.proximal_l1,
+        "dagma_postselection_policy": config.dagma_postselection_policy,
         "screening_floor": config.screening_floor,
-        "postselection_policy": config.postselection_policy,
-        "candidate_edge_pool": config.candidate_edge_pool,
-        "threshold_grid": list(config.threshold_grid),
-        "fixed_threshold": config.fixed_threshold,
-        "selection": "configured_model_refit_score",
+        "postselection_policy": "feasible_parent_shrink",
+        "selection": "feasibility_first_parent_shrink_refit",
         "selected_restart": selected.restart,
         "selected_bic": selected.exact_bic,
         "feasibility_threshold": selected.feasibility_threshold,
@@ -131,6 +124,8 @@ def _write_result(output_dir: Path, selected, restarts, config, pairs=()):
         "restart_diagnostics": [
             {
                 "restart": result.restart,
+                "initialization": result.initialization,
+                "initial_edges": result.initial_edges,
                 "exact_bic": result.exact_bic,
                 "candidate_threshold": result.candidate_threshold,
                 "candidate_edges": result.candidate_edges,
@@ -152,8 +147,7 @@ def main(argv=None) -> int:
         data, pairs = _smoke_data(args.seed)
         config = ProductionConfig(
             restarts=1, seed=args.seed, warm_iter=25, max_iter=40,
-            checkpoint=10,
-            postselection_policy="PS1_joint_feasible_greedy_score")
+            checkpoint=10)
         output_dir = args.output_dir
     else:
         data, node_names = _load_csv(args.data)
@@ -161,18 +155,13 @@ def main(argv=None) -> int:
         pairs = named_pairs_to_indices(payload, node_names)
         config = ProductionConfig(
             restarts=args.restarts, seed=args.seed,
+            initialization_mode=args.initialization_mode,
+            initialization_edge_probability=args.initialization_edge_probability,
+            proximal_l1=args.proximal_l1,
+            dagma_postselection_policy=args.postselection_policy,
             warm_iter=args.warm_iter, max_iter=args.max_iter,
             lambda_policy=args.lambda_policy,
             regularizer_type=args.regularizer_type,
-            postselection_policy=args.postselection_policy,
-            candidate_edge_pool=args.candidate_edge_pool,
-            threshold_grid=tuple(args.threshold_grid),
-            fixed_threshold=args.fixed_threshold,
-            max_search_seconds=args.max_search_seconds,
-            max_expanded_nodes=args.max_expanded_nodes,
-            max_queue_size=args.max_queue_size,
-            max_ambiguous_edges=args.max_ambiguous_edges,
-            max_indegree=args.max_indegree,
             constraint_regime=args.constraint_regime)
         output_dir = args.output_dir
     selected, restarts = run_production_pipeline(data, pairs, config)

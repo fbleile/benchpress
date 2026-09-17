@@ -31,3 +31,19 @@ def test_stage_diagnostics_follow_central_path_schedule():
     assert [row["mu"] for row in model.stage_diagnostics] == [1.0, 0.1]
     assert model.stage_diagnostics[0]["iterations_performed"] <= 3
     assert model.stage_diagnostics[1]["iterations_performed"] <= 4
+
+
+def test_edge_mask_blocks_only_direct_support():
+    rng = np.random.default_rng(23)
+    X = rng.normal(size=(50, 3))
+    mask = np.ones((3, 3))
+    mask[0, 2] = 0.0
+    np.fill_diagonal(mask, 0.0)
+    model = SharedDagmaLinear("l2")
+    W = model.fit(
+        X.copy(), edge_mask=mask, T=1, warm_iter=4, max_iter=4,
+        checkpoint=4, w_threshold=0.0)
+    assert W[0, 2] == 0.0
+    # A direct mask is not a longer-trek constraint; the API only guarantees
+    # the requested matrix entries are inaccessible to optimization.
+    assert np.all((W != 0) <= (mask != 0))

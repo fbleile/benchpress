@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
+from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.core import (
     ALL_POLICIES,
     CallbackCandidateScorer,
     EdgeStrengthExtractor,

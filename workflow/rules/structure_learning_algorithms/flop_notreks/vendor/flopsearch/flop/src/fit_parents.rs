@@ -90,6 +90,31 @@ pub fn fit_parents_constrained<R: Rng + ?Sized>(
     Ok(v_local)
 }
 
+/// Run the unchanged FLOP grow--shrink kernel from an arbitrary admissible
+/// parent set.  This is used by experimental order-reconstruction methods;
+/// ordinary FLOP continues to use `fit_parents_constrained` above.
+pub fn fit_parents_from_initial_constrained<R: Rng + ?Sized>(
+    v: usize,
+    prefix: &[usize],
+    initial: &[usize],
+    score: &Bic,
+    rng: &mut R,
+    constraints: Option<&NoTrekConstraints>,
+) -> Result<LocalScore, ScoreError> {
+    let admissible: Vec<_> = prefix.iter().copied()
+        .filter(|&u| constraints.is_none_or(|c| c.allowed_parent(u, v)))
+        .collect();
+    let parents: Vec<_> = initial.iter().copied()
+        .filter(|u| admissible.contains(u))
+        .collect();
+    let mut tokens = TokenBuffer::new(prefix.len());
+    let mut non_parents = set_diff(&mut tokens, &admissible, &parents);
+    let mut v_local = score.local_score_init(v, parents)?;
+    grow(v, &mut v_local, &mut non_parents, score, rng)?;
+    shrink(v, &mut v_local, &mut non_parents, score, rng)?;
+    Ok(v_local)
+}
+
 fn set_diff(tokens: &mut TokenBuffer, s1: &[usize], s2: &[usize]) -> Vec<usize> {
     tokens.clear();
     for &x in s2.iter() {
@@ -188,14 +213,6 @@ pub fn fit_parents_plus_constrained<R: Rng + ?Sized>(
 }
 
 // fit permutation from scratch
-pub fn perm_to_dag<R: Rng + ?Sized>(
-    perm: &[usize],
-    score: &Bic,
-    rng: &mut R,
-) -> Result<GlobalScore, ScoreError> {
-    perm_to_dag_constrained(perm, score, rng, None)
-}
-
 pub fn perm_to_dag_constrained<R: Rng + ?Sized>(
     perm: &[usize],
     score: &Bic,

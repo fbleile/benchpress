@@ -7,7 +7,7 @@ import pandas as pd
 from workflow.rules.structure_learning_algorithms.dagma.knowledge import load_sidecar, named_pairs_to_indices
 from workflow.rules.structure_learning_algorithms.dagma.shared import SharedDagmaLinear, notreks_value_grad
 from workflow.rules.structure_learning_algorithms.dagma.inverse_structural import lambda1_sqrt_logd_over_n
-from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
+from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.core import (
     lambda_policy, standardize_training_data,
 )
 from workflow.rules.structure_learning_algorithms.notreks import subsample_no_trek_pairs
@@ -49,6 +49,14 @@ pairs = subsample_no_trek_pairs(
     float(value("knowledge_fraction", 1.0)),
     int(value("knowledge_seed", 0)) + int(value("seed", 0)),
 )
+trek_weight_requested = float(value("trek_weight", 1.0))
+trek_pair_scaling = str(value("trek_pair_scaling", "sqrt_pairs"))
+if trek_pair_scaling == "sqrt_pairs":
+    trek_weight_effective = trek_weight_requested / np.sqrt(max(len(pairs), 1))
+elif trek_pair_scaling == "none":
+    trek_weight_effective = trek_weight_requested
+else:
+    raise ValueError("trek_pair_scaling must be sqrt_pairs or none")
 threshold = float(value("w_threshold", .3))
 lambda_policy_name = value("lambda_policy", None)
 lambda1_scaling = str(value("lambda1_scaling", "fixed"))
@@ -88,7 +96,7 @@ fit_args = dict(
     feasibility_threshold_tolerance=float(value(
         "feasibility_threshold_tolerance", 1e-6)),
     gradient_tolerance=float(value("gradient_tolerance", 1e-8)),
-    no_trek_pairs=pairs, trek_weight=float(value("trek_weight", 1.0)),
+    no_trek_pairs=pairs, trek_weight=trek_weight_effective,
     trek_function=str(value("trek_function", "inv")),
     trek_kernel=str(value("trek_kernel", "fast")),
     trek_log_terms=int(value("trek_log_terms", 2 * len(df.columns))),
@@ -117,7 +125,11 @@ scale = 2.0 / (len(A) - 1) if len(A) > 1 else 0.0
 diagnostics = {
     "method_id": str(value("id", "dagma_notreks")),
     "seed": int(value("seed", 0)),
-    "trek_weight": fit_args["trek_weight"], "trek_function": fit_args["trek_function"],
+    "trek_weight": fit_args["trek_weight"],
+    "trek_weight_requested": trek_weight_requested,
+    "trek_weight_effective": fit_args["trek_weight"],
+    "trek_pair_scaling": trek_pair_scaling,
+    "trek_function": fit_args["trek_function"],
     "trek_kernel": fit_args["trek_kernel"],
     "data_standardized": standardize_data,
     "data_standardised": standardize_data,

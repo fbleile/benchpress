@@ -27,6 +27,11 @@ The continuous objective follows the existing shared solver convention:
 +h_{\mathrm{logdet}}(W)+\lambda_{\mathrm{NT}}R_{\mathcal I}^{\mathrm{inv}}(W).
 \]
 
+Publication-facing pseudocode for the verified FLOP and DAGMA paths is in
+[`algorithms.tex`](algorithms.tex). The FLOP constrained path is explicitly
+documented as the current global-greedy implementation; it is not silently
+presented as vanilla FLOP with an incremental ancestry update.
+
 With no pairs or zero NOTREKS weight, the same solver is ordinary DAGMA. The
 NOTREKS implementation lives in the sibling `notreks/` package rather than in
 the DAGMA method. `fast` is the selected-column inverse implementation;

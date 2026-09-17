@@ -21,6 +21,14 @@ from .structural import feasibility_thresholds, support_diagnostics
 Pair = tuple[int, int]
 
 
+def soft_threshold(values: np.ndarray, threshold: float) -> np.ndarray:
+    """Elementwise proximal map for ``threshold * ||W||_1``."""
+    if threshold < 0 or not np.isfinite(threshold):
+        raise ValueError("soft-threshold must be finite and non-negative")
+    values = np.asarray(values)
+    return np.sign(values) * np.maximum(np.abs(values) - threshold, 0.0)
+
+
 def _validate_pairs(pairs: Sequence[Pair], d: int) -> np.ndarray:
     out = np.asarray(pairs, dtype=int)
     if out.size == 0:
@@ -225,7 +233,11 @@ class SharedDagmaLinear(DagmaLinear):
         backtracking_before = self.backtracking_steps
         obj_prev = 1e16
         self.opt_m, self.opt_v = 0, 0
-        mask_exc = np.ones((self.d, self.d), dtype=self.dtype)
+        mask_exc = getattr(self, "edge_mask", None)
+        if mask_exc is None:
+            mask_exc = np.ones((self.d, self.d), dtype=self.dtype)
+        else:
+            mask_exc = np.asarray(mask_exc, dtype=self.dtype).copy()
         if (not self.dag_penalty_weight
                 or self.dag_constraint == "inverse_trace"):
             # A weighted adjacency never admits self-loops. The log-det term
@@ -305,20 +317,30 @@ class SharedDagmaLinear(DagmaLinear):
                     )
                 if profile:
                     component_times["notreks_value_gradient_seconds"] += time.perf_counter() - started
-            G_l1 = mu * self.lambda1 * np.sign(W)
             if self.dag_constraint != "inverse_trace":
                 G_h = self.dag_penalty_weight * 2 * W * M.T
             G_structural = G_h + self.trek_weight * G_nt
-            Gobj = (G_score + G_l1 + G_h
-                    + mask_inc * np.sign(W) + self.trek_weight * G_nt)
             started = time.perf_counter()
-            grad = self._adam_update(Gobj, iteration, beta_1, beta_2)
-            if self.dag_constraint == "inverse_trace":
+            if getattr(self, "proximal_l1", False):
+                # The proximal variant takes a gradient step on the smooth
+                # part and applies the L1 proximal map separately.
+                G_smooth = (G_score + G_h + mask_inc * np.sign(W)
+                            + self.trek_weight * G_nt)
                 step_lr = lr
+                threshold = step_lr * mu * self.lambda1
                 while True:
-                    proposal = (W - step_lr * grad) * mask_exc
-                    inside, _ = self._inverse_structural_kernel.in_domain(
-                        proposal)
+                    proposal = soft_threshold(
+                        W - step_lr * G_smooth, threshold) * mask_exc
+                    if self.dag_constraint == "inverse_trace":
+                        inside, _ = self._inverse_structural_kernel.in_domain(
+                            proposal)
+                    elif self.dag_penalty_weight:
+                        proposal_M = sla.inv(
+                            s * self.Id - proposal * proposal) + 1e-16
+                        inside = bool(np.all(np.isfinite(proposal_M))
+                                     and np.all(proposal_M >= 0))
+                    else:
+                        inside = True
                     if inside:
                         W = proposal
                         lr = step_lr
@@ -326,16 +348,46 @@ class SharedDagmaLinear(DagmaLinear):
                     self.domain_rejections += 1
                     self.backtracking_steps += 1
                     step_lr *= .5
+                    threshold = step_lr * mu * self.lambda1
                     if step_lr <= 1e-16:
                         return W, False
             else:
-                W -= lr * grad
-                W *= mask_exc
+                # Preserve the original Adam expression and evaluation order
+                # for the existing DAGMA methods.
+                G_l1 = mu * self.lambda1 * np.sign(W)
+                Gobj = (G_score + G_l1 + G_h
+                        + mask_inc * np.sign(W) + self.trek_weight * G_nt)
+                grad = self._adam_update(Gobj, iteration, beta_1, beta_2)
+                if self.dag_constraint == "inverse_trace":
+                    step_lr = lr
+                    while True:
+                        proposal = (W - step_lr * grad) * mask_exc
+                        inside, _ = self._inverse_structural_kernel.in_domain(
+                            proposal)
+                        if inside:
+                            W = proposal
+                            lr = step_lr
+                            break
+                        self.domain_rejections += 1
+                        self.backtracking_steps += 1
+                        step_lr *= .5
+                        if step_lr <= 1e-16:
+                            return W, False
+                else:
+                    W -= lr * grad
+                    W *= mask_exc
             if profile:
                 component_times["optimizer_update_seconds"] += time.perf_counter() - started
             diagnostic_interval = (
                 self.zero_block_iterations if zero_stage else self.checkpoint)
             if iteration % diagnostic_interval == 0 or iteration == int(max_iter):
+                self.trajectory_matrices.append(W.copy())
+                self.trajectory_metadata.append({
+                    "stage": len(self.stage_diagnostics) + 1,
+                    "iteration": int(iteration),
+                    "elapsed_seconds": float(
+                        time.perf_counter() - self._trajectory_started),
+                })
                 started = time.perf_counter()
                 score, _ = self._score(W)
                 if self.dag_constraint == "inverse_trace":
@@ -498,7 +550,12 @@ class SharedDagmaLinear(DagmaLinear):
             "notreks_gradient_norm": float(np.linalg.norm(
                 self.trek_weight * nt_gradient)),
             **component_times,
-            "score": float(score), "h": float(h),
+            "score": float(score),
+            "data_fit_term": float(score),
+            "sparsity_term": float(mu * self.lambda1 * np.abs(W).sum()),
+            "l1_norm": float(np.abs(W).sum()),
+            "dense_active_edge_count": int(np.count_nonzero(W)),
+            "h": float(h),
             "raw_notreks_value": float(nt / (2.0 / (W.shape[0] - 1)))
                 if W.shape[0] > 1 else 0.0,
             "scaled_notreks_contribution": float(self.trek_weight * nt),
@@ -518,9 +575,20 @@ class SharedDagmaLinear(DagmaLinear):
             initial_W=None, mu_schedule=None, terminal_zero_stage=False,
             zero_block_iterations=10000, maximum_zero_iterations=300000,
             h_tolerance=1e-12, notreks_tolerance=1e-12,
-            feasibility_threshold_tolerance=1e-6,
-            gradient_tolerance=1e-8, **kwargs):
+            feasibility_threshold_tolerance=1e-6, edge_mask=None,
+            gradient_tolerance=1e-8, proximal_l1=False, **kwargs):
+        self.proximal_l1 = bool(proximal_l1)
         self.no_trek_pairs = _validate_pairs(no_trek_pairs, np.asarray(X).shape[1])
+        d = np.asarray(X).shape[1]
+        if edge_mask is None:
+            self.edge_mask = None
+        else:
+            self.edge_mask = np.asarray(edge_mask, dtype=self.dtype).copy()
+            if self.edge_mask.shape != (d, d):
+                raise ValueError(f"edge_mask must have shape {(d, d)}")
+            if not np.all(np.isin(self.edge_mask, [0, 1])):
+                raise ValueError("edge_mask must contain only zero/one entries")
+            np.fill_diagonal(self.edge_mask, 0.0)
         self.trek_kernel_name = str(trek_kernel)
         if self.trek_kernel_name == "notreks_reference":
             self._trek_kernel = NoTreksKernel.from_pairs(
@@ -555,7 +623,10 @@ class SharedDagmaLinear(DagmaLinear):
             raise ValueError("variance_epsilon must be positive")
         self.stage_diagnostics = []
         self.stage_adjacencies = []
+        self.trajectory_matrices = []
+        self.trajectory_metadata = []
         self.zero_stage_trajectory = []
+        self._trajectory_started = time.perf_counter()
         validated_mu_schedule = None
         if mu_schedule is not None:
             schedule = np.asarray(mu_schedule, dtype=float)
@@ -614,6 +685,8 @@ class SharedDagmaLinear(DagmaLinear):
             raise ValueError(f"initial_W must have shape {(self.d, self.d)}")
         self.W_est = initial_W.astype(self.dtype, copy=True)
         np.fill_diagonal(self.W_est, 0.)
+        if getattr(self, "edge_mask", None) is not None:
+            self.W_est *= self.edge_mask
         mus = ([float(mu_init) * float(mu_factor) ** stage
                 for stage in range(int(T))]
                if mu_schedule is None else list(mu_schedule))

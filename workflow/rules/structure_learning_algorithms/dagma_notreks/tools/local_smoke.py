@@ -142,8 +142,10 @@ def _flop_notreks_worker(data_path, sidecar_path, output_path, diagnostics_path,
     pairs = named_pairs_to_indices(payload, list(frame.columns))
     raw, diagnostics = flopsearch.flop_notreks(
         X, lambda_bic, pairs, restarts=restarts, seed=seed,
-        signature_top_k=top_k, max_signature_rounds=rounds,
-        search_version="alternating_full_refit_b",
+        signature_top_k=32, signature_exploration_k=8,
+        max_signature_rounds=100,
+        initial_signature_mean_size=3.0, initial_signature_max_size=6,
+        search_version="global_greedy_rust",
         return_diagnostics=True)
     np.save(output_path, np.asarray(raw))
     Path(diagnostics_path).write_text(json.dumps(diagnostics, indent=2) + "\n")

@@ -61,7 +61,7 @@ def main():
         data = (data - data.mean(0)) / data.std(0, ddof=0)
         pairs = named_pairs_to_indices(
             load_sidecar(sidecar_path, list(frame.columns)), list(frame.columns))
-        for search_version in ("fixed_signature_a", "alternating_full_refit_b"):
+        for search_version in ("global_greedy_rust",):
             started = time.perf_counter()
             cpdag_raw, diagnostics = flopsearch.flop_notreks(
                 data, 2.0, pairs, restarts=1, seed=seed,

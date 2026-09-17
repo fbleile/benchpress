@@ -209,6 +209,7 @@ dependencies = [
  "nalgebra",
  "numpy",
  "pyo3",
+ "rand",
 ]
 
 [[package]]

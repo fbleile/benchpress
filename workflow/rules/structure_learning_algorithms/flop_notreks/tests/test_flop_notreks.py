@@ -33,6 +33,25 @@ def test_shared_sidecar_alignment_and_selected_dag_violation_check():
     assert count_no_trek_violations(fork, [(0, 1)]) == 1
 
 
+def test_reversed_collider_ancestor_intersection_regression():
+    """A collider is feasible while its reversed fork is a trek violation."""
+    def ancestor_sets(graph):
+        reach = graph.astype(bool).copy()
+        np.fill_diagonal(reach, True)
+        for k in range(len(graph)):
+            reach |= reach[:, [k]] & reach[[k], :]
+        return [set(np.flatnonzero(reach[:, node])) for node in range(len(graph))]
+
+    collider = selected_dag_from_diagnostics(
+        {"selected_dag_edges": [[0, 2], [1, 2]]}, 3)
+    fork = selected_dag_from_diagnostics(
+        {"selected_dag_edges": [[2, 0], [2, 1]]}, 3)
+    collider_ancestors = ancestor_sets(collider)
+    fork_ancestors = ancestor_sets(fork)
+    assert not (collider_ancestors[0] & collider_ancestors[1])
+    assert fork_ancestors[0] & fork_ancestors[1] == {2}
+
+
 def test_cpdag_encoding_conversion():
     raw = np.array([[0, 2, 1], [2, 0, 0], [0, 0, 0]])
     converted = convert_flop_cpdag(raw, 3)

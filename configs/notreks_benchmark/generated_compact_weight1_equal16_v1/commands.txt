@@ -1,0 +1,4 @@
+snakemake --snakefile workflow/Snakefile --use-apptainer --configfile configs/notreks_benchmark/generated_compact_weight1_equal16_v1/linear-gaussian__er2__d20__n250__k0p25.json --cores ${NOTREKS_CORES:-1} --rerun-incomplete --printshellcmds
+snakemake --snakefile workflow/Snakefile --use-apptainer --configfile configs/notreks_benchmark/generated_compact_weight1_equal16_v1/linear-gaussian__er2__d50__n250__k0p25.json --cores ${NOTREKS_CORES:-1} --rerun-incomplete --printshellcmds
+snakemake --snakefile workflow/Snakefile --use-apptainer --configfile configs/notreks_benchmark/generated_compact_weight1_equal16_v1/linear-gaussian__sf4__d20__n250__k0p25.json --cores ${NOTREKS_CORES:-1} --rerun-incomplete --printshellcmds
+snakemake --snakefile workflow/Snakefile --use-apptainer --configfile configs/notreks_benchmark/generated_compact_weight1_equal16_v1/linear-gaussian__sf4__d50__n250__k0p25.json --cores ${NOTREKS_CORES:-1} --rerun-incomplete --printshellcmds

@@ -11,8 +11,10 @@
       "timeout": {"$ref": "#/$defs/flexnonnegnumnull"},
       "algorithm_seed": {"$ref": "#/$defs/flexnonnegint"},
       "search_strategy": {
-        "const": "global_greedy_rust",
-        "description": "Fixed production implementation; not user-configurable."
+        "enum": ["local_greedy_rust", "global_greedy_rust",
+                 "global_greedy_rust_optimized", "order_guided_local", "trekcut",
+                 "source_signature_polish"],
+        "description": "FLOP+NOTREKS inner-search implementation."
       },
       "max_sweeps": {"$ref": "#/$defs/flexnonnegint", "default": 4},
       "signature_top_k": {"$ref": "#/$defs/flexnonnegint"},
@@ -22,9 +24,14 @@
       "initial_signature_max_size": {"$ref": "#/$defs/flexnonnegint"},
       "n_jobs": {"$ref": "#/$defs/flexnonnegint"},
       "search_version": {
-        "const": "global_greedy_rust",
-        "description": "Fixed production implementation; not user-configurable."
+        "enum": ["local_greedy_rust", "global_greedy_rust",
+                 "global_greedy_rust_optimized", "order_guided_local", "trekcut",
+                 "source_signature_polish"],
+        "default": "local_greedy_rust"
       },
+      "local_greedy_passes": {"$ref": "#/$defs/flexnonnegint", "default": 8},
+      "trekcut_oracle_budget": {"$ref": "#/$defs/flexnonnegint", "default": 32},
+      "trekcut_refinement_passes": {"$ref": "#/$defs/flexnonnegint", "default": 4},
       "knowledge_source": {"enum": ["oracle_true_graph", "file", "none"]},
       "knowledge_file": {"type": ["string", "null"]},
       "knowledge_fraction": {"type": "number", "minimum": 0, "maximum": 1, "default": 1.0},

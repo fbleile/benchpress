@@ -1,0 +1,167 @@
+{
+  "benchmark_setup": [
+    {
+      "title": "linear-gaussian__sf4__d50__n250__k0p25",
+      "data": [
+        {
+          "graph_id": "graph_linear-gaussian__sf4__d50__n250__k0p25",
+          "parameters_id": "sem_linear-gaussian__sf4__d50__n250__k0p25",
+          "data_id": "data_linear-gaussian__sf4__d50__n250__k0p25",
+          "seed_range": [
+            11001,
+            11005
+          ]
+        }
+      ],
+      "evaluation": {
+        "benchmarks": {
+          "filename_prefix": "notreks_benchmark/linear-gaussian__sf4__d50__n250__k0p25/",
+          "show_seed": true,
+          "errorbar": true,
+          "errorbarh": false,
+          "scatter": true,
+          "path": true,
+          "text": false,
+          "ids": []
+        },
+        "graph_estimation": {
+          "ids": [
+            "flop",
+            "flop_notreks",
+            "dagma",
+            "dagma_notreks"
+          ],
+          "convert_to": [
+            "cpdag"
+          ],
+          "graphs": false,
+          "adjmats": false,
+          "diffplots": false,
+          "csvs": true,
+          "graphvizcompare": false
+        },
+        "graph_true_plots": false,
+        "graph_true_stats": true,
+        "graph_plots": []
+      }
+    }
+  ],
+  "resources": {
+    "graph": {
+      "gcastle_dag": [
+        {
+          "id": "graph_linear-gaussian__sf4__d50__n250__k0p25",
+          "n_nodes": 50,
+          "n_edges": 100,
+          "method": "sf"
+        }
+      ]
+    },
+    "parameters": {
+      "sem_params": [
+        {
+          "id": "sem_linear-gaussian__sf4__d50__n250__k0p25",
+          "min": 0.5,
+          "max": 1.0
+        }
+      ]
+    },
+    "data": {
+      "gcastle_iidsim": [
+        {
+          "id": "data_linear-gaussian__sf4__d50__n250__k0p25",
+          "n": [
+            250
+          ],
+          "method": "linear",
+          "sem_type": "gauss",
+          "noise_scale": 1.0,
+          "standardized": true
+        }
+      ]
+    },
+    "structure_learning_algorithms": {
+      "flop": [
+        {
+          "id": "flop",
+          "lambda_bic": 2.0,
+          "restarts": 16,
+          "search_timeout": null,
+          "timeout": null
+        }
+      ],
+      "flop_notreks": [
+        {
+          "knowledge_source": "oracle_true_graph",
+          "knowledge_file": null,
+          "knowledge_fraction": 0.25,
+          "knowledge_seed": 271828,
+          "id": "flop_notreks",
+          "lambda_bic": 2.0,
+          "restarts": 2,
+          "search_timeout": null,
+          "timeout": null,
+          "algorithm_seed": 9137,
+          "search_strategy": "global_greedy_rust",
+          "max_sweeps": 2,
+          "signature_top_k": 32,
+          "signature_exploration_k": 8,
+          "max_signature_rounds": 100,
+          "initial_signature_mean_size": 3.0,
+          "initial_signature_max_size": 6,
+          "n_jobs": 1,
+          "search_version": "global_greedy_rust"
+        }
+      ],
+      "dagma": [
+        {
+          "loss_type": "l2",
+          "lambda1": 0.03,
+          "w_threshold": 0.3,
+          "T": 5,
+          "mu_init": 1.0,
+          "mu_factor": 0.1,
+          "s": "1.0,0.9,0.8,0.7,0.6",
+          "warm_iter": 30000,
+          "max_iter": 60000,
+          "lr": 0.0003,
+          "checkpoint": 1000,
+          "beta_1": 0.99,
+          "beta_2": 0.999,
+          "timeout": null,
+          "id": "dagma"
+        }
+      ],
+      "dagma_notreks": [
+        {
+          "loss_type": "l2",
+          "lambda1": 0.03,
+          "w_threshold": 0.3,
+          "T": 5,
+          "mu_init": 1.0,
+          "mu_factor": 0.1,
+          "s": "1.0,0.9,0.8,0.7,0.6",
+          "warm_iter": 30000,
+          "max_iter": 60000,
+          "lr": 0.0003,
+          "checkpoint": 1000,
+          "beta_1": 0.99,
+          "beta_2": 0.999,
+          "timeout": null,
+          "id": "dagma_notreks",
+          "knowledge_source": "oracle_true_graph",
+          "knowledge_file": null,
+          "knowledge_fraction": 0.25,
+          "knowledge_seed": 271828,
+          "trek_regularizer": "pst",
+          "trek_function": "inv",
+          "trek_kernel": "fast",
+          "trek_weight": 1.0,
+          "trek_pair_scaling": "sqrt_pairs",
+          "trek_log_terms": 100,
+          "trek_inverse_epsilon": 0.0
+        }
+      ]
+    }
+  }
+}

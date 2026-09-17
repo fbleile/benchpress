@@ -2,7 +2,8 @@ use std::thread;
 use std::time::Duration;
 
 use nalgebra::DMatrix;
-use rand::{thread_rng, Rng};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::sync::atomic::Ordering;
 
 use crate::bic::Bic;
@@ -21,6 +22,8 @@ pub struct FlopConfig {
     restarts: Option<usize>,
     timeout: Option<f64>,
     manual_termination: bool,
+    forbidden_edges: Vec<(usize, usize)>,
+    seed: Option<u64>,
 }
 
 impl FlopConfig {
@@ -35,7 +38,45 @@ impl FlopConfig {
             restarts,
             timeout,
             manual_termination,
+            forbidden_edges: Vec::new(),
+            seed: None,
         }
+    }
+
+    pub fn with_forbidden_edges(
+        lambda: f64,
+        restarts: Option<usize>,
+        timeout: Option<f64>,
+        manual_termination: bool,
+        forbidden_edges: Vec<(usize, usize)>,
+    ) -> Self {
+        Self {
+            lambda,
+            restarts,
+            timeout,
+            manual_termination,
+            forbidden_edges,
+            seed: None,
+        }
+    }
+
+    pub fn with_forbidden_edges_seeded(
+        lambda: f64,
+        restarts: Option<usize>,
+        timeout: Option<f64>,
+        manual_termination: bool,
+        forbidden_edges: Vec<(usize, usize)>,
+        seed: Option<u64>,
+    ) -> Self {
+        let mut result = Self::with_forbidden_edges(
+            lambda,
+            restarts,
+            timeout,
+            manual_termination,
+            forbidden_edges,
+        );
+        result.seed = seed;
+        result
     }
 }
 
@@ -69,7 +110,10 @@ pub fn run(data: &DMatrix<f64>, config: FlopConfig) -> Result<Dag, FlopError> {
     let p = data.ncols();
     let n = data.nrows();
 
-    let mut rng = thread_rng();
+    let mut rng = match config.seed {
+        Some(seed) => StdRng::seed_from_u64(seed),
+        None => StdRng::from_entropy(),
+    };
     let num_perturbations = (p as f64).ln().round() as usize;
 
     let corr = utils::corr_matrix(data);
@@ -82,6 +126,14 @@ pub fn run(data: &DMatrix<f64>, config: FlopConfig) -> Result<Dag, FlopError> {
     };
 
     let score = Bic::from_cov(n, corr, config.lambda);
+    let constraints = if config.forbidden_edges.is_empty() {
+        None
+    } else {
+        Some(
+            NoTrekConstraints::new_with_forbidden(p, &[], &config.forbidden_edges)
+                .map_err(FlopError::InvalidConfig)?,
+        )
+    };
 
     let mut best_bic = f64::MAX;
     let mut best_g = None;
@@ -99,14 +151,23 @@ pub fn run(data: &DMatrix<f64>, config: FlopConfig) -> Result<Dag, FlopError> {
             }
         }
 
-        let mut g = fit_parents::perm_to_dag(&perm, &score, &mut rng)?;
+        let mut g =
+            fit_parents::perm_to_dag_constrained(&perm, &score, &mut rng, constraints.as_ref())?;
         let mut bic = g.score();
 
         'outer: loop {
             let last_bic = bic;
 
             for x in perm.clone() {
-                reinsert(&mut perm, &mut g, &score, &mut bic, x, &mut rng, None)?;
+                reinsert(
+                    &mut perm,
+                    &mut g,
+                    &score,
+                    &mut bic,
+                    x,
+                    &mut rng,
+                    constraints.as_ref(),
+                )?;
                 if iter > 0 && GLOBAL_ABORT.load(Ordering::SeqCst) {
                     break 'outer;
                 }

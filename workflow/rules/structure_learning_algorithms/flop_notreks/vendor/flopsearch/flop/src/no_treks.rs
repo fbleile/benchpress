@@ -12,10 +12,20 @@ pub struct NoTrekConstraints {
     pub target_bit: Vec<Option<u8>>,
     pub incompatibility: Vec<u64>,
     pub signatures: Vec<u64>,
+    pub forbidden_edges: Vec<(usize, usize)>,
+    pub directed_forbidden_edges: Vec<(usize, usize)>,
 }
 
 impl NoTrekConstraints {
     pub fn new(p: usize, pairs: &[(usize, usize)]) -> Result<Self, String> {
+        Self::new_with_forbidden(p, pairs, &[])
+    }
+
+    pub fn new_with_forbidden(
+        p: usize,
+        pairs: &[(usize, usize)],
+        forbidden_edges: &[(usize, usize)],
+    ) -> Result<Self, String> {
         let mut canonical = BTreeSet::new();
         for &(a, b) in pairs {
             if a >= p || b >= p {
@@ -56,18 +66,57 @@ impl NoTrekConstraints {
                 signatures[node] = 1u64 << bit;
             }
         }
+        let forbidden_edges = forbidden_edges
+            .iter()
+            .map(|&(u, v)| {
+                if u >= p || v >= p || u == v {
+                    Err(format!("forbidden edge ({u}, {v}) is invalid for 0..{p}"))
+                } else {
+                    Ok(if u < v { (u, v) } else { (v, u) })
+                }
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?
+            .into_iter()
+            .collect();
         Ok(Self {
             p,
             pairs,
             target_bit,
             incompatibility,
             signatures,
+            forbidden_edges,
+            directed_forbidden_edges: Vec::new(),
         })
+    }
+
+    pub fn new_with_directed_forbidden(
+        p: usize,
+        pairs: &[(usize, usize)],
+        forbidden_edges: &[(usize, usize)],
+    ) -> Result<Self, String> {
+        let mut result = Self::new(p, pairs)?;
+        let mut directed = BTreeSet::new();
+        for &(u, v) in forbidden_edges {
+            if u >= p || v >= p || u == v {
+                return Err(format!("forbidden directed edge ({u}, {v}) is invalid for 0..{p}"));
+            }
+            directed.insert((u, v));
+        }
+        result.directed_forbidden_edges = directed.into_iter().collect();
+        Ok(result)
     }
 
     #[inline(always)]
     pub fn allowed_parent(&self, parent: usize, child: usize) -> bool {
         self.signatures[child] & !self.signatures[parent] == 0
+            && !self
+                .forbidden_edges
+                .iter()
+                .any(|&(u, v)| (u == parent && v == child) || (u == child && v == parent))
+            && !self
+                .directed_forbidden_edges
+                .iter()
+                .any(|&(u, v)| u == parent && v == child)
     }
 
     pub fn signature_is_valid(&self, signature: u64) -> bool {
@@ -218,12 +267,95 @@ pub fn count_no_trek_violations(g: &Dag, pairs: &[(usize, usize)]) -> usize {
         .count()
 }
 
+/// Validate an explicit undirected candidate trek graph.  Pairs are accepted
+/// in either orientation but duplicate/self edges are rejected explicitly.
+pub fn validate_candidate_trek_graph(
+    p: usize,
+    trek_edges: &[(usize, usize)],
+    hard_notreks: &[(usize, usize)],
+) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for &(a, b) in trek_edges {
+        if a >= p || b >= p || a == b {
+            return Err(format!("candidate trek edge ({a}, {b}) is invalid"));
+        }
+        let edge = if a < b { (a, b) } else { (b, a) };
+        if !seen.insert(edge) {
+            return Err(format!("candidate trek graph contains duplicate edge {edge:?}"));
+        }
+    }
+    for &(a, b) in hard_notreks {
+        let edge = if a < b { (a, b) } else { (b, a) };
+        if seen.contains(&edge) {
+            return Err(format!("candidate trek graph contains hard NOTREKS pair {edge:?}"));
+        }
+    }
+    Ok(())
+}
+
+/// Static Trek-Dominance mask from an explicit undirected trek graph.
+/// Rows are parents and columns are children.
+pub fn trek_dominance_mask(
+    p: usize,
+    trek_edges: &[(usize, usize)],
+) -> Result<Vec<Vec<bool>>, String> {
+    if p > 64 {
+        return Err("trek-dominance bitsets support at most 64 nodes".into());
+    }
+    let mut closed = vec![0u64; p];
+    for v in 0..p { closed[v] = 1u64 << v; }
+    for &(a, b) in trek_edges {
+        if a >= p || b >= p || a == b {
+            return Err(format!("invalid trek edge ({a}, {b})"));
+        }
+        closed[a] |= 1u64 << b;
+        closed[b] |= 1u64 << a;
+    }
+    let mask = (0..p).map(|u| {
+        (0..p).map(|v| u != v && (closed[u] & !closed[v]) == 0).collect()
+    }).collect();
+    Ok(mask)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::bic::Bic;
     use crate::scores::GlobalScore;
     use nalgebra::DMatrix;
+
+    #[test]
+    fn trek_dominance_hand_checked_masks_and_prefix_candidates() {
+        let t = vec![(0, 2), (1, 2)];
+        let mask = trek_dominance_mask(3, &t).unwrap();
+        assert_eq!(mask, vec![vec![false, false, true],
+                              vec![false, false, true],
+                              vec![false, false, false]]);
+        let mut closed = vec![1u64, 2u64, 4u64];
+        for &(a, b) in &t { closed[a] |= 1 << b; closed[b] |= 1 << a; }
+        println!("T adjacency: {:?}", t);
+        println!("closed-neighborhood bitsets: {:?}", closed);
+        println!("allowed[parent,child]: {:?}", mask);
+        assert_eq!(closed, vec![0b101, 0b110, 0b111]);
+        assert_eq!(vec![Vec::<usize>::new(), Vec::new(), vec![0, 1]],
+                   vec![Vec::<usize>::new(), Vec::new(),
+                        (0..3).filter(|&u| mask[u][2]).collect()]);
+    }
+
+    #[test]
+    fn trek_dominance_isolated_and_fork_masks() {
+        let isolated = trek_dominance_mask(3, &[(0, 1)]).unwrap();
+        assert!(isolated[0][1] && isolated[1][0]);
+        assert!(!(isolated[0][2] || isolated[2][0] || isolated[1][2] || isolated[2][1]));
+        let fork = trek_dominance_mask(3, &[(0, 1), (0, 2), (1, 2)]).unwrap();
+        assert!((0..3).all(|u| (0..3).all(|v| u == v || fork[u][v])));
+    }
+
+    #[test]
+    fn trek_dominance_extended_collider_retains_true_edges() {
+        let mask = trek_dominance_mask(4, &[(0, 2), (1, 2), (2, 3), (0, 3), (1, 3)]).unwrap();
+        assert!(mask[0][2] && mask[1][2] && mask[2][3]);
+    }
 
     #[test]
     fn normalization_and_signature_rules() {

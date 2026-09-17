@@ -21,6 +21,9 @@ def optimize_graph_locally(
 ):
     started = time.perf_counter()
     graph = np.asarray(initial_graph, dtype=int).copy()
+    if not constraints.is_feasible(graph):
+        raise ValueError(
+            "local graph search requires a feasible initial graph")
     best_score = score.score_graph(graph, data)
     evaluated = accepted = rejected = iterations = 0
     weights = np.abs(estimate.weights)

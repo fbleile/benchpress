@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
+from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.core import (
     LinearCandidateScorer,
     PostselectionConfig,
     select_postselection_candidate,

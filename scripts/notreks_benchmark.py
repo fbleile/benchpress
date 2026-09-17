@@ -104,6 +104,7 @@ def _algorithms(scenario: dict, defaults: dict, smoke: bool) -> dict:
         **dagma, **knowledge, "id": "dagma_notreks",
         "trek_regularizer": "pst", "trek_function": "inv",
         "trek_kernel": "fast", "trek_weight": defaults["dagma_trek_weight"],
+        "trek_pair_scaling": "sqrt_pairs",
         "trek_log_terms": 2 * int(scenario["d"]),
         "trek_inverse_epsilon": 0.0,
     }
@@ -120,7 +121,7 @@ def _algorithms(scenario: dict, defaults: dict, smoke: bool) -> dict:
         "timeout": None,
         "algorithm_seed": int(defaults["algorithm_seed"]),
         # FLOP+NOTREKS uses the single production Rust implementation.
-        "search_strategy": "global_greedy_rust",
+        "search_strategy": "local_greedy_rust",
         "max_sweeps": int(defaults["flop_notreks_max_sweeps"]),
         "signature_top_k": int(defaults["flop_notreks_signature_top_k"]),
         "signature_exploration_k": int(
@@ -130,7 +131,8 @@ def _algorithms(scenario: dict, defaults: dict, smoke: bool) -> dict:
         "initial_signature_mean_size": 3.0,
         "initial_signature_max_size": 6,
         "n_jobs": int(defaults.get("n_jobs", 1)),
-        "search_version": "global_greedy_rust",
+        "search_version": "local_greedy_rust",
+        "local_greedy_passes": 8,
     }
     return {"flop": [flop], "flop_notreks": [flop_notreks],
             "dagma": [dagma], "dagma_notreks": [dagma_notreks]}

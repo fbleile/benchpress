@@ -6,7 +6,7 @@ and model selection intentionally remain separate steps.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from time import perf_counter
 from typing import Sequence
 
@@ -28,13 +28,13 @@ from workflow.rules.structure_learning_algorithms.dagma.structural import (
     feasibility_thresholds,
     support_at_threshold,
 )
-from workflow.rules.structure_learning_algorithms.dagma_notreks.postselection import (
-    LinearCandidateScorer,
-    PostselectionConfig,
+from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.core import (
     StandardizationMetadata,
     lambda_policy,
-    select_postselection_candidate,
     standardize_training_data,
+)
+from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.normalized_projection import (
+    normalized_greedy_projection,
 )
 
 
@@ -53,6 +53,10 @@ class ProductionConfig:
     restarts: int = 5
     seed: int = 1729
     initialization_scale: float = 0.05
+    initialization_mode: str = "empty_random"
+    initialization_edge_probability: float = 0.15
+    proximal_l1: bool = False
+    record_trajectory: bool = False
     screening_floor: float = 0.01
     lambda_bic: float = 2.0
     loss_type: str = "l2"
@@ -71,21 +75,12 @@ class ProductionConfig:
     standardization_std_floor: float = 1e-12
     lambda_policy: str = "fixed_0.03"
     regularizer_type: str = "L1"
-    # Internal compatibility default for existing Python callers.  The public
-    # production CLI explicitly defaults to PS1.
-    postselection_policy: str = "legacy_fixed_order_parent_shrink"
-    candidate_edge_pool: str = "threshold_grid"
-    threshold_grid: tuple[float, ...] = (
-        0.01, 0.03, 0.05, 0.10, 0.20, 0.30)
-    fixed_threshold: float = 0.30
-    max_search_seconds: float = 1.0
-    max_expanded_nodes: int = 1000
-    max_queue_size: int = 1000
-    max_ambiguous_edges: int = 20
-    max_indegree: int | None = None
     dag_constraint_active: bool = True
     notreks_constraint_active: bool = True
     constraint_regime: str | None = None
+    edge_mask: np.ndarray | None = None
+    dagma_postselection_policy: str = "feasible_parent_shrink"
+    mu_schedule: tuple[float, ...] | None = None
 
 
 @dataclass
@@ -106,6 +101,12 @@ class RestartResult:
     postselection: dict | None = None
     lambda1_effective: float | None = None
     standardization: dict | None = None
+    initialization: str = "empty"
+    initial_edges: int = 0
+    stage_adjacencies: list[np.ndarray] | None = None
+    trajectory_times: list[float] | None = None
+    selected_stage: int | None = None
+    checkpoint_candidates: list["RestartResult"] | None = None
 
 
 def production_candidate_graph(
@@ -113,9 +114,11 @@ def production_candidate_graph(
     no_trek_pairs: Sequence[tuple[int, int]],
     *,
     screening_floor: float = 0.01,
+    notreks_active: bool = True,
 ) -> tuple[np.ndarray, dict]:
-    """Return support at max(minimum joint-feasibility threshold, floor)."""
-    feasibility = feasibility_thresholds(weighted_adjacency, no_trek_pairs)
+    """Return a DAG support at the requested structural-feasibility level."""
+    active_pairs = tuple(no_trek_pairs) if notreks_active else ()
+    feasibility = feasibility_thresholds(weighted_adjacency, active_pairs)
     threshold = max(float(feasibility["tau_feas"]), float(screening_floor))
     # Preserve the historical P3 convention: the finite feasibility threshold
     # removes its tied group with strict ``>``, while the fixed screening floor
@@ -127,7 +130,7 @@ def production_candidate_graph(
         np.fill_diagonal(candidate, 0)
     if not is_dag(candidate):
         raise RuntimeError("production candidate graph is cyclic")
-    if common_ancestor_violations(candidate, no_trek_pairs):
+    if notreks_active and common_ancestor_violations(candidate, active_pairs):
         raise RuntimeError("production candidate graph violates no-trek knowledge")
     return candidate, {
         "feasibility_threshold": float(feasibility["tau_feas"]),
@@ -143,15 +146,56 @@ def postprocess_weighted_adjacency(
     *,
     screening_floor: float = 0.01,
     lambda_bic: float = 2.0,
+    notreks_active: bool = True,
+    postselection_policy: str = "feasible_parent_shrink",
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """Apply production screening and deletion-only fixed-order shrinking."""
+    if postselection_policy in {
+            "normalized_greedy_projection_refit",
+            "normalized_greedy_projection_refit_shrink"}:
+        projected = normalized_greedy_projection(
+            weighted_adjacency, no_trek_pairs,
+            dag_constraint=True, notreks_constraint=notreks_active)
+        adjacency = projected.adjacency
+        coefficients = gaussian_bic(
+            X, adjacency, lambda_bic=lambda_bic)[1]
+        exact_bic, _ = gaussian_bic(
+            X, adjacency, lambda_bic=lambda_bic)
+        diagnostics = {
+            "candidate_graph": adjacency.copy(),
+            "candidate_edges": int(adjacency.sum()),
+            "candidate_threshold": 0.0,
+            "feasibility_threshold": 0.0,
+            "final_edges": int(adjacency.sum()),
+            "edges_deleted": projected.diagnostics["edges_removed"],
+            "postprocessed_bic": float(exact_bic),
+            "fixed_order_parent_shrink": None,
+            "normalized_projection": projected.diagnostics,
+        }
+        if postselection_policy.endswith("_shrink"):
+            adjacency, coefficients, shrink = end_flop_prune(
+                X, adjacency, lambda_bic=lambda_bic)
+            exact_bic, coefficients = gaussian_bic(
+                X, adjacency, lambda_bic=lambda_bic)
+            diagnostics["fixed_order_parent_shrink"] = shrink
+            diagnostics["final_edges"] = int(adjacency.sum())
+            diagnostics["edges_deleted"] = (
+                projected.diagnostics["edges_removed"]
+                + int(projected.adjacency.sum() - adjacency.sum()))
+            diagnostics["postprocessed_bic"] = float(exact_bic)
+        if not is_dag(adjacency) or (
+                notreks_active and common_ancestor_violations(
+                    adjacency, no_trek_pairs)):
+            raise RuntimeError("normalized projection returned infeasible graph")
+        return adjacency, coefficients, diagnostics
     candidate, diagnostics = production_candidate_graph(
-        weighted_adjacency, no_trek_pairs, screening_floor=screening_floor)
+        weighted_adjacency, no_trek_pairs, screening_floor=screening_floor,
+        notreks_active=notreks_active)
     adjacency, coefficients, shrink_diagnostics = end_flop_prune(
         X, candidate, lambda_bic=lambda_bic)
     if np.any((adjacency != 0) & (candidate == 0)):
         raise RuntimeError("fixed-order parent shrink introduced an edge")
-    if common_ancestor_violations(adjacency, no_trek_pairs):
+    if notreks_active and common_ancestor_violations(adjacency, no_trek_pairs):
         raise RuntimeError("edge deletion did not preserve no-trek feasibility")
     exact_bic, refit = gaussian_bic(
         X, adjacency, lambda_bic=lambda_bic)
@@ -167,11 +211,39 @@ def postprocess_weighted_adjacency(
     return adjacency, refit, diagnostics
 
 
-def _initial_adjacency(config: ProductionConfig, d: int, restart: int):
+def _feasible_random_initial_adjacency(
+        d: int, pairs: Sequence[tuple[int, int]], seed: int, scale: float,
+        edge_probability: float) -> np.ndarray:
+    """Build a data-independent DAG feasible for the supplied NOTREKS set."""
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(d)
+    graph = np.zeros((d, d), dtype=np.uint8)
+    possible = [(int(order[i]), int(order[j]))
+                for i in range(d) for j in range(i + 1, d)]
+    rng.shuffle(possible)
+    for parent, child in possible:
+        if rng.random() > edge_probability:
+            continue
+        graph[parent, child] = 1
+        if common_ancestor_violations(graph, pairs):
+            graph[parent, child] = 0
+    weights = np.zeros((d, d), dtype=np.float64)
+    weights[graph != 0] = rng.normal(scale=scale, size=int(graph.sum()))
+    return weights
+
+
+def _initial_adjacency(config: ProductionConfig, d: int, restart: int,
+                       pairs: Sequence[tuple[int, int]]):
     if restart == 0:
-        return np.zeros((d, d), dtype=np.float64)
-    return deterministic_initial_adjacency(
+        return np.zeros((d, d), dtype=np.float64), "empty", 0
+    if config.initialization_mode == "empty_feasible_random":
+        result = _feasible_random_initial_adjacency(
+            d, pairs, config.seed + restart, config.initialization_scale,
+            config.initialization_edge_probability)
+        return result, "feasible_random_dag", int(np.count_nonzero(result))
+    result = deterministic_initial_adjacency(
         d, config.seed + restart, config.initialization_scale, config.s[0])
+    return result, "random_weight_matrix", 0
 
 
 def run_production_pipeline(
@@ -185,6 +257,10 @@ def run_production_pipeline(
         raise ValueError("X must be a two-dimensional numeric array")
     if config.restarts < 1:
         raise ValueError("restarts must be positive")
+    if config.initialization_mode not in {"empty_random", "empty_feasible_random"}:
+        raise ValueError("unsupported DAGMA initialization mode")
+    if not 0.0 <= config.initialization_edge_probability <= 1.0:
+        raise ValueError("initialization edge probability must lie in [0, 1]")
     if not config.standardize_data:
         raise ValueError(
             "production standardized run reached optimizer without "
@@ -206,13 +282,16 @@ def run_production_pipeline(
     for restart in range(config.restarts):
         started = perf_counter()
         model = SharedDagmaLinear(loss_type=config.loss_type, verbose=False)
+        initial_W, initialization, initial_edges = _initial_adjacency(
+            config, data.shape[1], restart, no_trek_pairs)
         model.fit(
             data.copy(),
             no_trek_pairs=no_trek_pairs,
             trek_weight=config.trek_weight,
             trek_function=config.trek_function,
             trek_kernel=config.trek_kernel,
-            initial_W=_initial_adjacency(config, data.shape[1], restart),
+            proximal_l1=config.proximal_l1,
+            initial_W=initial_W,
             lambda1=effective_lambda,
             w_threshold=0.0,
             T=config.T,
@@ -225,53 +304,28 @@ def run_production_pipeline(
             checkpoint=config.checkpoint,
             beta_1=config.beta_1,
             beta_2=config.beta_2,
+            edge_mask=config.edge_mask,
+            mu_schedule=config.mu_schedule,
         )
         weighted = np.asarray(model.W_est, dtype=np.float64).copy()
-        if config.postselection_policy == "legacy_fixed_order_parent_shrink":
-            adjacency, coefficients, diagnostics = (
-                postprocess_weighted_adjacency(
-                    data, weighted, no_trek_pairs,
-                    screening_floor=config.screening_floor,
-                    lambda_bic=config.lambda_bic))
-            postselection_row = {
-                "postselection_policy":
-                    "legacy_fixed_order_parent_shrink",
-                "candidate_score": diagnostics["postprocessed_bic"],
-                "feasible": True,
-            }
-        else:
-            scorer = LinearCandidateScorer(
-                data, regularizer_type=config.regularizer_type,
-                regularizer_weight=effective_lambda)
-            postselection = select_postselection_candidate(
-                weighted, scorer=scorer,
-                config=PostselectionConfig(
-                    policy=config.postselection_policy,
-                    candidate_edge_pool=config.candidate_edge_pool,
-                    threshold_grid=config.threshold_grid,
-                    fixed_threshold=config.fixed_threshold,
-                    max_search_seconds=config.max_search_seconds,
-                    max_expanded_nodes=config.max_expanded_nodes,
-                    max_queue_size=config.max_queue_size,
-                    max_ambiguous_edges=config.max_ambiguous_edges,
-                    max_indegree=config.max_indegree,
-                    dag_constraint_active=config.dag_constraint_active,
-                    notreks_constraint_active=(
-                        config.notreks_constraint_active
-                        and bool(no_trek_pairs))),
-                model_class="linear_dagma", notreks_pairs=no_trek_pairs)
-            adjacency = postselection.adjacency
-            coefficients = scorer.coefficients(adjacency)
-            diagnostics = {
-                "candidate_graph": adjacency.copy(),
-                "candidate_edges": postselection.predicted_edges,
-                "final_edges": postselection.predicted_edges,
-                "postprocessed_bic": postselection.candidate_score,
-                "candidate_threshold": postselection.selected_threshold,
-                "feasibility_threshold": postselection.selected_threshold,
-            }
-            postselection_row = postselection.to_row()
-        results.append(RestartResult(
+        adjacency, coefficients, diagnostics = postprocess_weighted_adjacency(
+            data, weighted, no_trek_pairs,
+            screening_floor=config.screening_floor,
+            lambda_bic=config.lambda_bic,
+            notreks_active=config.notreks_constraint_active,
+            postselection_policy=config.dagma_postselection_policy)
+        postselection_row = {
+            "postselection_policy": config.dagma_postselection_policy,
+            "candidate_score": diagnostics["postprocessed_bic"],
+            "feasible": True,
+        }
+        if not is_dag(adjacency):
+            raise RuntimeError("postselection returned a cyclic graph")
+        if (config.notreks_constraint_active
+                and common_ancestor_violations(adjacency, no_trek_pairs)):
+            raise RuntimeError(
+                "postselection returned a graph violating no-trek knowledge")
+        result = RestartResult(
             restart=restart,
             weighted_adjacency=weighted,
             candidate_graph=diagnostics["candidate_graph"],
@@ -289,8 +343,58 @@ def run_production_pipeline(
             postselection=postselection_row,
             lambda1_effective=effective_lambda,
             standardization=asdict(standardization),
-        ))
-    selected = min(results, key=lambda result: (
+            initialization=initialization,
+            initial_edges=initial_edges,
+            stage_adjacencies=[matrix.copy()
+                              for matrix in getattr(
+                                  model, "stage_adjacencies", [])],
+            trajectory_times=(
+                [0.0] + [float(item["elapsed_seconds"])
+                 for item in getattr(model, "trajectory_metadata", [])]
+                if config.record_trajectory else None),
+        )
+        if config.dagma_postselection_policy == "best_projected_checkpoint":
+            checkpoint_candidates = []
+            for stage_index, stage_matrix in enumerate(model.stage_adjacencies, 1):
+                stage_adjacency, stage_coefficients, stage_diag = (
+                    postprocess_weighted_adjacency(
+                        data, stage_matrix, no_trek_pairs,
+                        screening_floor=config.screening_floor,
+                        lambda_bic=config.lambda_bic,
+                        notreks_active=config.notreks_constraint_active,
+                        postselection_policy="feasible_parent_shrink"))
+                checkpoint_candidates.append(replace(
+                    result,
+                    weighted_adjacency=np.asarray(stage_matrix).copy(),
+                    candidate_graph=stage_diag["candidate_graph"],
+                    adjacency=stage_adjacency,
+                    coefficients=stage_coefficients,
+                    feasibility_threshold=stage_diag["feasibility_threshold"],
+                    candidate_threshold=stage_diag["candidate_threshold"],
+                    exact_bic=stage_diag["postprocessed_bic"],
+                    candidate_edges=stage_diag["candidate_edges"],
+                    final_edges=stage_diag["final_edges"],
+                    oracle_violations=common_ancestor_violations(
+                        stage_adjacency, no_trek_pairs),
+                    postselection={
+                        "postselection_policy": "feasible_parent_shrink",
+                        "candidate_score": stage_diag["postprocessed_bic"],
+                        "feasible": True,
+                        "selected_stage": stage_index,
+                    },
+                    selected_stage=stage_index,
+                    checkpoint_candidates=None,
+                ))
+            result = replace(result, checkpoint_candidates=checkpoint_candidates)
+        results.append(result)
+    checkpoint_results = [
+        candidate
+        for result in results
+        for candidate in (result.checkpoint_candidates or [])]
+    selection_pool = checkpoint_results if (
+        config.dagma_postselection_policy == "best_projected_checkpoint") \
+        else results
+    selected = min(selection_pool, key=lambda result: (
         result.exact_bic,
         result.final_edges,
         -result.candidate_threshold,

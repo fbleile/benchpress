@@ -6,9 +6,17 @@ from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import (
 )
 from workflow.rules.structure_learning_algorithms.dagma_notreks.pipeline import (
     ProductionConfig,
+    _feasible_random_initial_adjacency,
     production_candidate_graph,
     run_production_pipeline,
 )
+from workflow.rules.structure_learning_algorithms.dagma.shared import soft_threshold
+
+
+def test_soft_thresholding_has_exact_zeros_and_preserves_signs():
+    values = np.array([-2.0, -0.5, 0.0, 0.25, 3.0])
+    result = soft_threshold(values, 0.5)
+    assert np.array_equal(result, np.array([-1.5, -0.0, 0.0, 0.0, 2.5]))
 
 
 def test_production_defaults_are_explicit():
@@ -18,6 +26,7 @@ def test_production_defaults_are_explicit():
     assert config.trek_function == "inv"
     assert config.trek_weight == 1
     assert config.screening_floor == 0.01
+    assert not hasattr(config, "postselection_policy")
 
 
 def test_candidate_uses_feasibility_threshold_or_floor():
@@ -39,6 +48,19 @@ def test_fixed_screening_floor_preserves_historical_inclusive_semantics():
         weighted, [], screening_floor=0.01)
     assert diagnostics["feasibility_threshold"] == 0
     assert candidate[0, 1] == 1
+
+
+def test_inactive_notreks_screening_does_not_use_supplied_pairs():
+    weighted = np.zeros((3, 3))
+    weighted[0, 2] = 0.8
+    weighted[2, 1] = 0.7
+    candidate, diagnostics = production_candidate_graph(
+        weighted, [(0, 1)], screening_floor=0.01,
+        notreks_active=False)
+    assert diagnostics["feasibility_threshold"] == 0.0
+    assert candidate[0, 2] == 1
+    assert candidate[2, 1] == 1
+    assert common_ancestor_violations(candidate, [(0, 1)]) == 1
 
 
 def test_restart_selection_uses_postprocessed_bic(monkeypatch):
@@ -72,3 +94,14 @@ def test_restart_selection_uses_postprocessed_bic(monkeypatch):
         np.zeros((5, 3)), [], ProductionConfig(restarts=3))
     assert len(results) == 3
     assert selected.restart == 1
+
+
+def test_feasible_random_initialization_is_deterministic_and_feasible():
+    first = _feasible_random_initial_adjacency(
+        5, [(0, 1)], seed=123, scale=0.05, edge_probability=0.8)
+    second = _feasible_random_initial_adjacency(
+        5, [(0, 1)], seed=123, scale=0.05, edge_probability=0.8)
+    assert np.array_equal(first, second)
+    assert is_dag(first != 0)
+    assert common_ancestor_violations(first != 0, [(0, 1)]) == 0
+    assert np.all(np.diag(first) == 0)

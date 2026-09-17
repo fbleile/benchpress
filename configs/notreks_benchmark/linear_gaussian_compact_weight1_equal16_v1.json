@@ -1,0 +1,26 @@
+{
+  "benchmark_id": "notreks_linear_gaussian_compact_weight1_equal16_v1",
+  "tuned_hyperparameters": "calibrations/d20_n200_oracle25_weight1_equal16_v1.json",
+  "models": {
+    "linear_gaussian": {
+      "method": "linear",
+      "sem_type": "gauss",
+      "noise_scale": 1.0,
+      "coefficient_min": 0.5,
+      "coefficient_max": 1.0
+    }
+  },
+  "graphs": {
+    "er2": {"method": "er", "expected_degree": 2.0},
+    "sf4": {"method": "sf", "expected_degree": 4.0}
+  },
+  "grid": {
+    "models": ["linear_gaussian"],
+    "graphs": ["er2", "sf4"],
+    "dimensions": [20, 50],
+    "sample_sizes": [250],
+    "knowledge_fractions": [0.25],
+    "seeds": [11001]
+  },
+  "scenarios": []
+}

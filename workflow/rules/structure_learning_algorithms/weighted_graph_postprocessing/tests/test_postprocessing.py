@@ -1,4 +1,7 @@
 import numpy as np
+import pytest
+
+from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import is_dag
 
 from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing import (
     CallableGraphScore,
@@ -13,6 +16,55 @@ from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing 
 from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.candidate_generation import (
     generate_candidates,
 )
+from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.local_search import (
+    optimize_graph_locally,
+)
+from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.core import (
+    FeasibilityChecker,
+    PostselectionConfig,
+    REFERENCE_POLICY,
+    select_postselection_candidate,
+)
+from workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.normalized_projection import (
+    normalized_greedy_projection,
+)
+
+
+def test_normalized_projection_keeps_feasible_support_unchanged():
+    W = np.zeros((3, 3))
+    W[0, 1], W[1, 2] = .2, -.3
+    result = normalized_greedy_projection(W)
+    np.testing.assert_array_equal(result.adjacency, (W != 0).astype(np.uint8))
+    assert result.diagnostics["projection_steps"] == 0
+
+
+def test_normalized_projection_deletes_cycle_edges_only():
+    W = np.zeros((3, 3))
+    W[0, 1], W[1, 2], W[2, 0] = .9, .8, .7
+    result = normalized_greedy_projection(W)
+    assert is_dag(result.adjacency)
+    assert np.all((result.adjacency != 0) <= (W != 0))
+    assert result.diagnostics["edges_removed"] >= 1
+
+
+def test_normalized_projection_repairs_notreks_and_cycle_together():
+    W = np.zeros((4, 4))
+    W[0, 2], W[1, 2], W[2, 3], W[3, 0] = .9, .8, .7, .6
+    result = normalized_greedy_projection(
+        W, [(0, 1)], dag_constraint=True, notreks_constraint=True)
+    assert is_dag(result.adjacency)
+    from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import common_ancestor_violations
+    assert common_ancestor_violations(result.adjacency, [(0, 1)]) == 0
+    assert np.all((result.adjacency != 0) <= (W != 0))
+
+
+def test_normalized_projection_ties_are_deterministic_and_fallback_progresses():
+    W = np.full((3, 3), .2)
+    np.fill_diagonal(W, 0)
+    first = normalized_greedy_projection(W)
+    second = normalized_greedy_projection(W)
+    np.testing.assert_array_equal(first.adjacency, second.adjacency)
+    assert is_dag(first.adjacency)
 
 
 def edge_distance_score(target):
@@ -104,3 +156,48 @@ def test_candidate_generation_uses_threshold_sequence():
         WeightedGraphEstimate(W), CompositeFeasibility(),
         thresholds=(.01, .1))
     assert [candidate.graph.sum() for candidate in candidates] == [2, 1]
+
+
+def test_local_search_checks_initial_feasibility_before_scoring():
+    graph = np.zeros((3, 3), dtype=int)
+    graph[2, 0] = graph[2, 1] = 1
+    constraints = CompositeFeasibility((
+        DagConstraint(), NoTreksConstraint(((0, 1),))))
+
+    class ScoreThatMustNotRun:
+        def score_graph(self, *_args):
+            raise AssertionError("infeasible graph was scored")
+
+    with pytest.raises(ValueError, match="feasible initial graph"):
+        optimize_graph_locally(
+            graph, WeightedGraphEstimate(graph), None,
+            ScoreThatMustNotRun(), constraints, PostprocessingBudget())
+
+
+def test_reference_postselection_checks_feasibility_before_bic(monkeypatch):
+    import workflow.rules.structure_learning_algorithms.weighted_graph_postprocessing.core as core
+
+    X = np.random.default_rng(81).normal(size=(40, 3))
+    W = np.zeros((3, 3))
+    W[2, 0], W[2, 1] = .9, .8
+    checker = FeasibilityChecker(
+        d=3, dag_constraint_active=True, notreks_constraint_active=True,
+        notreks_pairs=((0, 1),))
+    original = core.gaussian_bic
+    scored = []
+
+    def checked_bic(data, adjacency, lambda_bic):
+        assert checker.check(adjacency).feasible
+        scored.append(np.asarray(adjacency).copy())
+        return original(data, adjacency, lambda_bic=lambda_bic)
+
+    monkeypatch.setattr(core, "gaussian_bic", checked_bic)
+    result = select_postselection_candidate(
+        W,
+        scorer=type("ReferenceScorer", (), {"X": X})(),
+        config=PostselectionConfig(
+            policy=REFERENCE_POLICY, threshold_grid=(.1,),
+            notreks_constraint_active=True),
+        model_class="linear_dagma", notreks_pairs=((0, 1),))
+    assert result.feasible
+    assert scored
