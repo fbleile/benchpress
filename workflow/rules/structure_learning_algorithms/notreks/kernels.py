@@ -221,6 +221,27 @@ class BaseNoTreksKernel:
             raise ValueError(f"W and resolvent must have shape {(self.d, self.d)}")
         if not np.all(np.isfinite(F)):
             raise ValueError("resolvent contains non-finite values")
+        value, grad_A = self.value_grad_from_resolvent_adjacency(
+            W * W, F, resolvent_scale=1.0)
+        return value, 2.0 * W * grad_A
+
+    def value_grad_from_resolvent_adjacency(
+        self, adjacency: np.ndarray, resolvent: np.ndarray,
+        *, resolvent_scale: float = 1.0, penalty_scale: float = 1.0,
+    ) -> tuple[float, np.ndarray]:
+        """Return value and gradient with respect to a mapped adjacency.
+
+        ``resolvent`` is ``resolvent_scale * (I*resolvent_scale-A)^-1``.
+        The scale factor accounts for the derivative of this normalized
+        resolvent while reusing the caller's single factorization.
+        """
+        A = np.asarray(adjacency, dtype=float)
+        F = np.asarray(resolvent, dtype=float)
+        if A.shape != (self.d, self.d) or F.shape != (self.d, self.d):
+            raise ValueError(f"adjacency and resolvent must have shape {(self.d, self.d)}")
+        if (not np.all(np.isfinite(F)) or resolvent_scale <= 0
+                or not np.isfinite(penalty_scale) or penalty_scale < 0):
+            raise ValueError("resolvent and penalty scales must be valid")
         Y = F[:, self.nodes]
         node_pos = {int(node): idx for idx, node in enumerate(self.nodes)}
         B = np.zeros((len(self.nodes), len(self.nodes)), dtype=float)
@@ -231,10 +252,11 @@ class BaseNoTreksKernel:
             B[a, b] += weight
             if self.semantics == "unordered":
                 B[b, a] += weight
-        value = 0.5 * self.scale * float(np.sum(B * (Y.T @ Y)))
-        GY = self.scale * (Y @ B)
-        GX = (F.T @ GY) @ Y.T
-        return value, 2.0 * W * GX
+        effective_scale = self.scale * float(penalty_scale)
+        value = 0.5 * effective_scale * float(np.sum(B * (Y.T @ Y)))
+        GY = effective_scale * (Y @ B)
+        GX = ((F.T @ GY) @ Y.T) / float(resolvent_scale)
+        return value, GX
 
     def diagnostics(self) -> dict[str, object]:
         return {} if self._last is None else dict(self._last.__dict__)

@@ -24,16 +24,23 @@ from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import (
 )
 from workflow.rules.structure_learning_algorithms.dagma.end_flop_prune import (
     end_flop_prune,
+    local_gaussian_bic,
 )
 from workflow.rules.structure_learning_algorithms.dagma_notreks.pipeline import (
     ProductionConfig,
     run_production_pipeline,
+    standardize_training_data,
+    threshold_bic_search,
 )
+from workflow.rules.structure_learning_algorithms.notreks import make_notreks_kernel
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.local_d20_benchmark import (
     generate,
 )
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.chromatic import (
     chromatic_upper_bound,
+)
+from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.sortnregress import (
+    sortnregress,
 )
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.adaptive_soft_completion import (
     adaptive_soft_completion,
@@ -534,6 +541,213 @@ def notreks_postselection(X, candidate, pairs, lambda_bic=2.0):
     return final
 
 
+def order_parent_postselection_from_candidate(X, candidate, pairs,
+                                              lambda_bic=2.0):
+    """Simple order-preserving, deletion-only FLOP postselection.
+
+    The candidate DAG supplies both the topological order and the only edges
+    that may ever be considered.  We first shrink parent sets by ordinary
+    local BIC, remove the least costly offending parent until the supplied
+    NOTREKS constraints are satisfied, and then try removed candidate parents
+    back in one-at-a-time BIC-improvement order.  This deliberately avoids a
+    global "most violations" heuristic and never adds a new or reversed edge.
+    """
+    original = (np.asarray(candidate) != 0).astype(np.uint8)
+    if original.ndim != 2 or original.shape[0] != original.shape[1]:
+        raise ValueError("candidate must be a square adjacency matrix")
+    if not is_dag(original):
+        raise ValueError("order postselection requires a DAG candidate")
+    graph = original.copy()
+    order = topological_order(original)
+    position = {node: index for index, node in enumerate(order)}
+    deletion_count = 0
+    feasibility_deletions = 0
+    growback_additions = 0
+
+    def local(child, parents):
+        return float(local_gaussian_bic(
+            X, child, parents, lambda_bic=lambda_bic))
+
+    # Phase 1: ordinary parent shrink, in the candidate's order.
+    for child in order:
+        while True:
+            parents = sorted(np.flatnonzero(graph[:, child]).tolist())
+            current = local(child, parents)
+            improving = []
+            for parent in parents:
+                proposal = [p for p in parents if p != parent]
+                score = local(child, proposal)
+                if score < current - 1e-10:
+                    improving.append((score, parent, proposal))
+            if not improving:
+                break
+            _, parent, _ = min(improving, key=lambda item: (item[0], item[1]))
+            graph[parent, child] = 0
+            deletion_count += 1
+
+    # Phase 2: restore feasibility by deleting the least costly offending
+    # parent.  We use the number of remaining violations only as a feasibility
+    # test, never as the optimization criterion.
+    while common_ancestor_violations(graph, pairs):
+        before = common_ancestor_violations(graph, pairs)
+        edges = [(int(parent), int(child))
+                 for parent, child in zip(*np.nonzero(graph))]
+        if not edges:
+            raise RuntimeError("cannot make candidate NOTREKS-feasible")
+        reducing = []
+        for parent, child in edges:
+            proposal = graph.copy()
+            proposal[parent, child] = 0
+            after = common_ancestor_violations(proposal, pairs)
+            if after < before:
+                old_score = local(child, np.flatnonzero(graph[:, child]))
+                new_score = local(
+                    child, np.flatnonzero(proposal[:, child]))
+                reducing.append((new_score - old_score,
+                                 position[child], parent, child))
+        if reducing:
+            _, _, parent, child = min(reducing)
+        else:
+            # Multiple parallel treks can require several deletions before
+            # the violation count changes.  Make deterministic progress by
+            # deleting the least locally costly current parent.
+            costs = []
+            for parent, child in edges:
+                old_score = local(child, np.flatnonzero(graph[:, child]))
+                remaining = [p for p in np.flatnonzero(graph[:, child])
+                             if int(p) != parent]
+                costs.append((local(child, remaining) - old_score,
+                              position[child], parent, child))
+            _, _, parent, child = min(costs)
+        graph[parent, child] = 0
+        deletion_count += 1
+        feasibility_deletions += 1
+
+    # Phase 3: grow back only original candidate parents.  Every proposal is
+    # checked globally, so feasibility is preserved throughout this phase.
+    while True:
+        options = []
+        for parent, child in zip(*np.nonzero(original & ~graph)):
+            parent, child = int(parent), int(child)
+            parents = np.flatnonzero(graph[:, child]).tolist()
+            old_score = local(child, parents)
+            new_score = local(child, parents + [parent])
+            if new_score >= old_score - 1e-10:
+                continue
+            proposal = graph.copy()
+            proposal[parent, child] = 1
+            if common_ancestor_violations(proposal, pairs):
+                continue
+            options.append((new_score - old_score, position[child],
+                            parent, child))
+        if not options:
+            break
+        _, _, parent, child = min(options)
+        graph[parent, child] = 1
+        growback_additions += 1
+
+    violations = common_ancestor_violations(graph, pairs)
+    if violations or not is_dag(graph):
+        raise RuntimeError("order parent postselection returned infeasible DAG")
+    bic = float(gaussian_bic(X, graph, lambda_bic=lambda_bic)[0])
+    return graph, {
+        "cpdag": graph.copy(),
+        "candidate_graph": original.copy(),
+        "postselection_policy": "order_parent_shrink_growback",
+        "postprocessed_bic": bic,
+        "postselection_order": order,
+        "postselection_deletions": deletion_count,
+        "postselection_feasibility_deletions": feasibility_deletions,
+        "postselection_growback_additions": growback_additions,
+        "postselection_final_violations": violations,
+    }
+
+
+def flop_notreks_order_postselection_candidate(X, pairs, seed, attempts,
+                                               lambda_bic=2.0):
+    """Vanilla FLOP followed by one fast order-based polishing pass."""
+    candidate, diagnostics = vanilla_flop_candidate(
+        X, seed, attempts, lambda_bic=lambda_bic)
+    final, post_diag = order_parent_single_pass_from_candidate(
+        X, candidate, pairs, lambda_bic=lambda_bic)
+    return final, {
+        **post_diag,
+        "candidate_graph": candidate.copy(),
+        "optimizer_restarts": diagnostics["optimizer_restarts"],
+    }
+
+
+def order_parent_single_pass_from_candidate(X, candidate, pairs,
+                                            lambda_bic=2.0):
+    """One node-wise parent polish, followed by exact feasibility cleanup."""
+    original = (np.asarray(candidate) != 0).astype(np.uint8)
+    if not is_dag(original):
+        raise ValueError("postselection requires a DAG candidate")
+    graph = original.copy()
+    order = topological_order(original)
+    position = {node: i for i, node in enumerate(order)}
+
+    def local(child, parents):
+        return float(local_gaussian_bic(
+            X, child, parents, lambda_bic=lambda_bic))
+
+    # Exactly one grow/shrink-style deletion decision per target.
+    for child in order:
+        parents = np.flatnonzero(graph[:, child]).tolist()
+        if not parents:
+            continue
+        old = local(child, parents)
+        choices = []
+        for parent in parents:
+            proposal = [p for p in parents if p != parent]
+            score = local(child, proposal)
+            if score < old - 1e-10:
+                choices.append((score, parent))
+        if choices:
+            _, parent = min(choices, key=lambda item: (item[0], item[1]))
+            graph[parent, child] = 0
+
+    # A short pass must still return a feasible graph. Remove the least
+    # locally costly offending parent when the one-pass result violates I.
+    while common_ancestor_violations(graph, pairs):
+        edges = [(int(a), int(b)) for a, b in zip(*np.nonzero(graph))]
+        if not edges:
+            raise RuntimeError("postselection could not restore feasibility")
+        costs = []
+        for parent, child in edges:
+            parents = np.flatnonzero(graph[:, child]).tolist()
+            remaining = [p for p in parents if p != parent]
+            costs.append((local(child, remaining) - local(child, parents),
+                          position[child], parent, child))
+        _, _, parent, child = min(costs)
+        graph[parent, child] = 0
+
+    # One grow-back decision per target, restricted to original FLOP edges.
+    for child in order:
+        current = np.flatnonzero(graph[:, child]).tolist()
+        old = local(child, current)
+        choices = []
+        for parent in np.flatnonzero(original[:, child] & ~graph[:, child]):
+            parent = int(parent)
+            score = local(child, current + [parent])
+            if score >= old - 1e-10:
+                continue
+            proposal = graph.copy(); proposal[parent, child] = 1
+            if not common_ancestor_violations(proposal, pairs):
+                choices.append((score, parent))
+        if choices:
+            _, parent = min(choices, key=lambda item: (item[0], item[1]))
+            graph[parent, child] = 1
+
+    if common_ancestor_violations(graph, pairs) or not is_dag(graph):
+        raise RuntimeError("single-pass postselection returned infeasible DAG")
+    bic = float(gaussian_bic(X, graph, lambda_bic=lambda_bic)[0])
+    return graph, {"cpdag": graph.copy(), "candidate_graph": original.copy(),
+                   "postselection_policy": "one_pass_order_parent",
+                   "postprocessed_bic": bic,
+                   "postselection_final_violations": 0}
+
+
 def hybrid_flop_notreks_postselected_candidate(X, pairs, seed, attempts,
                                                sweeps, lambda_bic=2.0):
     """Use one vanilla attempt, then the remaining constrained attempts."""
@@ -578,7 +792,7 @@ def hybrid_flop_notreks_postselected_candidate(X, pairs, seed, attempts,
 
 def flop_notreks_postselection_candidate(X, pairs, seed, attempts,
                                          lambda_bic=2.0):
-    """Vanilla FLOP followed by NOTREKS-informed post-selection only."""
+    """Vanilla FLOP followed by threshold/BIC NOTREKS post-selection."""
     candidate, diagnostics = vanilla_flop_candidate(
         X, seed, attempts, lambda_bic=lambda_bic)
     final, post_diag = flop_notreks_postselection_from_candidate(
@@ -587,23 +801,33 @@ def flop_notreks_postselection_candidate(X, pairs, seed, attempts,
         **post_diag,
         "candidate_graph": candidate.copy(),
         "optimizer_restarts": diagnostics["optimizer_restarts"],
-        "postselection_policy": "notreks_repair_parent_shrink",
+        "postselection_policy": "threshold_bic_search",
     }
 
 
 def flop_notreks_postselection_from_candidate(X, candidate, pairs,
                                               lambda_bic=2.0):
-    """Apply FLOP's NOTREKS post-selection to an existing candidate.
+    """Apply deletion-only threshold/BIC post-selection to a FLOP DAG.
 
-    This deliberately contains no FLOP optimization.  It is used when a
-    benchmark cell already cached the vanilla FLOP result for this data
-    instance, so the measured runtime is the additional post-selection cost.
+    FLOP returns a binary DAG, so first refit coefficients on that support.
+    The refitted coefficients provide the threshold ordering; each retained
+    support is refit and scored, and the best feasible ordinary-BIC support is
+    returned.  Thresholding can only delete edges, so both DAGness and
+    NOTREKS feasibility are monotone along the search.
     """
-    final = notreks_postselection(
-        X, candidate, pairs, lambda_bic=lambda_bic)
+    graph = np.asarray(candidate, dtype=np.uint8)
+    _, coefficients = gaussian_bic(X, graph, lambda_bic=lambda_bic)
+    weighted = np.asarray(coefficients, dtype=float) * graph
+    final, _, threshold_diag = threshold_bic_search(
+        X, weighted, pairs, lambda_bic=lambda_bic, notreks_active=True)
     return final, {
         "cpdag": final.copy(),
-        "postselection_policy": "notreks_repair_parent_shrink",
+        "postselection_policy": "threshold_bic_search",
+        "threshold_search": threshold_diag["threshold_search"],
+        "candidate_threshold": threshold_diag["candidate_threshold"],
+        "feasibility_threshold": threshold_diag["feasibility_threshold"],
+        "postprocessed_bic": threshold_diag["postprocessed_bic"],
+        "candidate_graph": graph.copy(),
     }
 
 
@@ -666,12 +890,17 @@ def dagma_mask(d, pairs):
 def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
                     warm_iter, max_iter, stages,
                     apply_notreks_postselection=False,
-                    trek_weight=1.0,
+                    trek_weight=200.0,
                     initialization_mode="empty_random",
                     initialization_edge_probability=0.15,
                     record_trajectory=False, proximal_l1=False,
                     postselection_policy="feasible_parent_shrink",
-                    mu_schedule=None, s_schedule=None):
+                    mu_schedule=None, s_schedule=None,
+                    adjacency_map="square",
+                    adjacency_map_tau=1.0,
+                    notreks_resolvent_normalization=False,
+                    notreks_stage_scaling="s2_over_d_minus_1",
+                    lambda1=0.03):
     config = ProductionConfig(
         restarts=attempts,
         seed=seed,
@@ -679,22 +908,42 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
         warm_iter=warm_iter,
         max_iter=max_iter,
         trek_weight=trek_weight,
+        lambda1=float(lambda1),
+        adjacency_map=adjacency_map,
+        adjacency_map_tau=adjacency_map_tau,
+        notreks_resolvent_normalization=notreks_resolvent_normalization,
+        notreks_stage_scaling=notreks_stage_scaling,
         initialization_mode=initialization_mode,
         initialization_edge_probability=initialization_edge_probability,
         proximal_l1=proximal_l1,
         dagma_postselection_policy=postselection_policy,
-        mu_schedule=(tuple(mu_schedule) if mu_schedule is not None else None),
-        s=(tuple(s_schedule) if s_schedule is not None else (1.0, .9, .8, .7, .6)),
+        mu_schedule=(tuple(mu_schedule) if mu_schedule is not None else (1.0, .3, .1, .01, .001)),
+        s=(tuple(s_schedule) if s_schedule is not None else (1.1, 1.0, .9, .8, .7)),
         record_trajectory=record_trajectory,
         edge_mask=dagma_mask(X.shape[1], pairs) if direct_mask else None,
     )
     result, all_restarts = run_production_pipeline(
         X, pairs if use_notreks else [], config)
     adjacency = result.adjacency
+    threshold_post_diag = None
     if apply_notreks_postselection and not use_notreks:
-        adjacency = notreks_postselection(X, adjacency, pairs)
+        # The post-selection ablation is deliberately the same deletion-only
+        # support/refit/BIC policy as FLOP: refit the returned support, order
+        # its nonzero coefficients, and choose the best feasible threshold.
+        _, coefficients = gaussian_bic(X, adjacency, lambda_bic=2.0)
+        weighted = np.asarray(coefficients, dtype=float) * adjacency
+        adjacency, _, threshold_post_diag = threshold_bic_search(
+            X, weighted, pairs, lambda_bic=2.0, notreks_active=True)
     selected_stages = result.stage_diagnostics
-    return adjacency, {
+    s_floor = float(min(s_schedule if s_schedule is not None else config.s))
+    if adjacency_map == "entrywise_capped_square":
+        theoretical_max_entry = s_floor / max(X.shape[1] - 1, 1)
+    elif adjacency_map in {"row_capped_square", "row_capped_abs",
+                           "stable_abs_row"}:
+        theoretical_max_entry = s_floor
+    else:
+        theoretical_max_entry = float("inf")
+    diagnostics = {
         "candidate_graph": result.candidate_graph.copy(),
         "cpdag": adjacency.copy(),
         "candidate_edges": result.candidate_edges,
@@ -705,6 +954,16 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
         "optimizer_warm_iter": warm_iter,
         "optimizer_max_iter": max_iter,
         "proximal_l1": bool(proximal_l1),
+        "adjacency_map": adjacency_map,
+        "adjacency_map_tau": float(adjacency_map_tau),
+        "adjacency_map_s_floor": s_floor,
+        "adjacency_map_theoretical_max_entry": theoretical_max_entry,
+        "stage_diagnostics": [
+            {"restart": restart.restart, **stage}
+            for restart in all_restarts
+            for stage in restart.stage_diagnostics],
+        "notreks_resolvent_normalization": bool(
+            notreks_resolvent_normalization),
         "selected_stage": result.selected_stage,
         "selected_restart": result.restart,
         "checkpoint_selection": [
@@ -731,6 +990,15 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
             [result.trajectory_times for result in all_restarts]
             if record_trajectory else None),
     }
+    if threshold_post_diag is not None:
+        diagnostics.update({
+            "postselection_policy": "threshold_bic_search",
+            "threshold_search": threshold_post_diag["threshold_search"],
+            "candidate_threshold": threshold_post_diag["candidate_threshold"],
+            "feasibility_threshold": threshold_post_diag["feasibility_threshold"],
+            "postprocessed_bic": threshold_post_diag["postprocessed_bic"],
+        })
+    return adjacency, diagnostics
 
 
 def cpdag_shd(truth, estimate):
@@ -746,6 +1014,252 @@ def cpdag_shd(truth, estimate):
              "--adjmat_est", str(estimate_path), "--filename",
              str(output_path)], check=True, capture_output=True, text=True)
         return float(pd.read_csv(output_path).iloc[0]["SHD_cpdag"])
+
+
+def dagma_lambda_max(X):
+    """Exact off-diagonal infinity norm of the standardized score gradient at 0."""
+    standardized, _, _ = standardize_training_data(
+        np.asarray(X, dtype=float), ddof=0, std_floor=1e-12)
+    covariance = standardized.T @ standardized / len(standardized)
+    gradient = -covariance
+    np.fill_diagonal(gradient, 0.0)
+    return float(np.max(np.abs(gradient), initial=0.0))
+
+
+def dagma_lambda_bal(X, pairs, seed, warm_iter, max_iter, stages):
+    """Balance DAG and NOTREKS gradients at the first vanilla stage."""
+    if not pairs:
+        return 1.0, {"lambda_bal_fallback": True,
+                     "reference_h_gradient_norm": np.nan,
+                     "reference_notreks_gradient_norm": 0.0}
+    _, diagnostics = dagma_candidate(
+        X, [], False, False, seed, 1, warm_iter, max_iter, stages,
+        record_trajectory=True)
+    trajectory = diagnostics.get("trajectory") or []
+    if not trajectory or not trajectory[0]:
+        raise RuntimeError("vanilla reference stage did not return a dense matrix")
+    W = np.asarray(trajectory[0][0], dtype=float)
+    d = W.shape[0]
+    s = 1.1
+    A = W * W
+    resolvent = np.linalg.inv(s * np.eye(d) - A)
+    dag_gradient_norm = float(np.linalg.norm(2.0 * W * resolvent.T))
+    kernel = make_notreks_kernel("fast", pairs, d)
+    _, grad_A = kernel.value_grad_from_resolvent_adjacency(
+        A, resolvent, resolvent_scale=1.0)
+    notreks_gradient_norm = float(np.linalg.norm(2.0 * W * grad_A))
+    if notreks_gradient_norm <= 1e-12 or not np.isfinite(notreks_gradient_norm):
+        return 1.0, {
+            "lambda_bal_fallback": True,
+            "reference_h_gradient_norm": dag_gradient_norm,
+            "reference_notreks_gradient_norm": notreks_gradient_norm,
+        }
+    return dag_gradient_norm / notreks_gradient_norm, {
+        "lambda_bal_fallback": False,
+        "reference_h_gradient_norm": dag_gradient_norm,
+        "reference_notreks_gradient_norm": notreks_gradient_norm,
+    }
+
+
+def dagma_coefficient_ablation_candidate(
+        X, pairs, use_notreks, seed, attempts, warm_iter, max_iter, stages,
+        calibrated, lambda_bic=2.0):
+    """Run the coefficient-policy ablation without using truth for selection."""
+    lambda_max = dagma_lambda_max(X)
+    lambda_grid = (lambda_max * np.asarray([.3, .1, .03, .01, .003])
+                   if calibrated else np.asarray([.03]))
+    lambda_bal, balance_diag = dagma_lambda_bal(
+        X, pairs, seed, warm_iter, max_iter, stages) if use_notreks else (1.0, {})
+    nt_grid = (lambda_bal * np.asarray([.1, .3, 1., 3., 10.])
+               if use_notreks and calibrated else np.asarray([1.0 if use_notreks else 0.0]))
+    candidates = []
+    for lambda1 in lambda_grid:
+        for lambda_nt in nt_grid:
+            adjacency, diagnostics = dagma_candidate(
+                X, pairs, use_notreks, False, seed, attempts, warm_iter,
+                max_iter, stages, trek_weight=float(lambda_nt),
+                lambda1=float(lambda1))
+            bic = float(gaussian_bic(X, adjacency, lambda_bic=lambda_bic)[0])
+            violations = common_ancestor_violations(adjacency, pairs)
+            stage_rows = diagnostics.get("stage_diagnostics", [])
+            continuous_mass = float(stage_rows[-1].get(
+                "raw_notreks_value", np.inf)) if stage_rows and pairs else 0.0
+            feasible = (violations == 0 and continuous_mass <= 1e-8)
+            candidates.append({
+                "lambda1": float(lambda1), "lambda1_over_lambda_max": (
+                    float(lambda1 / lambda_max) if lambda_max else np.nan),
+                "lambda_dag": 1.0, "lambda_nt": float(lambda_nt),
+                "lambda_bal": float(lambda_bal), "bic": bic,
+                "violations": int(violations),
+                "continuous_notreks_mass": continuous_mass,
+                "coefficient_grid_infeasible": not feasible,
+                "adjacency": adjacency, "diagnostics": diagnostics,
+            })
+    feasible = [row for row in candidates if not row["coefficient_grid_infeasible"]]
+    pool = feasible if feasible else candidates
+    selected = min(pool, key=lambda row: (
+        row["bic"] if feasible else row["violations"],
+        row["continuous_notreks_mass"] if not feasible else 0.0,
+        row["bic"], row["lambda1"], row["lambda_nt"]))
+    method_diag = dict(selected["diagnostics"])
+    method_diag.update({
+        "coefficient_policy": "calibrated" if calibrated else "old",
+        "lambda1": selected["lambda1"],
+        "lambda_max": lambda_max,
+        "lambda1_over_lambda_max": selected["lambda1_over_lambda_max"],
+        "lambda_dag": 1.0, "lambda_nt": selected["lambda_nt"],
+        "lambda_bal": lambda_bal,
+        "coefficient_grid_infeasible": not bool(feasible),
+        "coefficient_candidates": [
+            {key: value for key, value in row.items() if key != "adjacency"
+             and key != "diagnostics"} for row in candidates],
+        **balance_diag,
+    })
+    return selected["adjacency"], method_diag
+
+
+def dagma_learned_coefficient_candidate(
+        X, pairs, use_notreks, seed, attempts, warm_iter, max_iter, stages,
+        lambda1_ratio=0.03, notreks_multiplier=1.0):
+    """Single-fit coefficient policy learned from a prior calibration.
+
+    The expensive calibration supplies frozen dimensionless multipliers.  At
+    run time we only compute the cheap score-gradient scale lambda_max and,
+    for NOTREKS, one gradient-balance reference.
+    """
+    lambda_max = dagma_lambda_max(X)
+    lambda1 = float(lambda1_ratio) * lambda_max
+    if use_notreks:
+        lambda_bal, balance_diag = dagma_lambda_bal(
+            X, pairs, seed, warm_iter, max_iter, stages)
+        lambda_nt = float(notreks_multiplier) * lambda_bal
+    else:
+        lambda_bal, lambda_nt, balance_diag = 1.0, 0.0, {}
+    adjacency, diagnostics = dagma_candidate(
+        X, pairs, use_notreks, False, seed, attempts, warm_iter,
+        max_iter, stages, trek_weight=lambda_nt, lambda1=lambda1)
+    diagnostics = dict(diagnostics)
+    diagnostics.update({
+        "coefficient_policy": "learned_lambda_max",
+        "lambda1": lambda1,
+        "lambda_max": lambda_max,
+        "lambda1_over_lambda_max": float(lambda1_ratio),
+        "lambda_dag": 1.0,
+        "lambda_nt": lambda_nt,
+        "lambda_bal": lambda_bal,
+        "learned_lambda1_ratio": float(lambda1_ratio),
+        "learned_notreks_multiplier": float(notreks_multiplier),
+        **balance_diag,
+    })
+    return adjacency, diagnostics
+
+
+def dagma_density_adaptive_coefficient_candidate(
+        X, pairs, use_notreks, seed, attempts, warm_iter, max_iter, stages,
+        low_density_cutoff=0.10, high_density_cutoff=0.25,
+        low_ratio=0.30, middle_ratio=0.10, high_ratio=0.01,
+        notreks_multiplier=1.0):
+    """Single-fit lambda policy using empirical correlation density."""
+    standardized, _, _ = standardize_training_data(
+        np.asarray(X, dtype=float), ddof=0, std_floor=1e-12)
+    covariance = standardized.T @ standardized / len(standardized)
+    off_diagonal = np.abs(covariance.copy())
+    np.fill_diagonal(off_diagonal, 0.0)
+    d = off_diagonal.shape[0]
+    threshold = np.sqrt(2.0 * np.log(max(d, 2)) / len(standardized))
+    density = float((off_diagonal > threshold).sum() / max(d * (d - 1), 1))
+    if density < low_density_cutoff:
+        ratio = low_ratio
+        band = "low"
+    elif density < high_density_cutoff:
+        ratio = middle_ratio
+        band = "middle"
+    else:
+        ratio = high_ratio
+        band = "high"
+    lambda_max = dagma_lambda_max(X)
+    lambda1 = float(ratio * lambda_max)
+    if use_notreks:
+        lambda_bal, balance_diag = dagma_lambda_bal(
+            X, pairs, seed, warm_iter, max_iter, stages)
+        lambda_nt = float(notreks_multiplier * lambda_bal)
+    else:
+        lambda_bal, lambda_nt, balance_diag = 1.0, 0.0, {}
+    adjacency, diagnostics = dagma_candidate(
+        X, pairs, use_notreks, False, seed, attempts, warm_iter,
+        max_iter, stages, trek_weight=lambda_nt, lambda1=lambda1)
+    diagnostics = dict(diagnostics)
+    diagnostics.update({
+        "coefficient_policy": "density_adaptive_lambda_max",
+        "lambda1": lambda1,
+        "lambda_max": lambda_max,
+        "lambda1_over_lambda_max": ratio,
+        "lambda_density": density,
+        "lambda_density_threshold": threshold,
+        "lambda_density_band": band,
+        "lambda_dag": 1.0,
+        "lambda_nt": lambda_nt,
+        "lambda_bal": lambda_bal,
+        "density_low_cutoff": low_density_cutoff,
+        "density_high_cutoff": high_density_cutoff,
+        **balance_diag,
+    })
+    return adjacency, diagnostics
+
+
+def dagma_density_continuous_coefficient_candidate(
+        X, pairs, use_notreks, seed, attempts, warm_iter, max_iter, stages,
+        notreks_multiplier=1.0, reference_n=500):
+    """Single-fit density-adaptive policy with continuous log interpolation."""
+    standardized, _, _ = standardize_training_data(
+        np.asarray(X, dtype=float), ddof=0, std_floor=1e-12)
+    covariance = standardized.T @ standardized / len(standardized)
+    off_diagonal = np.abs(covariance.copy())
+    np.fill_diagonal(off_diagonal, 0.0)
+    d = off_diagonal.shape[0]
+    threshold = np.sqrt(2.0 * np.log(max(d, 2)) / len(standardized))
+    density = float((off_diagonal > threshold).sum() / max(d * (d - 1), 1))
+
+    # Calibration-derived anchors.  Interpolate log(c) so the multiplier
+    # changes smoothly over the full possible density range [0, 1].
+    density_knots = np.asarray([0.0, 0.10, 0.25, 0.50, 1.0])
+    # The calibration grid contained 0.003 and 0.01, but those very small
+    # values made dense-data fits too under-regularized.  The old 0.03 scale
+    # is retained as a recovery-oriented floor while interpolation remains
+    # continuous across the full density range.
+    ratio_knots = np.asarray([0.30, 0.30, 0.10, 0.03, 0.03])
+    ratio = float(np.exp(np.interp(
+        density, density_knots, np.log(ratio_knots))))
+    lambda_max = dagma_lambda_max(X)
+    sample_scale = np.sqrt(float(reference_n) / len(standardized))
+    lambda1 = float(ratio * lambda_max * sample_scale)
+    if use_notreks:
+        lambda_bal, balance_diag = dagma_lambda_bal(
+            X, pairs, seed, warm_iter, max_iter, stages)
+        lambda_nt = float(notreks_multiplier * lambda_bal)
+    else:
+        lambda_bal, lambda_nt, balance_diag = 1.0, 0.0, {}
+    adjacency, diagnostics = dagma_candidate(
+        X, pairs, use_notreks, False, seed, attempts, warm_iter,
+        max_iter, stages, trek_weight=lambda_nt, lambda1=lambda1)
+    diagnostics = dict(diagnostics)
+    diagnostics.update({
+        "coefficient_policy": "continuous_density_lambda_max",
+        "lambda1": lambda1,
+        "lambda_max": lambda_max,
+        "lambda1_over_lambda_max": ratio,
+        "lambda_sample_scale": sample_scale,
+        "lambda_reference_n": int(reference_n),
+        "lambda_density": density,
+        "lambda_density_threshold": threshold,
+        "lambda_density_knots": density_knots.tolist(),
+        "lambda_ratio_knots": ratio_knots.tolist(),
+        "lambda_dag": 1.0,
+        "lambda_nt": lambda_nt,
+        "lambda_bal": lambda_bal,
+        **balance_diag,
+    })
+    return adjacency, diagnostics
 
 
 def metrics(data, truth, pairs, method, candidate, estimate, estimate_cpdag,
@@ -868,7 +1382,7 @@ def main():
     parser.add_argument("--dagma-stages", type=int, default=5)
     parser.add_argument("--dagma-warm-iter", type=int, default=30000)
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
-    parser.add_argument("--dagma-trek-weight", type=float, default=1.0)
+    parser.add_argument("--dagma-trek-weight", type=float, default=200.0)
     parser.add_argument(
         "--dagma-initialization-mode",
         choices=("empty_random", "empty_feasible_random"),
@@ -878,10 +1392,30 @@ def main():
     parser.add_argument("--dagma-log-trajectory", action="store_true",
                         help="save DAGMA initial and continuation-stage matrices")
     parser.add_argument(
-        "--dagma-mu-schedule", default=None,
+        "--dagma-adjacency-maps", nargs="+",
+        choices=("square", "abs", "pseudo_huber",
+                 "entrywise_capped_square", "row_capped_square",
+                 "row_capped_abs"),
+        help="run DAGMA-only adjacency-map ablations")
+    parser.add_argument("--dagma-map-tau", type=float, default=1.0)
+    parser.add_argument(
+        "--dagma-learned-lambda1-ratio", type=float, default=0.03,
+        help="frozen c* in lambda1=c*lambda_max for learned coefficient fits")
+    parser.add_argument(
+        "--dagma-learned-notreks-multiplier", type=float, default=1.0,
+        help="frozen multiplier of the one-shot NOTREKS gradient balance")
+    parser.add_argument("--dagma-density-low-cutoff", type=float, default=0.10)
+    parser.add_argument("--dagma-density-high-cutoff", type=float, default=0.25)
+    parser.add_argument("--dagma-density-reference-n", type=int, default=500)
+    parser.add_argument(
+        "--dagma-threshold-bic-search", action="store_true",
+        help=("for DAGMA map ablations, search raw-W thresholds by binary "
+              "feasibility boundary and select the best feasible refit"))
+    parser.add_argument(
+        "--dagma-mu-schedule", default="1,0.3,0.1,0.01,0.001",
         help="comma-separated continuation values, e.g. 1,0.3,0.1,0.03,0.01")
     parser.add_argument(
-        "--dagma-s-schedule", default=None,
+        "--dagma-s-schedule", default="1.1,1.0,0.9,0.8,0.7",
         help="comma-separated DAGMA domain values, e.g. 1,0.95,0.9,0.85,0.8")
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -913,10 +1447,25 @@ def main():
         dagma_initialization_mode=args.dagma_initialization_mode,
         dagma_initialization_edge_probability=(
             args.dagma_initialization_edge_probability),
+        dagma_map_tau=args.dagma_map_tau,
         dagma_record_trajectory=args.dagma_log_trajectory,
         dagma_mu_schedule=parse_schedule(args.dagma_mu_schedule),
         dagma_s_schedule=parse_schedule(args.dagma_s_schedule))
     config.validate(args.methods)
+    if args.dagma_adjacency_maps is not None:
+        expanded_methods = []
+        for method in args.methods:
+            if method == "dagma":
+                suffix = "_threshold_bic_search" if (
+                    args.dagma_threshold_bic_search) else ""
+                expanded_methods.extend(
+                    f"dagma_{name}{suffix}"
+                    for name in args.dagma_adjacency_maps)
+            else:
+                expanded_methods.append(method)
+        args.methods = tuple(expanded_methods)
+    args.methods = tuple(dict.fromkeys(
+        (*args.methods, "var_sortnregress", "r2_sortnregress")))
     select_knowledge([], config.knowledge_fraction, 0)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     graph_dir = args.output_dir / "graphs"
@@ -925,7 +1474,10 @@ def main():
         json.dumps({
             "d": config.d, "n": config.effective_n,
             "graph_type": config.graph_type, "scm": config.scm,
-            "noise": config.noise, "equal_variance": config.equal_variance,
+            "noise": config.noise,
+            "equal_variance": config.equal_variance,
+            "variance_model": "iid_log_variance_uniform[-log(2),log(2)]",
+            "dagma_loss_type": "gaussian_profile",
             "knowledge_fraction": config.knowledge_fraction,
             "corrupted_knowledge_fraction": (
                 config.corrupted_knowledge_fraction),
@@ -953,15 +1505,18 @@ def main():
                 config.dagma_initialization_edge_probability),
             "dagma_mu_schedule": config.dagma_mu_schedule,
             "dagma_s_schedule": config.dagma_s_schedule,
+            "dagma_adjacency_maps": args.dagma_adjacency_maps,
+            "dagma_map_tau": config.dagma_map_tau,
+            "dagma_threshold_bic_search": args.dagma_threshold_bic_search,
             "dagma_log_trajectory": config.dagma_record_trajectory,
             "methods": list(args.methods),
         }, indent=2) + "\n")
     rows = []
     for seed_index, seed in enumerate(args.seeds):
-        X, truth, all_pairs = generate(
+        X, truth, all_pairs, raw_X = generate(
             seed, d=config.d, n=config.effective_n,
             graph_type=config.graph_type, scm=config.scm,
-            noise=config.noise)
+            noise=config.noise, return_raw=True)
         pairs = select_knowledge(
             all_pairs, config.knowledge_fraction, seed)
         clean_pairs = list(pairs)
@@ -993,7 +1548,7 @@ def main():
                 optimizer_diag = dict(optimizer_diag)
                 optimizer_diag["candidate_graph"] = vanilla_candidate.copy()
                 optimizer_diag["cpdag"] = candidate.copy()
-            elif method == "flop_edge_mask":
+            elif method == "flop_notreks_edge_mask":
                 candidate, optimizer_diag = flop_notreks_candidate(
                     X, [], seed, config.attempts, config.flop_sweeps,
                     forbidden_edges=direct_mask_edges(pairs),
@@ -1012,9 +1567,63 @@ def main():
                     local_greedy_passes=config.flop_local_passes)
             elif method == "flop_notreks_postselection":
                 candidate, optimizer_diag = (
-                    flop_notreks_postselection_candidate(
+                    flop_notreks_order_postselection_candidate(
                         X, pairs, seed, config.attempts,
                         lambda_bic=config.flop_lambda_bic))
+            elif method == "flop_notreks_order_postselection":
+                candidate, optimizer_diag = (
+                    flop_notreks_order_postselection_candidate(
+                        X, pairs, seed, config.attempts,
+                        lambda_bic=config.flop_lambda_bic))
+            elif method in {"dagma_coeff_old", "dagma_coeff_calibrated",
+                            "dagma_coeff_learned",
+                            "dagma_coeff_density_adaptive",
+                            "dagma_coeff_density_continuous",
+                            "dagma_notreks_coeff_old",
+                            "dagma_notreks_coeff_calibrated",
+                            "dagma_notreks_coeff_learned",
+                            "dagma_notreks_coeff_density_adaptive"}:
+                use_nt = method.startswith("dagma_notreks_")
+                if method.endswith("_density_continuous"):
+                    candidate, optimizer_diag = (
+                        dagma_density_continuous_coefficient_candidate(
+                            X, pairs, use_nt, seed, config.attempts,
+                            config.dagma_warm_iter, config.dagma_max_iter,
+                            config.dagma_stages,
+                            notreks_multiplier=(
+                                args.dagma_learned_notreks_multiplier),
+                            reference_n=args.dagma_density_reference_n))
+                elif method.endswith("_density_adaptive"):
+                    candidate, optimizer_diag = (
+                        dagma_density_adaptive_coefficient_candidate(
+                            X, pairs, use_nt, seed, config.attempts,
+                            config.dagma_warm_iter, config.dagma_max_iter,
+                            config.dagma_stages,
+                            low_density_cutoff=(
+                                args.dagma_density_low_cutoff),
+                            high_density_cutoff=(
+                                args.dagma_density_high_cutoff),
+                            notreks_multiplier=(
+                                args.dagma_learned_notreks_multiplier)))
+                elif method.endswith("_learned"):
+                    candidate, optimizer_diag = (
+                        dagma_learned_coefficient_candidate(
+                            X, pairs, use_nt, seed, config.attempts,
+                            config.dagma_warm_iter, config.dagma_max_iter,
+                            config.dagma_stages,
+                            lambda1_ratio=args.dagma_learned_lambda1_ratio,
+                            notreks_multiplier=(
+                                args.dagma_learned_notreks_multiplier)))
+                    # Continue through the common evaluation path below.
+                    pass
+                else:
+                    calibrated = method.endswith("_calibrated")
+                    candidate, optimizer_diag = (
+                        dagma_coefficient_ablation_candidate(
+                            X, pairs, use_nt, seed, config.attempts,
+                            config.dagma_warm_iter, config.dagma_max_iter,
+                            config.dagma_stages, calibrated,
+                            lambda_bic=config.flop_lambda_bic))
             elif method == "flop_notreks_local":
                 candidate, optimizer_diag = flop_notreks_candidate(
                     X, pairs, seed, config.attempts, config.flop_sweeps,
@@ -1091,10 +1700,14 @@ def main():
                     random_initial_order=True,
                     lambda_bic=config.flop_lambda_bic,
                     search_version=config.flop_search_version)
-            elif method == "flop_notreks_warm":
-                candidate, optimizer_diag = hybrid_flop_notreks_postselected_candidate(
-                    X, pairs, seed, config.attempts, config.flop_sweeps,
-                    lambda_bic=config.flop_lambda_bic)
+            elif method == "var_sortnregress":
+                candidate, optimizer_diag = sortnregress(
+                    X, kind="variance", lambda_bic=config.flop_lambda_bic)
+                optimizer_diag["sortnregress_standardized_input"] = True
+                optimizer_diag["sortnregress_data_scale"] = "standardized"
+            elif method == "r2_sortnregress":
+                candidate, optimizer_diag = sortnregress(
+                    X, kind="r2", lambda_bic=config.flop_lambda_bic)
             else:
                 # Projection variants are intended as DAGMA+NOTREKS
                 # postselection experiments.  They must receive the same
@@ -1102,8 +1715,26 @@ def main():
                 use_notreks = (
                     method.startswith("dagma_notreks")
                     or "normalized_projection" in method)
+                map_labels = {
+                    "square", "abs", "pseudo_huber",
+                    "entrywise_capped_square", "row_capped_square",
+                    "row_capped_abs"}
+                map_token = method.removeprefix("dagma_")
+                threshold_search = map_token.endswith(
+                    "_threshold_bic_search")
+                if threshold_search:
+                    map_token = map_token.removesuffix(
+                        "_threshold_bic_search")
+                map_name = (map_token
+                            if map_token in map_labels
+                            else ("row_capped_abs"
+                                  if method in {"dagma_stable",
+                                                "dagma_notreks_stable"}
+                                  else "square"))
                 proximal_l1 = "proximal" in method
-                if method.endswith("best_projected_checkpoint"):
+                if threshold_search:
+                    postselection_policy = "threshold_bic_search"
+                elif method.endswith("best_projected_checkpoint"):
                     postselection_policy = "best_projected_checkpoint"
                 elif "normalized_projection_shrink" in method:
                     postselection_policy = (
@@ -1119,11 +1750,28 @@ def main():
                 apply_postselection = method in {
                     "dagma_postselection",
                     "dagma_edge_mask_postselection"}
+                effective_trek_weight = config.dagma_trek_weight
+                calibration_diag = {}
+                if method == "dagma_notreks_s2_over_i_calibrated":
+                    effective_trek_weight, calibration_diag = dagma_lambda_bal(
+                        X, pairs, seed, config.dagma_warm_iter,
+                        config.dagma_max_iter, config.dagma_stages)
                 candidate, optimizer_diag = dagma_candidate(
                     X, pairs, use_notreks, direct_mask, seed,
                     config.attempts, config.dagma_warm_iter,
                     config.dagma_max_iter, config.dagma_stages,
-                    trek_weight=config.dagma_trek_weight,
+                    trek_weight=effective_trek_weight,
+                    adjacency_map=(
+                        map_name),
+                    adjacency_map_tau=config.dagma_map_tau,
+                    notreks_resolvent_normalization=(
+                        method == "dagma_notreks_normalized"),
+                    notreks_stage_scaling=(
+                        "s2_over_d_minus_1" if method == "dagma_notreks" else
+                        "s2_over_pairs" if method in {
+                            "dagma_notreks_s2_over_i",
+                            "dagma_notreks_s2_over_i_calibrated"}
+                        else "none"),
                     initialization_mode=config.dagma_initialization_mode,
                     initialization_edge_probability=(
                         config.dagma_initialization_edge_probability),
@@ -1133,6 +1781,13 @@ def main():
                     mu_schedule=config.dagma_mu_schedule,
                     s_schedule=config.dagma_s_schedule,
                     apply_notreks_postselection=apply_postselection)
+                optimizer_diag.update(calibration_diag)
+                optimizer_diag["lambda_nt_base"] = float(effective_trek_weight)
+                optimizer_diag["notreks_stage_scaling"] = (
+                    "s2_over_pairs" if method in {
+                        "dagma_notreks_s2_over_i",
+                        "dagma_notreks_s2_over_i_calibrated"}
+                    else "none")
             candidates[method] = (
                 candidate, optimizer_diag, time.perf_counter() - started)
             if optimizer_diag.get("trajectory") is not None:
@@ -1173,6 +1828,28 @@ def main():
                 "attempts_requested": config.attempts,
                 "flop_lambda_bic": config.flop_lambda_bic,
                 "dagma_trek_weight": config.dagma_trek_weight,
+                "lambda_nt_base": optimizer_diag.get(
+                    "lambda_nt_base", config.dagma_trek_weight),
+                "notreks_stage_scaling": optimizer_diag.get(
+                    "notreks_stage_scaling", "none"),
+                "notreks_used": bool(
+                    method.startswith("dagma_notreks")
+                    or "normalized_projection" in method),
+                "sortnregress_data_scale": optimizer_diag.get(
+                    "sortnregress_data_scale"),
+                "sortnregress_standardized_input": optimizer_diag.get(
+                    "sortnregress_standardized_input"),
+                "adjacency_map": optimizer_diag.get("adjacency_map", "square"),
+                "adjacency_map_tau": optimizer_diag.get(
+                    "adjacency_map_tau", config.dagma_map_tau),
+                "adjacency_map_s_floor": optimizer_diag.get(
+                    "adjacency_map_s_floor"),
+                "adjacency_map_theoretical_max_entry": optimizer_diag.get(
+                    "adjacency_map_theoretical_max_entry"),
+                "notreks_resolvent_normalization": optimizer_diag.get(
+                    "notreks_resolvent_normalization", False),
+                "dagma_stage_diagnostics": json.dumps(
+                    optimizer_diag.get("stage_diagnostics", [])),
                 "notreks_pairs": len(pairs),
                 "clean_notreks_pairs": len(clean_pairs),
                 "corrupted_notreks_pairs": sum(
@@ -1188,6 +1865,23 @@ def main():
                     "order_guided_archive_max_trek_violation_mass"):
                 if key in optimizer_diag:
                     row[key] = optimizer_diag[key]
+            for key in (
+                    "coefficient_policy", "lambda1", "lambda_max",
+                    "lambda1_over_lambda_max", "lambda_dag", "lambda_nt",
+                    "lambda_bal", "lambda_bal_fallback",
+                    "lambda_density", "lambda_density_threshold",
+                    "lambda_density_band", "density_low_cutoff",
+                    "density_high_cutoff", "lambda_density_knots",
+                    "lambda_ratio_knots",
+                    "lambda_sample_scale", "lambda_reference_n",
+                    "reference_h_gradient_norm",
+                    "reference_notreks_gradient_norm",
+                    "coefficient_grid_infeasible",
+                    "coefficient_candidates"):
+                if key in optimizer_diag:
+                    value = optimizer_diag[key]
+                    row[key] = (json.dumps(value) if isinstance(value, list)
+                                else value)
             for key in (
                     "trekcut_winner", "trekcut_local_incumbent_bic",
                     "trekcut_search_bic", "trekcut_witness_lengths",
@@ -1290,6 +1984,10 @@ def main():
             live_columns.append("selected_stage_SHD_cpdag")
         if "checkpoint_stage_SHD_cpdag" in live:
             live_columns.append("checkpoint_stage_SHD_cpdag")
+        for key in ("adjacency_map", "notreks_used",
+                    "adjacency_map_theoretical_max_entry"):
+            if key in live:
+                live_columns.append(key)
         live = live[live_columns].sort_values("method")
         live.to_csv(args.output_dir / "live_current_seed.csv", index=False)
         progress = f"[{seed_index + 1}/{len(args.seeds)}]"

@@ -43,13 +43,21 @@ class ProductionConfig:
     """Stable production settings; diagnostic runners may override these."""
 
     lambda1: float = 0.03
+    # Experimental vanilla-DAGMA policies may supply a target vector or an
+    # off-diagonal penalty matrix. Production configurations leave this None.
+    lambda1_penalty: np.ndarray | None = None
     # The constrained objective is calibrated on the same standardized scale
-    # as vanilla DAGMA.  A weight of 10 overwhelms the data term and caused
-    # the NOTREKS variant to collapse on dense graphs; 1 is the production
-    # baseline used by the benchmark calibration.
-    trek_weight: float = 1.0
+    # as vanilla DAGMA.  The pooled coefficient grid selected 200 as the
+    # default; callers can still override it explicitly.
+    trek_weight: float = 200.0
     trek_function: str = "inv"
     trek_kernel: str = "fast"
+    adjacency_map: str = "square"
+    adjacency_map_tau: float = 1.0
+    notreks_resolvent_normalization: bool = False
+    # The kernel's internal 2/(d-1) factor is converted to the continuation-
+    # aware total normalization s^2/(d-1) by an outer s^2/2 multiplier.
+    notreks_stage_scaling: str = "s2_over_d_minus_1"
     restarts: int = 5
     seed: int = 1729
     initialization_scale: float = 0.05
@@ -59,11 +67,12 @@ class ProductionConfig:
     record_trajectory: bool = False
     screening_floor: float = 0.01
     lambda_bic: float = 2.0
-    loss_type: str = "l2"
+    # Production uses the profiled unequal-variance Gaussian likelihood.
+    loss_type: str = "gaussian_profile"
     T: int = 5
     mu_init: float = 1.0
     mu_factor: float = 0.1
-    s: tuple[float, ...] = (1.0, 0.9, 0.8, 0.7, 0.6)
+    s: tuple[float, ...] = (1.1, 1.0, 0.9, 0.8, 0.7)
     warm_iter: int = 30000
     max_iter: int = 60000
     lr: float = 0.0003
@@ -80,7 +89,7 @@ class ProductionConfig:
     constraint_regime: str | None = None
     edge_mask: np.ndarray | None = None
     dagma_postselection_policy: str = "feasible_parent_shrink"
-    mu_schedule: tuple[float, ...] | None = None
+    mu_schedule: tuple[float, ...] | None = (1.0, 0.3, 0.1, 0.01, 0.001)
 
 
 @dataclass
@@ -139,6 +148,94 @@ def production_candidate_graph(
     }
 
 
+def threshold_bic_search(
+    X: np.ndarray,
+    weighted_adjacency: np.ndarray,
+    no_trek_pairs: Sequence[tuple[int, int]],
+    *,
+    lambda_bic: float = 2.0,
+    notreks_active: bool = True,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Search raw-weight thresholds, then choose the best feasible refit.
+
+    Feasibility is monotone under threshold increases: raising the threshold
+    only deletes edges.  We therefore binary-search the boundary and evaluate
+    every distinct feasible support above it, because refitted BIC itself is
+    not monotone in the threshold.
+    """
+    weights = np.abs(np.asarray(weighted_adjacency, dtype=np.float64)).copy()
+    np.fill_diagonal(weights, 0.0)
+    nonzero = np.unique(weights[weights > 0.0])
+    if nonzero.size:
+        thresholds = np.concatenate((
+            [np.nextafter(float(nonzero.max()), np.inf)],
+            nonzero[::-1]))
+    else:
+        thresholds = np.array([0.0], dtype=np.float64)
+    pairs = tuple(no_trek_pairs) if notreks_active else ()
+
+    def candidate(threshold: float) -> np.ndarray:
+        graph = (weights >= float(threshold)).astype(np.uint8)
+        np.fill_diagonal(graph, 0)
+        return graph
+
+    def feasible(threshold: float) -> bool:
+        graph = candidate(threshold)
+        return is_dag(graph) and not common_ancestor_violations(graph, pairs)
+
+    # thresholds are descending: feasibility is true for a prefix and can
+    # only become false as more lower-weight edges are admitted.
+    lo, hi = 0, len(thresholds) - 1
+    if not feasible(float(thresholds[lo])):
+        raise RuntimeError("no feasible threshold support exists")
+    last_feasible = lo
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if feasible(float(thresholds[mid])):
+            last_feasible = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+
+    records = []
+    best = None
+    for index in range(last_feasible + 1):
+        threshold = float(thresholds[index])
+        graph = candidate(threshold)
+        if not is_dag(graph) or common_ancestor_violations(graph, pairs):
+            raise RuntimeError("threshold feasibility monotonicity failed")
+        bic, coefficients = gaussian_bic(X, graph, lambda_bic=lambda_bic)
+        record = {
+            "threshold": threshold,
+            "edges": int(graph.sum()),
+            "bic": float(bic),
+            "feasible": True,
+        }
+        records.append(record)
+        key = (float(bic), -int(graph.sum()), threshold)
+        if best is None or key < best[0]:
+            best = (key, graph, coefficients, record)
+    if best is None:
+        raise RuntimeError("threshold search did not evaluate a support")
+    _, graph, coefficients, winner = best
+    return graph, coefficients, {
+        "candidate_graph": graph.copy(),
+        "candidate_edges": int(graph.sum()),
+        "final_edges": int(graph.sum()),
+        "candidate_threshold": float(winner["threshold"]),
+        "feasibility_threshold": float(winner["threshold"]),
+        "screening_floor": 0.0,
+        "postprocessed_bic": float(winner["bic"]),
+        "edges_deleted": int(np.count_nonzero(weights) - graph.sum()),
+        "threshold_search": {
+            "method": "binary_boundary_then_feasible_bic_scan",
+            "threshold_count": int(len(thresholds)),
+            "feasible_threshold_count": int(last_feasible + 1),
+            "records": records,
+        },
+    }
+
+
 def postprocess_weighted_adjacency(
     X: np.ndarray,
     weighted_adjacency: np.ndarray,
@@ -187,6 +284,15 @@ def postprocess_weighted_adjacency(
                 notreks_active and common_ancestor_violations(
                     adjacency, no_trek_pairs)):
             raise RuntimeError("normalized projection returned infeasible graph")
+        return adjacency, coefficients, diagnostics
+    if postselection_policy == "threshold_bic_search":
+        adjacency, coefficients, diagnostics = threshold_bic_search(
+            X, weighted_adjacency, no_trek_pairs,
+            lambda_bic=lambda_bic, notreks_active=notreks_active)
+        if not is_dag(adjacency) or (
+                notreks_active and common_ancestor_violations(
+                    adjacency, no_trek_pairs)):
+            raise RuntimeError("threshold search returned infeasible graph")
         return adjacency, coefficients, diagnostics
     candidate, diagnostics = production_candidate_graph(
         weighted_adjacency, no_trek_pairs, screening_floor=screening_floor,
@@ -278,6 +384,8 @@ def run_production_pipeline(
     # explicitly equal; registry policies otherwise determine the value.
     if config.lambda_policy == "fixed_0.03" and config.lambda1 != .03:
         effective_lambda = float(config.lambda1)
+    if config.lambda1_penalty is not None:
+        effective_lambda = np.asarray(config.lambda1_penalty, dtype=float)
     results: list[RestartResult] = []
     for restart in range(config.restarts):
         started = perf_counter()
@@ -290,6 +398,12 @@ def run_production_pipeline(
             trek_weight=config.trek_weight,
             trek_function=config.trek_function,
             trek_kernel=config.trek_kernel,
+            adjacency_map=config.adjacency_map,
+            adjacency_map_tau=config.adjacency_map_tau,
+            diagnostic_edge_threshold=config.screening_floor,
+            notreks_resolvent_normalization=(
+                config.notreks_resolvent_normalization),
+            notreks_stage_scaling=config.notreks_stage_scaling,
             proximal_l1=config.proximal_l1,
             initial_W=initial_W,
             lambda1=effective_lambda,
@@ -341,7 +455,10 @@ def run_production_pipeline(
                 adjacency, no_trek_pairs),
             stage_diagnostics=list(model.stage_diagnostics),
             postselection=postselection_row,
-            lambda1_effective=effective_lambda,
+            lambda1_effective=(
+                float(effective_lambda)
+                if np.asarray(effective_lambda).ndim == 0
+                else float(np.mean(effective_lambda))),
             standardization=asdict(standardization),
             initialization=initialization,
             initial_edges=initial_edges,

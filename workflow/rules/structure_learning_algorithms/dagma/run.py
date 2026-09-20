@@ -60,7 +60,7 @@ kwargs = dict(
     gradient_tolerance=float(_value("gradient_tolerance", 1e-8)),
 )
 start = time.perf_counter()
-model = SharedDagmaLinear(str(_value("loss_type", "l2")))
+model = SharedDagmaLinear(str(_value("loss_type", "gaussian_profile")))
 W = model.fit(df.to_numpy(dtype=float, copy=True), **kwargs)
 elapsed = time.perf_counter() - start
 pd.DataFrame((W != 0).astype(int), columns=df.columns).to_csv(snakemake.output["adjmat"], index=False)

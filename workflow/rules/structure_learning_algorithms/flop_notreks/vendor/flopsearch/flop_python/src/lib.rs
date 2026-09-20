@@ -716,6 +716,7 @@ fn flop_notreks<'py>(
         && search_version != "trekcut"
         && search_version != "prefix_feasible"
         && search_version != "trek_dominance"
+        && search_version != "warm_continuation"
     {
         return Err(PyValueError::new_err(concat!(
             "search_version must be global_greedy_rust, ",
@@ -724,8 +725,8 @@ fn flop_notreks<'py>(
             "local_greedy_active_reinsert, ",
             "flop_like, ",
             "alternating_full_refit_b, global_greedy_diagnostic, ",
-            "or order_guided_local, trekcut, or prefix_feasible",
-            " or trekcut",
+            "or order_guided_local, trekcut, prefix_feasible, or ",
+            "warm_continuation",
         )));
     }
     // With no structural constraints, use the canonical FLOP implementation
@@ -781,6 +782,8 @@ fn flop_notreks<'py>(
         NoTreksVersion::PrefixFeasible
     } else if search_version == "trek_dominance" {
         NoTreksVersion::TrekDominance
+    } else if search_version == "warm_continuation" {
+        NoTreksVersion::WarmContinuation
     } else if search_version == "global_greedy_rust_optimized" {
         NoTreksVersion::GlobalGreedyRustOptimized
     } else if search_version == "local_greedy_rust" {

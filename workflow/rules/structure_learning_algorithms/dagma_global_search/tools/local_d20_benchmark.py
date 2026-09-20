@@ -17,7 +17,7 @@ from workflow.rules.structure_learning_algorithms.flop_soft_notreks import SoftG
 
 def generate(seed: int, d: int = 20, n: int = 250,
              graph_type: str = "er2", scm: str = "linear",
-             noise: str = "gaussian"):
+             noise: str = "gaussian", return_raw: bool = False):
     rng = np.random.default_rng(seed)
     order = rng.permutation(d)
     truth = np.zeros((d, d), dtype=np.uint8)
@@ -42,7 +42,12 @@ def generate(seed: int, d: int = 20, n: int = 250,
     weights[truth != 0] = rng.uniform(.5, 1.0, size=int(truth.sum()))
     weights[truth != 0] *= rng.choice([-1., 1.], size=int(truth.sum()))
     if noise == "gaussian":
-        X = rng.normal(size=(n, d))
+        # Unequal-variance Gaussian SCM.  Draw the innovation variances
+        # independently of the graph, node depth, and edge weights:
+        # log(sigma_j^2) ~ Unif(-log 2, log 2).
+        log_variances = rng.uniform(-np.log(2.0), np.log(2.0), size=d)
+        innovation_scales = np.exp(0.5 * log_variances)
+        X = rng.normal(size=(n, d)) * innovation_scales
     elif noise == "laplace":
         X = rng.laplace(size=(n, d)) / np.sqrt(2.0)
     elif noise == "uniform":
@@ -59,6 +64,7 @@ def generate(seed: int, d: int = 20, n: int = 250,
                 X[:, node] += np.tanh(signal)
             else:
                 raise ValueError("scm must be linear or nonlinear")
+    raw_X = X.copy()
     X = (X - X.mean(0)) / X.std(0, ddof=0)
     reach = truth.astype(bool).copy()
     np.fill_diagonal(reach, True)
@@ -66,7 +72,7 @@ def generate(seed: int, d: int = 20, n: int = 250,
         reach |= reach[:, [k]] & reach[[k], :]
     pairs = [(i, j) for i in range(d) for j in range(i + 1, d)
              if not np.any(reach[:, i] & reach[:, j])]
-    return X, truth, pairs
+    return (X, truth, pairs, raw_X) if return_raw else (X, truth, pairs)
 
 
 def row(X, truth, method, A, runtime, **extra):

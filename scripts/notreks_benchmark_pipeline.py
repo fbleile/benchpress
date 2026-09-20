@@ -35,6 +35,8 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.syst
     hybrid_flop_notreks_candidate,
     flop_notreks_postselection_candidate,
     flop_notreks_postselection_from_candidate,
+    flop_notreks_order_postselection_candidate,
+    order_parent_postselection_from_candidate,
     metrics,
     select_knowledge,
     vanilla_flop_candidate,
@@ -45,20 +47,25 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.loca
 from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import (
     gaussian_bic,
 )
+from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.thermalgagge import (
+    ThermalConfig,
+    generate as generate_thermal,
+)
 
 
 METHODS = (
-    "flop", "flop-nt-local", "dagma", "dagma-pstrek",
-    "flop-edge-mask", "flop-nt-post", "flop-nt-global",
-    "dagma-edge-mask", "dagma-nt-post",
+    "flop", "flop-nt-standard", "flop-nt-local", "dagma", "dagma-pstrek",
+    "flop-nt-edge-mask", "flop-nt-post", "flop-nt-order-post",
+    "flop-nt-global",
+    "dagma-nt-edge-mask", "dagma-nt-post",
 )
 EXPERIMENTS = (
     "main", "integration-ablation", "imperfect-knowledge",
     "knowledge-sweep", "high-dimension", "d100-flop", "d100-flop-local",
     "d100-flop-global",
-    "exact-reference", "real-data",
+    "exact-reference", "real-data", "thermalgagge",
 )
-PRINCIPAL = ("flop", "flop-nt-local", "dagma", "dagma-pstrek")
+PRINCIPAL = ("flop", "flop-nt-standard", "dagma", "dagma-pstrek")
 
 
 def parse_range(value: str) -> list[int]:
@@ -70,6 +77,31 @@ def parse_range(value: str) -> list[int]:
     if end < start:
         raise argparse.ArgumentTypeError("seed range END must be >= START")
     return list(range(start, end + 1))
+
+
+def normalize_methods(values: list[str] | None) -> tuple[str, ...] | None:
+    if values is None:
+        return None
+    aliases = {
+        "flop_notreks": "flop-nt-standard",
+        "flop_notreks_order_postselection": "flop-nt-order-post",
+        "flop_notreks_postselection": "flop-nt-post",
+        "dagma_notreks": "dagma-pstrek",
+    }
+    return tuple(aliases.get(value, value) for value in values)
+
+
+def parse_thermal_variance_scales(value: str | None) -> dict[str, float] | None:
+    if not value:
+        return None
+    result = {}
+    for item in value.split(","):
+        name, separator, scale = item.partition("=")
+        if not separator or not name:
+            raise argparse.ArgumentTypeError(
+                "thermal variance scales must use name=value pairs")
+        result[name.strip()] = float(scale)
+    return result
 
 
 def slug(value: object) -> str:
@@ -133,7 +165,11 @@ def clique_lower_bound(d: int, pairs) -> int:
     return best
 
 
-def cells(experiment: str):
+def cells(experiment: str, *, n_override: int | None = None,
+          methods_override: tuple[str, ...] | None = None,
+          knowledge_fraction_override: float | None = None,
+          thermal_variance_scale: float = 1.0,
+          thermal_variance_scales: dict[str, float] | None = None):
     if experiment == "main":
         for d, n, degree, q in itertools.product(
                 (20, 50), (100, 500, 2000), (2, 4), (.25, 1.0)):
@@ -166,8 +202,8 @@ def cells(experiment: str):
         # FLOP-only scaling and integration ablation at d=100.  The standard
         # study deliberately excludes the expensive global search; it can be
         # requested separately with d100-flop-global.
-        methods = ("flop", "flop-edge-mask", "flop-nt-post",
-                   "flop-nt-local")
+        methods = ("flop", "flop-nt-edge-mask", "flop-nt-post",
+                   "flop-nt-standard")
         if experiment == "d100-flop-global":
             methods = methods + ("flop-nt-global",)
         for n, degree, q in itertools.product(
@@ -178,6 +214,19 @@ def cells(experiment: str):
     elif experiment in {"exact-reference", "real-data"}:
         yield {"experiment_id": experiment, "d": None, "n": None,
                "degree": None, "q": None, "c": None, "methods": ()}
+    elif experiment == "thermalgagge":
+        methods = methods_override or (
+            "flop", "flop-nt-standard", "dagma", "dagma-pstrek")
+        yield {"experiment_id": "thermalgagge",
+               "d": 11,
+               "n": 500 if n_override is None else n_override,
+               "degree": None,
+               "q": (1.0 if knowledge_fraction_override is None
+                     else knowledge_fraction_override),
+               "c": 0.0,
+               "thermal_variance_scale": thermal_variance_scale,
+               "thermal_variance_scales": thermal_variance_scales,
+               "methods": methods}
 
 
 def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
@@ -185,6 +234,10 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
     started = time.perf_counter()
     if name == "flop":
         candidate, diag = vanilla_flop_candidate(X, seed, attempts)
+    elif name == "flop-nt-standard":
+        candidate, diag = flop_notreks_candidate(
+            X, pairs, seed, attempts, flop_sweeps,
+            search_version="flop_like", local_greedy_passes=8)
     elif name == "flop-nt-local":
         candidate, diag = hybrid_flop_notreks_candidate(
             X, pairs, seed, attempts, flop_sweeps,
@@ -193,14 +246,17 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
         candidate, diag = hybrid_flop_notreks_candidate(
             X, pairs, seed, attempts, flop_sweeps,
             search_version="global_greedy_rust", local_greedy_passes=8)
-    elif name == "flop-edge-mask":
+    elif name in {"flop-edge-mask", "flop-nt-edge-mask"}:
         from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import direct_mask_edges
         candidate, diag = flop_notreks_candidate(
             X, [], seed, attempts, flop_sweeps,
             forbidden_edges=direct_mask_edges(pairs),
             search_version="local_greedy_rust", local_greedy_passes=8)
     elif name == "flop-nt-post":
-        candidate, diag = flop_notreks_postselection_candidate(
+        candidate, diag = flop_notreks_order_postselection_candidate(
+            X, pairs, seed, attempts)
+    elif name == "flop-nt-order-post":
+        candidate, diag = flop_notreks_order_postselection_candidate(
             X, pairs, seed, attempts)
     elif name == "dagma":
         candidate, diag = dagma_candidate(
@@ -210,7 +266,7 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
         candidate, diag = dagma_candidate(
             X, pairs, True, False, seed, attempts, dagma_warm_iter,
             dagma_max_iter, dagma_stages, trek_weight=trek_weight)
-    elif name == "dagma-edge-mask":
+    elif name in {"dagma-edge-mask", "dagma-nt-edge-mask"}:
         candidate, diag = dagma_candidate(
             X, pairs, False, True, seed, attempts, dagma_warm_iter,
             dagma_max_iter, dagma_stages, trek_weight=trek_weight)
@@ -260,9 +316,24 @@ def run_job(root: Path, out: Path, cell: dict, seed: int, attempts: int,
         except Exception:
             pass
 
-    X, truth, all_pairs = generate(
-        seed, d=cell["d"], n=cell["n"], graph_type=f"er{cell['degree']}",
-        scm="linear", noise="gaussian")
+    thermal_metadata = {}
+    if cell["experiment_id"] == "thermalgagge":
+        X, truth, all_pairs, thermal_metadata = generate_thermal(
+            seed, cell["n"], diagnostics=False,
+            config=ThermalConfig(parameter_variance_scale=cell.get(
+                "thermal_variance_scale", 1.0),
+                parameter_variance_scales=cell.get(
+                    "thermal_variance_scales")))
+        # Discovery always sees standardized training columns; the generator
+        # metadata and physical values remain represented in the job metadata.
+        X_mean = X.mean(axis=0)
+        X_std = X.std(axis=0)
+        X_std = np.where(X_std > 1e-12, X_std, 1.0)
+        X = (X - X_mean) / X_std
+    else:
+        X, truth, all_pairs = generate(
+            seed, d=cell["d"], n=cell["n"], graph_type=f"er{cell['degree']}",
+            scm="linear", noise="gaussian")
     clean_pairs = nested_pairs(all_pairs, q, seed)
     truth_bic = float(gaussian_bic(X, truth, lambda_bic=2.0)[0])
     try:
@@ -329,10 +400,16 @@ def run_job(root: Path, out: Path, cell: dict, seed: int, attempts: int,
         diag = {}
         try:
             cache_key = (data_id, method)
-            if method == "flop-nt-post" and solver_cache is not None \
+            if method in {"flop-nt-post", "flop-nt-order-post"} and solver_cache is not None \
                     and (data_id, "flop") in solver_cache:
-                candidate, diag, runtime = postselect_cached_flop(
-                    X, pairs, solver_cache[(data_id, "flop")])
+                base_candidate, base_diag, base_runtime = solver_cache[(data_id, "flop")]
+                started = time.perf_counter()
+                candidate, post_diag = order_parent_postselection_from_candidate(
+                    X, base_candidate, pairs)
+                runtime = time.perf_counter() - started
+                diag = {**post_diag, "candidate_graph": base_candidate.copy(),
+                        "optimizer_restarts": base_diag["optimizer_restarts"],
+                        "base_solver_runtime": base_runtime}
             elif method in {"flop", "dagma"} and solver_cache is not None \
                     and cache_key in solver_cache:
                 candidate, diag, runtime = solver_cache[cache_key]
@@ -348,7 +425,8 @@ def run_job(root: Path, out: Path, cell: dict, seed: int, attempts: int,
             row["base_solver_runtime"] = diag.get(
                 "base_solver_runtime", np.nan)
             row["postselection_runtime"] = (
-                runtime if method == "flop-nt-post" else np.nan)
+                runtime if method in {"flop-nt-post", "flop-nt-order-post"}
+                else np.nan)
         except Exception as exc:  # keep failed jobs visible and resumable
             status, error = "failed", repr(exc)
             row = {"method": method, "candidate_runtime": np.nan,
@@ -363,7 +441,10 @@ def run_job(root: Path, out: Path, cell: dict, seed: int, attempts: int,
             "instance_id": instance_id, "data_id": data_id,
             "prior_id": prior_id, "seed": seed,
             "d": cell["d"], "n": cell["n"], "er_degree": cell["degree"],
-            "scm": "linear", "noise": "gaussian",
+            "scm": ("thermal_equilibrium" if cell["experiment_id"] ==
+                    "thermalgagge" else "linear"),
+            "noise": ("persistent_structural" if cell["experiment_id"] ==
+                       "thermalgagge" else "gaussian"),
             "knowledge_fraction": q, "corruption_fraction": c,
             "true_edges": int(truth.sum()),
             "supplied_pairs": len(pairs),
@@ -389,6 +470,25 @@ def run_job(root: Path, out: Path, cell: dict, seed: int, attempts: int,
             "job_finished": datetime.now(timezone.utc).isoformat(),
             "max_feasible_corruption_fraction": max_corruption,
         })
+        if cell["experiment_id"] == "thermalgagge":
+            row.update({
+                "data_model": thermal_metadata["data_model"],
+                "discovery_score": thermal_metadata["discovery_score"],
+                "score_misspecification": thermal_metadata[
+                    "score_misspecification"],
+                "thermal_package": thermal_metadata["thermal_package"],
+                "thermal_package_version": thermal_metadata[
+                    "thermal_package_version"],
+                "thermal_variance_scale": thermal_metadata["config"][
+                    "parameter_variance_scale"],
+                "thermal_variance_scales": json.dumps(
+                    thermal_metadata["config"].get(
+                        "parameter_variance_scales")),
+                "thermal_max_equilibrium_residual": thermal_metadata[
+                    "max_equilibrium_residual"],
+                "thermal_activation_frequency": json.dumps(
+                    thermal_metadata["activation_frequency"]),
+            })
         if status == "ok":
             row["SHD_cpdag_normalized"] = row["SHD_cpdag"] / cell["d"]
             row["truth_bic"] = truth_bic
@@ -423,6 +523,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment", action="append", choices=EXPERIMENTS)
     parser.add_argument("--seed-range", type=parse_range)
+    parser.add_argument("--n", type=int, default=None,
+                        help="sample size override, used by thermalgagge")
+    parser.add_argument("--knowledge-fraction", type=float, default=None,
+                        help="eligible E/P NOTREKS fraction, used by thermalgagge")
+    parser.add_argument(
+        "--thermal-variance-scale", type=float, default=1.0,
+        help="multiplier on thermal E/P parameter spreads (thermalgagge only)")
+    parser.add_argument(
+        "--thermal-variance-scales", default=None,
+        help=("per-parameter thermal spreads, e.g. "
+              "tdb=1.5,tr=1.5,v=1.5,rh=1.5,p_atm=2,met=1.3,clo=1.3,"
+              "max_skin_blood_flow=2,max_sweating=2"))
+    parser.add_argument(
+        "--methods", nargs="+", default=None,
+        help=("method names for thermalgagge; aliases flop_notreks and "
+              "dagma_notreks are accepted"))
     parser.add_argument("--output-root", type=Path, default=Path("results/notreks_production"))
     parser.add_argument("--attempts", type=int, default=5)
     default_workers = max(1, min(2, (os.cpu_count() or 2) // 2))
@@ -458,8 +574,21 @@ def main():
     manifest["environment_hash"] = hashlib.sha256(freeze.encode()).hexdigest()
     manifest["python_executable"] = sys.executable
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    requested_methods = normalize_methods(args.methods)
     jobs = [(cell, seed) for experiment in args.experiment
-            for cell in cells(experiment) for seed in args.seed_range]
+            for cell in cells(experiment, n_override=args.n,
+                              methods_override=requested_methods,
+                              knowledge_fraction_override=(
+                                  args.knowledge_fraction if experiment ==
+                                  "thermalgagge" else None),
+                              thermal_variance_scale=(
+                                  args.thermal_variance_scale if experiment ==
+                                  "thermalgagge" else 1.0),
+                              thermal_variance_scales=(
+                                  parse_thermal_variance_scales(
+                                      args.thermal_variance_scales)
+                                  if experiment == "thermalgagge" else None))
+            for seed in args.seed_range]
     planned_rows = []
     for cell, seed in jobs:
         planned_rows.append({

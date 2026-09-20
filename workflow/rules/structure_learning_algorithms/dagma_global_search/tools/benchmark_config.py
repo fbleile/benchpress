@@ -13,10 +13,11 @@ from typing import Iterable
 
 SUPPORTED_METHODS = (
     "flop",
-    "flop_edge_mask",
+    "flop_notreks_edge_mask",
     "flop_parent_shrink",
     "flop_edge_mask_parent_shrink",
     "flop_notreks_postselection",
+    "flop_notreks_order_postselection",
     "flop_notreks",
     "flop_notreks_local",
     "flop_notreks_active_exact",
@@ -31,7 +32,6 @@ SUPPORTED_METHODS = (
     "flop_notreks_adaptive_soft_completion",
     "flop_notreks_source_signature",
     "flop_notreks_random_order",
-    "flop_notreks_warm",
     "dagma",
     "dagma_edge_mask",
     "dagma_postselection",
@@ -50,6 +50,23 @@ SUPPORTED_METHODS = (
     "dagma_notreks_proximal_normalized_projection_shrink",
     "dagma_best_projected_checkpoint",
     "dagma_notreks_best_projected_checkpoint",
+    "dagma_stable",
+    "dagma_notreks_stable",
+    "dagma_notreks_normalized",
+    "dagma_threshold_bic_search",
+    "dagma_coeff_old",
+    "dagma_coeff_calibrated",
+    "dagma_coeff_learned",
+    "dagma_coeff_density_adaptive",
+    "dagma_coeff_density_continuous",
+    "dagma_notreks_coeff_old",
+    "dagma_notreks_coeff_calibrated",
+    "dagma_notreks_coeff_learned",
+    "dagma_notreks_coeff_density_adaptive",
+    "dagma_notreks_s2_over_i",
+    "dagma_notreks_s2_over_i_calibrated",
+    "var_sortnregress",
+    "r2_sortnregress",
 )
 
 DEFAULT_METHODS = (
@@ -67,7 +84,7 @@ class BenchmarkConfig:
     graph_type: str = "er2"
     scm: str = "linear"
     noise: str = "gaussian"
-    equal_variance: bool = True
+    equal_variance: bool = False
     knowledge_fraction: float = 0.25
     corrupted_knowledge_fraction: float = 0.0
     attempts: int = 5
@@ -88,9 +105,10 @@ class BenchmarkConfig:
     dagma_trek_weight: float = 1.0
     dagma_initialization_mode: str = "empty_random"
     dagma_initialization_edge_probability: float = 0.15
+    dagma_map_tau: float = 1.0
     dagma_record_trajectory: bool = False
-    dagma_mu_schedule: tuple[float, ...] | None = None
-    dagma_s_schedule: tuple[float, ...] | None = None
+    dagma_mu_schedule: tuple[float, ...] | None = (1.0, 0.3, 0.1, 0.01, 0.001)
+    dagma_s_schedule: tuple[float, ...] | None = (1.1, 1.0, 0.9, 0.8, 0.7)
 
     @property
     def effective_n(self) -> int:
@@ -107,9 +125,6 @@ class BenchmarkConfig:
             raise ValueError(
                 "the production benchmark currently supports only "
                 "linear equal-variance Gaussian SCMs")
-        if not self.equal_variance:
-            raise ValueError(
-                "the production benchmark currently requires equal variance")
         if not 0.0 <= self.knowledge_fraction <= 1.0:
             raise ValueError("knowledge_fraction must lie in [0, 1]")
         if not 0.0 <= self.corrupted_knowledge_fraction <= 1.0:
@@ -149,6 +164,3 @@ class BenchmarkConfig:
             "local_greedy_rust",
         }:
             raise ValueError("unsupported FLOP search version")
-        if "flop_notreks_warm" in methods and self.attempts < 2:
-            raise ValueError(
-                "flop_notreks_warm needs at least two total attempts")

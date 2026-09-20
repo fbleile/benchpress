@@ -49,7 +49,7 @@ pairs = subsample_no_trek_pairs(
     float(value("knowledge_fraction", 1.0)),
     int(value("knowledge_seed", 0)) + int(value("seed", 0)),
 )
-trek_weight_requested = float(value("trek_weight", 1.0))
+trek_weight_requested = float(value("trek_weight", 200.0))
 trek_pair_scaling = str(value("trek_pair_scaling", "sqrt_pairs"))
 if trek_pair_scaling == "sqrt_pairs":
     trek_weight_effective = trek_weight_requested / np.sqrt(max(len(pairs), 1))
@@ -79,7 +79,7 @@ fit_args = dict(
     lambda1=lambda1, w_threshold=threshold,
     T=int(value("T", 5)), mu_init=float(value("mu_init", 1.0)),
     mu_factor=float(value("mu_factor", .1)),
-    s=[float(x) for x in str(value("s", "1.0,0.9,0.8,0.7,0.6")).split(",")],
+    s=[float(x) for x in str(value("s", "1.1,1.0,0.9,0.8,0.7")).split(",")],
     warm_iter=int(value("warm_iter", 30000)), max_iter=int(value("max_iter", 60000)),
     lr=float(value("lr", .0003)), checkpoint=int(value("checkpoint", 1000)),
     beta_1=float(value("beta_1", .99)), beta_2=float(value("beta_2", .999)),
@@ -102,7 +102,7 @@ fit_args = dict(
     trek_log_terms=int(value("trek_log_terms", 2 * len(df.columns))),
     trek_inverse_epsilon=float(value("trek_inverse_epsilon", 0.0)),
 )
-model = SharedDagmaLinear(str(value("loss_type", "l2")))
+model = SharedDagmaLinear(str(value("loss_type", "gaussian_profile")))
 start = time.perf_counter()
 W = model.fit(df.to_numpy(dtype=float, copy=True), **fit_args)
 elapsed = time.perf_counter() - start

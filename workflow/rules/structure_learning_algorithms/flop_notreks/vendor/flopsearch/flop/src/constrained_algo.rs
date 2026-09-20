@@ -68,6 +68,9 @@ pub enum NoTreksVersion {
     PrefixFeasible,
     /// Static closed-neighborhood dominance superstructure.
     TrekDominance,
+    /// Ordinary FLOP followed by constrained continuation from the same
+    /// order and parent-score state.
+    WarmContinuation,
 }
 
 impl NoTreksVersion {
@@ -88,6 +91,7 @@ impl NoTreksVersion {
             Self::TrekCut => "trekcut",
             Self::PrefixFeasible => "prefix_feasible",
             Self::TrekDominance => "trek_dominance",
+            Self::WarmContinuation => "warm_continuation",
         }
     }
 }
@@ -2651,6 +2655,116 @@ fn run_order_guided_local_impl(
     Ok(NoTreksResult { dag: selected.1, diagnostics })
 }
 
+/// Run ordinary FLOP to a local optimum, then continue the same state with
+/// hard NOTREKS constraints.  The GlobalScore (including its local scores and
+/// Cholesky-backed score state) and order are deliberately reused between the
+/// two phases; only the constraint view changes.
+fn delete_until_feasible(
+    mut graph: GlobalScore,
+    pairs: &[(usize, usize)],
+    score: &Bic,
+) -> Result<GlobalScore, FlopError> {
+    loop {
+        let current = count_no_trek_violations(
+            &Dag::from_global_score(&graph), pairs);
+        if current == 0 {
+            return Ok(graph);
+        }
+
+        let mut best: Option<((usize, f64, usize, usize), GlobalScore)> = None;
+        for child in 0..graph.p {
+            for &parent in &graph.local_scores[child].parents {
+                let mut candidate = graph.clone();
+                candidate.local_scores[child] = score
+                    .local_score_minus(child, &graph.local_scores[child], parent)?;
+                let remaining = count_no_trek_violations(
+                    &Dag::from_global_score(&candidate), pairs);
+                let score_increase = candidate.score() - graph.score();
+                let key = (remaining, score_increase, parent, child);
+                if best.as_ref().is_none_or(|(old_key, _)| key < *old_key) {
+                    best = Some((key, candidate));
+                }
+            }
+        }
+        graph = best.ok_or_else(|| {
+            FlopError::ConstraintError(
+                "warm continuation could not remove an existing edge".into(),
+            )
+        })?.1;
+    }
+}
+
+fn run_warm_continuation_impl(
+    data: &DMatrix<f64>,
+    pairs: &[(usize, usize)],
+    config: &FlopNoTreksConfig,
+) -> Result<NoTreksResult, FlopError> {
+    let p = data.ncols();
+    let canonical_pairs = canonical_pair_list(p, pairs)?;
+    let seed = config.seed.unwrap_or(0);
+    let mut rng = StdRng::seed_from_u64(seed);
+    let corr = crate::utils::corr_matrix(data);
+    let (_, initial_order) = pivoted_cholesky::cholesky_left_min_diag(&corr)
+        .ok_or_else(|| FlopError::InitialOrderError("Cholesky decomposition failed".into()))?;
+    let score = Bic::from_cov(data.nrows(), corr, config.lambda);
+    let constraints = NoTrekConstraints::new_with_forbidden(
+        p, &canonical_pairs, &config.forbidden_edges)
+        .map_err(FlopError::ConstraintError)?;
+    let total = config.restarts.unwrap_or(usize::MAX - 1) + 1;
+    let perturbations = (p as f64).ln().round() as usize;
+    let mut best: Option<(f64, Dag)> = None;
+    let mut restart_bics = Vec::new();
+    let mut completed = 0;
+    for restart in 0..total {
+        let mut order = initial_order.clone();
+        if restart > 0 || config.random_initial_order {
+            for _ in 0..perturbations.max(1) {
+                let a = rng.gen_range(0..p);
+                let b = rng.gen_range(0..p);
+                order.swap(a, b);
+            }
+        }
+        let mut graph = perm_to_dag_constrained(&order, &score, &mut rng, None)?;
+        ordinary_reinsertion_search(&mut order, &mut graph, &score, &mut rng)?;
+        // The unconstrained phase may already contain forbidden treks.  Delete
+        // only the offending parents before continuing, retaining the order
+        // and the existing local-score/Cholesky state for every other target.
+        graph = delete_until_feasible(graph, &canonical_pairs, &score)?;
+        let _ = ordinary_reinsertion_search_constrained(
+            &mut order, &mut graph, &score, &mut rng, Some(&constraints))?;
+        let dag = Dag::from_global_score(&graph);
+        let bic = graph.score();
+        restart_bics.push(bic);
+        completed += 1;
+        if best.as_ref().is_none_or(|(value, _)| bic < *value - EPS) {
+            best = Some((bic, dag));
+        }
+    }
+    let (final_bic, dag) = best.ok_or_else(|| {
+        FlopError::ConstraintError("warm continuation produced no graph".into())
+    })?;
+    let violations = count_no_trek_violations(&dag, &canonical_pairs);
+    if violations != 0 {
+        return Err(FlopError::ConstraintError(format!(
+            "warm continuation returned {violations} no-trek violations"
+        )));
+    }
+    let diagnostics = NoTreksDiagnostics {
+        restarts_requested: total,
+        restarts_completed: completed,
+        number_of_supplied_constraints: canonical_pairs.len(),
+        final_bic,
+        selected_dag_edge_count: dag.parents.iter().map(Vec::len).sum(),
+        final_no_trek_violation_count: violations,
+        algorithm_seed: seed,
+        search_version: NoTreksVersion::WarmContinuation.stable_name().into(),
+        termination_reason: "warm_continuation_restart_limit".into(),
+        restart_bics,
+        ..Default::default()
+    };
+    Ok(NoTreksResult { dag, diagnostics })
+}
+
 pub fn run_notreks(
     data: &DMatrix<f64>,
     pairs: &[(usize, usize)],
@@ -2667,6 +2781,9 @@ pub fn run_notreks(
     }
     if config.search_version == NoTreksVersion::TrekDominance {
         return run_trek_dominance(data, pairs, &config);
+    }
+    if config.search_version == NoTreksVersion::WarmContinuation {
+        return run_warm_continuation_impl(data, pairs, &config);
     }
     if config.search_version == NoTreksVersion::LocalGreedyActiveReinsert {
         return run_active_reinsert_rust_impl(data, pairs, &config);
@@ -3017,6 +3134,17 @@ mod tests {
             result.diagnostics.search_version,
             "alternating_full_refit_b"
         );
+    }
+
+    #[test]
+    fn warm_continuation_reuses_two_phase_search_and_is_feasible() {
+        let mut warm = config(17);
+        warm.search_version = NoTreksVersion::WarmContinuation;
+        let result = run_notreks(&data(), &[(0, 1)], warm).unwrap();
+        assert_eq!(result.diagnostics.search_version, "warm_continuation");
+        assert_eq!(result.diagnostics.final_no_trek_violation_count, 0);
+        assert_eq!(count_no_trek_violations(&result.dag, &[(0, 1)]), 0);
+        assert_eq!(result.diagnostics.restarts_completed, 1);
     }
 
     #[test]

@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # Direct ``python scripts/notreks_benchmark.py``.
 
 METHOD_IDS = ("flop", "flop_notreks", "dagma", "dagma_notreks")
 DAGMA_DEFAULTS = {
-    "loss_type": "l2", "lambda1": 0.03, "w_threshold": 0.3,
+    "loss_type": "gaussian_profile", "lambda1": 0.03, "w_threshold": 0.3,
     "T": 5, "mu_init": 1.0, "mu_factor": 0.1,
     "s": "1.0,0.9,0.8,0.7,0.6", "warm_iter": 30000,
     "max_iter": 60000, "lr": 0.0003, "checkpoint": 1000,

@@ -21,12 +21,112 @@ from .structural import feasibility_thresholds, support_diagnostics
 Pair = tuple[int, int]
 
 
-def soft_threshold(values: np.ndarray, threshold: float) -> np.ndarray:
+def soft_threshold(values: np.ndarray, threshold: float | np.ndarray) -> np.ndarray:
     """Elementwise proximal map for ``threshold * ||W||_1``."""
-    if threshold < 0 or not np.isfinite(threshold):
+    threshold = np.asarray(threshold, dtype=float)
+    if np.any(threshold < 0) or not np.all(np.isfinite(threshold)):
         raise ValueError("soft-threshold must be finite and non-negative")
     values = np.asarray(values)
     return np.sign(values) * np.maximum(np.abs(values) - threshold, 0.0)
+
+
+def make_dagma_adjacency(W: np.ndarray, map_name: str, s_floor: float,
+                         tau: float = 1.0) -> np.ndarray:
+    """Construct one explicit nonnegative DAGMA adjacency proxy."""
+    W = np.asarray(W, dtype=float)
+    if W.ndim != 2 or W.shape[0] != W.shape[1]:
+        raise ValueError("W must be square")
+    if not np.isfinite(s_floor) or s_floor <= 0:
+        raise ValueError("s_floor must be finite and positive")
+    if not np.isfinite(tau) or tau <= 0:
+        raise ValueError("tau must be finite and positive")
+    B = np.abs(W).copy()
+    np.fill_diagonal(B, 0.0)
+    if map_name == "square":
+        A = B * B
+    elif map_name == "abs":
+        A = B
+    elif map_name == "pseudo_huber":
+        A = 2.0 * tau**2 * (np.sqrt(1.0 + (W / tau)**2) - 1.0)
+    elif map_name == "entrywise_capped_square":
+        c = s_floor / max(W.shape[0] - 1, 1)
+        A = c * (B * B) / (c + B * B)
+    elif map_name == "row_capped_square":
+        B = B * B
+        row_mass = B.sum(axis=1)
+        q = (1.0 + 4.0 * row_mass / s_floor)**0.25
+        alpha = 4.0 / (q * (q**3 + q**2 + q + 1.0))
+        A = alpha[:, None] * B
+    elif map_name in {"row_capped_abs", "stable_abs_row"}:
+        row_mass = B.sum(axis=1)
+        q = np.sqrt(1.0 + 2.0 * row_mass / s_floor)
+        alpha = 2.0 / (q * (q + 1.0))
+        A = alpha[:, None] * B
+    else:
+        raise ValueError(f"unknown DAGMA adjacency map: {map_name}")
+    np.fill_diagonal(A, 0.0)
+    return A
+
+
+def stable_abs_row_adjacency(W: np.ndarray, s_star: float) -> np.ndarray:
+    """Backward-compatible name for the row-capped absolute map."""
+    return make_dagma_adjacency(W, "row_capped_abs", s_star)
+
+
+def dagma_adjacency_pullback(W: np.ndarray, grad_A: np.ndarray,
+                             map_name: str, s_floor: float,
+                             tau: float = 1.0) -> np.ndarray:
+    """Pull a gradient through :func:`stable_abs_row_adjacency`.
+
+    At zero, ``sign(0)=0`` is the standard deterministic subgradient used by
+    the NumPy optimizer.  The diagonal is structurally fixed to zero.
+    """
+    W = np.asarray(W, dtype=float)
+    grad_A = np.asarray(grad_A, dtype=float)
+    B = np.abs(W).copy()
+    np.fill_diagonal(B, 0.0)
+    if map_name == "square":
+        result = grad_A * (2.0 * W)
+    elif map_name == "abs":
+        result = grad_A * np.sign(W)
+    elif map_name == "pseudo_huber":
+        result = grad_A * (2.0 * W / np.sqrt(1.0 + (W / tau)**2))
+    elif map_name == "entrywise_capped_square":
+        c = s_floor / max(W.shape[0] - 1, 1)
+        result = grad_A * (2.0 * c**2 * W / (c + B * B)**2)
+    else:
+        row_mass = (B * B).sum(axis=1) if map_name == "row_capped_square" else B.sum(axis=1)
+        if map_name == "row_capped_square":
+            q = (1.0 + 4.0 * row_mass / s_floor)**0.25
+            denominator = q * (q**3 + q**2 + q + 1.0)
+            alpha = 4.0 / denominator
+            derivative_denominator = 4*q**3 + 3*q**2 + 2*q + 1
+            alpha_prime = -4.0 * derivative_denominator / (
+                s_floor * q**3 * denominator**2)
+            row_term = np.sum(grad_A * (B * B), axis=1)
+            grad_B = alpha[:, None] * grad_A + (
+                alpha_prime * row_term)[:, None]
+            result = grad_B * (2.0 * W)
+        elif map_name in {"row_capped_abs", "stable_abs_row"}:
+            q = np.sqrt(1.0 + 2.0 * row_mass / s_floor)
+            alpha = 2.0 / (q * (q + 1.0))
+            alpha_prime = -2.0 * (2.0 * q + 1.0) / (
+                s_floor * q**3 * (q + 1.0)**2)
+            row_term = np.sum(grad_A * B, axis=1)
+            grad_B = alpha[:, None] * grad_A + (
+                alpha_prime * row_term)[:, None]
+            result = grad_B * np.sign(W)
+        else:
+            raise ValueError(f"unknown DAGMA adjacency map: {map_name}")
+    np.fill_diagonal(result, 0.0)
+    return result
+
+
+def stable_abs_row_pullback(W: np.ndarray, grad_A: np.ndarray,
+                            s_star: float) -> np.ndarray:
+    """Backward-compatible pullback for the row-capped absolute map."""
+    return dagma_adjacency_pullback(
+        W, grad_A, "row_capped_abs", s_star)
 
 
 def _validate_pairs(pairs: Sequence[Pair], d: int) -> np.ndarray:
@@ -197,6 +297,19 @@ class SharedDagmaLinear(DagmaLinear):
         return value, gradient
 
     def _h(self, W, s=1.0):
+        if getattr(self, "adjacency_map", "square") != "square":
+            A = make_dagma_adjacency(
+                W, self.adjacency_map, self.stable_s_star,
+                self.adjacency_map_tau)
+            M = s * self.Id - A
+            sign, logdet = np.linalg.slogdet(M)
+            if sign <= 0 or not np.isfinite(logdet):
+                raise np.linalg.LinAlgError("stable adjacency left logdet domain")
+            inverse = sla.inv(M)
+            h = -float(logdet) + self.d * np.log(s)
+            return h, dagma_adjacency_pullback(
+                W, inverse.T, self.adjacency_map, self.stable_s_star,
+                self.adjacency_map_tau)
         if getattr(self, "dag_constraint", "logdet") == "inverse_trace":
             result = self._inverse_structural_kernel.evaluate(W)
             return result.inverse_dag_value, result.inverse_dag_gradient
@@ -209,6 +322,11 @@ class SharedDagmaLinear(DagmaLinear):
         return float(h), np.zeros_like(W)
 
     def minimize(self, W, mu, max_iter, s, lr, tol=1e-6, beta_1=.99, beta_2=.999, pbar=None):
+        self.adjacency_map = getattr(self, "adjacency_map", "square")
+        self.adjacency_map_tau = getattr(self, "adjacency_map_tau", 1.0)
+        self.stable_s_star = getattr(self, "stable_s_star", float(s))
+        self.diagnostic_edge_threshold = getattr(
+            self, "diagnostic_edge_threshold", 0.0)
         stage_started = time.perf_counter()
         failures_before = self._trek_kernel.solve_failures
         profile = getattr(self, "profile_components", False)
@@ -248,11 +366,20 @@ class SharedDagmaLinear(DagmaLinear):
             mask_exc[self.exc_r, self.exc_c] = 0.
         mask_inc = np.zeros((self.d, self.d))
         if self.inc_c is not None:
-            mask_inc[self.inc_r, self.inc_c] = -2 * mu * self.lambda1
+            mask_inc[self.inc_r, self.inc_c] = -2 * mu * self.lambda1_matrix[
+                self.inc_r, self.inc_c]
         grad = np.zeros_like(W)
         stopped_by_tolerance = False
         zero_stage = bool(mu == 0.0 and getattr(
             self, "terminal_zero_stage", False))
+        stage_trek_weight = self.trek_weight
+        kernel_penalty_scale = 1.0
+        if getattr(self, "notreks_stage_scaling", "none") == "s2_over_pairs":
+            stage_trek_weight *= s * s / max(1, len(self.no_trek_pairs))
+        elif getattr(self, "notreks_stage_scaling", "none") == "s2_over_d_minus_1":
+            # The kernel already contributes 2/(d-1).  Its internal pair-sum
+            # normalization is multiplied by s^2/2, giving s^2/(d-1).
+            kernel_penalty_scale = s * s / 2.0
         termination_reason = "maximum iterations"
         iteration = 0
         shared_resolvent_iterations = 0
@@ -271,7 +398,14 @@ class SharedDagmaLinear(DagmaLinear):
                 M = np.zeros_like(W)
             elif self.dag_penalty_weight:
                 started = time.perf_counter()
-                M = sla.inv(s * self.Id - W * W) + 1e-16
+                if self.adjacency_map != "square":
+                    mapped_A = make_dagma_adjacency(
+                        W, self.adjacency_map, self.stable_s_star,
+                        self.adjacency_map_tau)
+                    M = sla.inv(s * self.Id - mapped_A) + 1e-16
+                else:
+                    mapped_A = W * W
+                    M = sla.inv(s * self.Id - mapped_A) + 1e-16
                 if profile:
                     component_times["dagma_h_gradient_seconds"] += time.perf_counter() - started
                 while np.any(M < 0):
@@ -282,7 +416,12 @@ class SharedDagmaLinear(DagmaLinear):
                     if lr <= 1e-16:
                         return W, True
                     W -= lr * grad
-                    M = sla.inv(s * self.Id - W * W) + 1e-16
+                    current_A = (make_dagma_adjacency(
+                        W, self.adjacency_map, self.stable_s_star,
+                        self.adjacency_map_tau)
+                        if self.adjacency_map != "square"
+                        else W * W)
+                    M = sla.inv(s * self.Id - current_A) + 1e-16
             else:
                 # h_s and its M-matrix domain are absent from this ablation.
                 M = np.zeros_like(W)
@@ -307,7 +446,22 @@ class SharedDagmaLinear(DagmaLinear):
                     and hasattr(self._trek_kernel, "value_grad_from_resolvent")
                 )
                 if can_share:
-                    _, G_nt = self._trek_kernel.value_grad_from_resolvent(W, M)
+                    if (self.adjacency_map != "square"
+                            or self.notreks_resolvent_normalization):
+                        nt_A = mapped_A
+                        nt_R = s * M
+                        _, grad_A = self._trek_kernel.value_grad_from_resolvent_adjacency(
+                            nt_A, nt_R, resolvent_scale=s,
+                            penalty_scale=kernel_penalty_scale)
+                        G_nt = (dagma_adjacency_pullback(
+                            W, grad_A, self.adjacency_map,
+                            self.stable_s_star, self.adjacency_map_tau)
+                            if self.adjacency_map != "square"
+                            else 2.0 * W * grad_A)
+                    else:
+                        _, grad_A = self._trek_kernel.value_grad_from_resolvent_adjacency(
+                            mapped_A, M, penalty_scale=kernel_penalty_scale)
+                        G_nt = 2.0 * W * grad_A
                     shared_resolvent_iterations += 1
                 else:
                     _, G_nt = self._trek_kernel.value_grad(
@@ -318,16 +472,22 @@ class SharedDagmaLinear(DagmaLinear):
                 if profile:
                     component_times["notreks_value_gradient_seconds"] += time.perf_counter() - started
             if self.dag_constraint != "inverse_trace":
-                G_h = self.dag_penalty_weight * 2 * W * M.T
-            G_structural = G_h + self.trek_weight * G_nt
+                grad_A = M.T
+                G_h = self.dag_penalty_weight * (
+                    dagma_adjacency_pullback(
+                        W, grad_A, self.adjacency_map, self.stable_s_star,
+                        self.adjacency_map_tau)
+                    if self.adjacency_map != "square"
+                    else 2.0 * W * grad_A)
+            G_structural = G_h + stage_trek_weight * G_nt
             started = time.perf_counter()
             if getattr(self, "proximal_l1", False):
                 # The proximal variant takes a gradient step on the smooth
                 # part and applies the L1 proximal map separately.
                 G_smooth = (G_score + G_h + mask_inc * np.sign(W)
-                            + self.trek_weight * G_nt)
+                            + stage_trek_weight * G_nt)
                 step_lr = lr
-                threshold = step_lr * mu * self.lambda1
+                threshold = step_lr * mu * self.lambda1_matrix
                 while True:
                     proposal = soft_threshold(
                         W - step_lr * G_smooth, threshold) * mask_exc
@@ -335,8 +495,13 @@ class SharedDagmaLinear(DagmaLinear):
                         inside, _ = self._inverse_structural_kernel.in_domain(
                             proposal)
                     elif self.dag_penalty_weight:
+                        proposal_A = (make_dagma_adjacency(
+                            proposal, self.adjacency_map, self.stable_s_star,
+                            self.adjacency_map_tau)
+                            if self.adjacency_map != "square"
+                            else proposal * proposal)
                         proposal_M = sla.inv(
-                            s * self.Id - proposal * proposal) + 1e-16
+                            s * self.Id - proposal_A) + 1e-16
                         inside = bool(np.all(np.isfinite(proposal_M))
                                      and np.all(proposal_M >= 0))
                     else:
@@ -348,15 +513,15 @@ class SharedDagmaLinear(DagmaLinear):
                     self.domain_rejections += 1
                     self.backtracking_steps += 1
                     step_lr *= .5
-                    threshold = step_lr * mu * self.lambda1
+                    threshold = step_lr * mu * self.lambda1_matrix
                     if step_lr <= 1e-16:
                         return W, False
             else:
                 # Preserve the original Adam expression and evaluation order
                 # for the existing DAGMA methods.
-                G_l1 = mu * self.lambda1 * np.sign(W)
+                G_l1 = mu * self.lambda1_matrix * np.sign(W)
                 Gobj = (G_score + G_l1 + G_h
-                        + mask_inc * np.sign(W) + self.trek_weight * G_nt)
+                        + mask_inc * np.sign(W) + stage_trek_weight * G_nt)
                 grad = self._adam_update(Gobj, iteration, beta_1, beta_2)
                 if self.dag_constraint == "inverse_trace":
                     step_lr = lr
@@ -398,17 +563,34 @@ class SharedDagmaLinear(DagmaLinear):
                     nt = checkpoint_inverse.notreks_value
                 else:
                     h = self._h(W, s)[0] if self.dag_penalty_weight else 0.0
-                    nt, _ = self._trek_kernel.value_grad(
-                        W, self.trek_function,
-                        log_terms=self.trek_log_terms,
-                        inverse_epsilon=self.trek_inverse_epsilon,
-                    )
+                    if self.trek_function == "inv":
+                        stage_A = make_dagma_adjacency(
+                            W, self.adjacency_map, self.stable_s_star,
+                            self.adjacency_map_tau) if (
+                                self.adjacency_map != "square") else W * W
+                        stage_M = sla.inv(s * self.Id - stage_A)
+                        if (self.adjacency_map != "square"
+                                or self.notreks_resolvent_normalization):
+                            nt, _ = self._trek_kernel.value_grad_from_resolvent_adjacency(
+                                stage_A, s * stage_M, resolvent_scale=s,
+                                penalty_scale=kernel_penalty_scale)
+                        else:
+                            nt, _ = self._trek_kernel.value_grad_from_resolvent_adjacency(
+                                stage_A, stage_M, resolvent_scale=1.0,
+                                penalty_scale=kernel_penalty_scale)
+                    else:
+                        nt, _ = self._trek_kernel.value_grad(
+                            W, self.trek_function,
+                            log_terms=self.trek_log_terms,
+                            inverse_epsilon=self.trek_inverse_epsilon,
+                        )
                 structural_weight = (
                     self.gamma_inv if self.dag_constraint == "inverse_trace"
                     else self.dag_penalty_weight)
-                obj_new = (mu * (score + self.lambda1 * np.abs(W).sum())
+                obj_new = (mu * (score + float(np.sum(
+                    self.lambda1_matrix * np.abs(W))))
                            + structural_weight * h
-                           + self.trek_weight * nt)
+                           + stage_trek_weight * nt)
                 if profile:
                     component_times["diagnostics_logging_seconds"] += time.perf_counter() - started
                 if zero_stage:
@@ -432,7 +614,7 @@ class SharedDagmaLinear(DagmaLinear):
                         "notreks_value": float(nt),
                         "h_gradient_norm": float(np.linalg.norm(G_h)),
                         "notreks_gradient_norm": float(np.linalg.norm(
-                            self.trek_weight * G_nt)),
+                            stage_trek_weight * G_nt)),
                         "structural_gradient_norm": structural_gradient_norm,
                         "data_score": float(score),
                         "l1_norm": float(np.abs(W).sum()),
@@ -489,16 +671,50 @@ class SharedDagmaLinear(DagmaLinear):
             minimum_inverse_entry = final_inverse.minimum_inverse_entry
         else:
             h, h_gradient = self._h(W, s)
-            nt, nt_gradient = self._trek_kernel.value_grad(
-                W, self.trek_function,
-                log_terms=self.trek_log_terms,
-                inverse_epsilon=self.trek_inverse_epsilon,
-            )
+            if self.trek_function == "inv":
+                final_A = make_dagma_adjacency(
+                    W, self.adjacency_map, self.stable_s_star,
+                    self.adjacency_map_tau) if (
+                        self.adjacency_map != "square") else W * W
+                final_M = sla.inv(s * self.Id - final_A)
+                if (self.adjacency_map != "square"
+                        or self.notreks_resolvent_normalization):
+                    nt, grad_A = self._trek_kernel.value_grad_from_resolvent_adjacency(
+                        final_A, s * final_M, resolvent_scale=s,
+                        penalty_scale=kernel_penalty_scale)
+                else:
+                    nt, grad_A = self._trek_kernel.value_grad_from_resolvent_adjacency(
+                        final_A, final_M, resolvent_scale=1.0,
+                        penalty_scale=kernel_penalty_scale)
+                nt_gradient = (dagma_adjacency_pullback(
+                    W, grad_A, self.adjacency_map, self.stable_s_star,
+                    self.adjacency_map_tau)
+                    if self.adjacency_map != "square"
+                    else 2.0 * W * grad_A)
+            else:
+                nt, nt_gradient = self._trek_kernel.value_grad(
+                    W, self.trek_function,
+                    log_terms=self.trek_log_terms,
+                    inverse_epsilon=self.trek_inverse_epsilon,
+                )
             condition_number = self._trek_kernel.maximum_condition_number
-            spectral_radius = exact_spectral_radius(W * W)
+            spectral_radius = exact_spectral_radius(
+                make_dagma_adjacency(
+                    W, self.adjacency_map, self.stable_s_star,
+                    self.adjacency_map_tau)
+                if self.adjacency_map != "square" else W * W)
             minimum_inverse_entry = np.nan
         absolute = np.abs(W)
         nonzero = absolute[absolute > 0]
+        mapped_final = make_dagma_adjacency(
+            W, self.adjacency_map, self.stable_s_star,
+            self.adjacency_map_tau)
+        raw_offdiag = absolute[~np.eye(self.d, dtype=bool)]
+        mapped_rho = exact_spectral_radius(mapped_final)
+        score_grad_norm = float(np.linalg.norm(mu * self._score(W)[1]))
+        h_grad_norm = float(np.linalg.norm(h_gradient)) if (
+            self.gamma_inv if self.dag_constraint == "inverse_trace"
+            else self.dag_penalty_weight) else 0.0
         self.stage_diagnostics.append({
             "stage": len(self.stage_diagnostics) + 1,
             "mu": float(mu), "s": float(s),
@@ -539,28 +755,43 @@ class SharedDagmaLinear(DagmaLinear):
                 self._inverse_structural_kernel.calls
                 - inverse_counters_before["calls"]),
             "termination_reason": termination_reason,
-            "score_gradient_contribution_norm": float(
-                np.linalg.norm(mu * self._score(W)[1])),
+            "score_gradient_contribution_norm": score_grad_norm,
             "l1_gradient_contribution_norm": float(
-                np.linalg.norm(mu * self.lambda1 * np.sign(W))),
-            "h_gradient_norm": float(np.linalg.norm(
-                h_gradient)) if (
-                    self.gamma_inv if self.dag_constraint == "inverse_trace"
-                    else self.dag_penalty_weight) else 0.0,
+                np.linalg.norm(mu * self.lambda1_matrix * np.sign(W))),
+            "h_gradient_norm": h_grad_norm,
+            "dagma_gradient_to_score_gradient_ratio": float(
+                h_grad_norm / max(score_grad_norm, 1e-300)),
             "notreks_gradient_norm": float(np.linalg.norm(
-                self.trek_weight * nt_gradient)),
+                stage_trek_weight * nt_gradient)),
             **component_times,
             "score": float(score),
             "data_fit_term": float(score),
-            "sparsity_term": float(mu * self.lambda1 * np.abs(W).sum()),
+            "sparsity_term": float(mu * np.sum(
+                self.lambda1_matrix * np.abs(W))),
             "l1_norm": float(np.abs(W).sum()),
             "dense_active_edge_count": int(np.count_nonzero(W)),
             "h": float(h),
             "raw_notreks_value": float(nt / (2.0 / (W.shape[0] - 1)))
                 if W.shape[0] > 1 else 0.0,
-            "scaled_notreks_contribution": float(self.trek_weight * nt),
+            "scaled_notreks_contribution": float(stage_trek_weight * nt),
+            "notreks_stage_scaling": getattr(
+                self, "notreks_stage_scaling", "none"),
+            "stage_trek_weight": float(stage_trek_weight),
+            "notreks_kernel_penalty_scale": float(kernel_penalty_scale),
             "maximum_absolute_weight": float(absolute.max(initial=0.0)),
             "median_nonzero_absolute_weight": float(np.median(nonzero)) if nonzero.size else 0.0,
+            "adjacency_map": self.adjacency_map,
+            "adjacency_map_tau": float(self.adjacency_map_tau),
+            "raw_active_edges": int(np.count_nonzero(raw_offdiag > 1e-8)),
+            "raw_threshold_edges": int(
+                np.count_nonzero(raw_offdiag >= self.diagnostic_edge_threshold)),
+            "mapped_threshold_edges": int(
+                np.count_nonzero(mapped_final[~np.eye(self.d, dtype=bool)]
+                                 >= self.diagnostic_edge_threshold)),
+            "mapped_max_entry": float(mapped_final.max(initial=0.0)),
+            "mapped_row_sum_max": float(mapped_final.sum(axis=1).max(initial=0.0)),
+            "mapped_spectral_radius": float(mapped_rho),
+            "mapped_domain_margin": float(self.stable_s_star - mapped_rho),
             **{f"number_weights_above_{threshold}": int(np.sum(absolute >= threshold))
                for threshold in (0.05, 0.1, 0.2, 0.3)},
         })
@@ -576,8 +807,31 @@ class SharedDagmaLinear(DagmaLinear):
             zero_block_iterations=10000, maximum_zero_iterations=300000,
             h_tolerance=1e-12, notreks_tolerance=1e-12,
             feasibility_threshold_tolerance=1e-6, edge_mask=None,
-            gradient_tolerance=1e-8, proximal_l1=False, **kwargs):
+            gradient_tolerance=1e-8, proximal_l1=False,
+            adjacency_map="square", adjacency_map_tau=1.0,
+            notreks_resolvent_normalization=False,
+            notreks_stage_scaling="none",
+            diagnostic_edge_threshold=None,
+            **kwargs):
         self.proximal_l1 = bool(proximal_l1)
+        self.diagnostic_edge_threshold = float(
+            0.0 if diagnostic_edge_threshold is None
+            else diagnostic_edge_threshold)
+        valid_maps = {"square", "abs", "pseudo_huber",
+                      "entrywise_capped_square", "row_capped_square",
+                      "row_capped_abs", "stable_abs_row"}
+        if adjacency_map not in valid_maps:
+            raise ValueError(f"adjacency_map must be one of {sorted(valid_maps)}")
+        self.adjacency_map = str(adjacency_map)
+        if not np.isfinite(adjacency_map_tau) or adjacency_map_tau <= 0:
+            raise ValueError("adjacency_map_tau must be finite and positive")
+        self.adjacency_map_tau = float(adjacency_map_tau)
+        self.notreks_resolvent_normalization = bool(
+            notreks_resolvent_normalization)
+        if notreks_stage_scaling not in {
+                "none", "s2_over_pairs", "s2_over_d_minus_1"}:
+            raise ValueError("unsupported NOTREKS stage scaling")
+        self.notreks_stage_scaling = str(notreks_stage_scaling)
         self.no_trek_pairs = _validate_pairs(no_trek_pairs, np.asarray(X).shape[1])
         d = np.asarray(X).shape[1]
         if edge_mask is None:
@@ -670,7 +924,25 @@ class SharedDagmaLinear(DagmaLinear):
                          mu_schedule=None):
         """Run the upstream central path from a caller-supplied valid W0."""
         self.X, self.lambda1, self.checkpoint = X, lambda1, checkpoint
+        self.w_threshold = float(w_threshold)
         self.n, self.d = X.shape
+        penalty = np.asarray(lambda1, dtype=float)
+        if penalty.ndim == 0:
+            penalty_matrix = np.full((self.d, self.d), float(penalty))
+        elif penalty.ndim == 1 and penalty.shape == (self.d,):
+            penalty_matrix = np.broadcast_to(penalty[None, :],
+                                             (self.d, self.d)).copy()
+        elif penalty.ndim == 2 and penalty.shape == (self.d, self.d):
+            penalty_matrix = penalty.copy()
+        else:
+            raise ValueError(
+                "lambda1 must be a scalar, a length-d target vector, "
+                "or a d-by-d matrix")
+        if (not np.all(np.isfinite(penalty_matrix))
+                or np.any(penalty_matrix < 0)):
+            raise ValueError("lambda1 penalties must be finite and nonnegative")
+        np.fill_diagonal(penalty_matrix, 0.0)
+        self.lambda1_matrix = penalty_matrix
         self.Id = np.eye(self.d).astype(self.dtype)
         if self.loss_type in {"l2", "gaussian_profile"}:
             self.X -= X.mean(axis=0, keepdims=True)
@@ -694,6 +966,7 @@ class SharedDagmaLinear(DagmaLinear):
         schedule = list(s) if not np.isscalar(s) else [float(s)] * T
         if len(schedule) < T:
             schedule += [schedule[-1]] * (T - len(schedule))
+        self.stable_s_star = float(min(schedule))
         for stage, mu in enumerate(mus):
             success, lr_adam = False, lr
             if mu == 0.0 and self.terminal_zero_stage:

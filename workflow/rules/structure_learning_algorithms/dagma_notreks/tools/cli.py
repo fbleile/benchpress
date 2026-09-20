@@ -11,8 +11,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG_ROOT = ROOT / "configs/dagma_notreks_oracle"
-DEFAULTS = dict(loss_type="l2", lambda1=.03, w_threshold=.3, T=5, mu_init=1.,
-                mu_factor=.1, s="1.0,0.9,0.8,0.7,0.6", warm_iter=30000,
+DEFAULTS = dict(loss_type="gaussian_profile", lambda1=.03, w_threshold=.3, T=5, mu_init=1.,
+                mu_factor=.1, s="1.1,1.0,0.9,0.8,0.7", warm_iter=30000,
                 max_iter=60000, lr=.0003, checkpoint=1000, beta_1=.99,
                 beta_2=.999, timeout=None)
 
