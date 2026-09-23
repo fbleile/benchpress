@@ -12,12 +12,14 @@ benchmark runs require only the repository's Python solver environment.
 RPY2_CFFI_MODE=ABI PYTHONPATH=. .venv-local-smoke/bin/python \
   scripts/causalassembly_protocol.py prepare \
   --cache results/causalassembly_cache \
-  --seeds 1001 1002 1003 1004 1005 1006 1007 1008 1009 1010
+  --seeds 1001 1002 1003 1004 1005 1006 1007 1008 1009 1010 \
+  --drf-num-threads 4
 ```
 
 Preparation validates the 98 graph nodes and column names, fits the official
-DRFs once, and stores paired 5,000-row reference/discovery samples plus a
-provenance manifest. It does not silently replace causalAssembly if the
+DRFs once using the compiled thread support of the official R `drf` package,
+and stores paired 5,000-row reference/discovery samples plus a provenance
+manifest. It does not silently replace causalAssembly if the
 upstream package or R backend is unavailable.
 
 ## Screen the reference samples

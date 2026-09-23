@@ -138,11 +138,30 @@ def _topological_order(graph: np.ndarray) -> list[int]:
     return result
 
 
-def select_pairs(all_pairs, q: float, seed: int):
+def select_pairs(all_pairs, q: float, seed: int, strategy: str = "random"):
+    """Select a fixed-size prior, optionally preserving graph structure.
+
+    The three structural strategies are shared with the earlier chromatic
+    prior experiment; q=1 always returns the complete no-trek set.
+    """
     if not all_pairs:
+        return []
+    if q == 0.0:
         return []
     if q == 1.0:
         return [tuple(p) for p in all_pairs]
+    if strategy == "bipartite-max-capacity":
+        from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.one_graph_prior_chromatic import (
+            _bipartite_max_capacity,
+        )
+        return _bipartite_max_capacity(all_pairs, q, seed)
+    if strategy == "chromatic-greedy":
+        from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.one_graph_prior_chromatic import (
+            _chromatic_greedy_knowledge,
+        )
+        return _chromatic_greedy_knowledge(all_pairs, q, seed)
+    if strategy != "random":
+        raise ValueError(f"unknown knowledge strategy: {strategy}")
     rng = np.random.default_rng(seed)
     order = rng.permutation(len(all_pairs))
     count = max(1, int(round(q * len(all_pairs))))

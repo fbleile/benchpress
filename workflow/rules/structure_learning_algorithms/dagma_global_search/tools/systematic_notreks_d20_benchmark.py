@@ -900,7 +900,8 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
                     adjacency_map_tau=1.0,
                     notreks_resolvent_normalization=False,
                     notreks_stage_scaling="s2_over_d_minus_1",
-                    lambda1=0.03):
+                    lambda1=0.03, constraint_regime=None,
+                    tcc_coupling=1.0, dag_penalty_weight=1.0):
     config = ProductionConfig(
         restarts=attempts,
         seed=seed,
@@ -913,6 +914,9 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
         adjacency_map_tau=adjacency_map_tau,
         notreks_resolvent_normalization=notreks_resolvent_normalization,
         notreks_stage_scaling=notreks_stage_scaling,
+        constraint_regime=constraint_regime,
+        tcc_coupling=tcc_coupling,
+        dag_penalty_weight=dag_penalty_weight,
         initialization_mode=initialization_mode,
         initialization_edge_probability=initialization_edge_probability,
         proximal_l1=proximal_l1,
@@ -1383,6 +1387,8 @@ def main():
     parser.add_argument("--dagma-warm-iter", type=int, default=30000)
     parser.add_argument("--dagma-max-iter", type=int, default=60000)
     parser.add_argument("--dagma-trek-weight", type=float, default=200.0)
+    parser.add_argument("--dagma-tcc-w", type=float, default=1.0,
+                        help="per-pair TCC coupling weight w")
     parser.add_argument(
         "--dagma-initialization-mode",
         choices=("empty_random", "empty_feasible_random"),
@@ -1444,6 +1450,7 @@ def main():
         dagma_warm_iter=args.dagma_warm_iter,
         dagma_max_iter=args.dagma_max_iter,
         dagma_trek_weight=args.dagma_trek_weight,
+        dagma_tcc_w=args.dagma_tcc_w,
         dagma_initialization_mode=args.dagma_initialization_mode,
         dagma_initialization_edge_probability=(
             args.dagma_initialization_edge_probability),
@@ -1767,6 +1774,7 @@ def main():
                     notreks_resolvent_normalization=(
                         method == "dagma_notreks_normalized"),
                     notreks_stage_scaling=(
+                        "none" if method == "dagma_notreks_tcc" else
                         "s2_over_d_minus_1" if method == "dagma_notreks" else
                         "s2_over_pairs" if method in {
                             "dagma_notreks_s2_over_i",
@@ -1780,10 +1788,20 @@ def main():
                     postselection_policy=postselection_policy,
                     mu_schedule=config.dagma_mu_schedule,
                     s_schedule=config.dagma_s_schedule,
-                    apply_notreks_postselection=apply_postselection)
+                    apply_notreks_postselection=apply_postselection,
+                    constraint_regime=(
+                        "tcc" if method == "dagma_notreks_tcc" else None),
+                    tcc_coupling=config.dagma_tcc_w,
+                    dag_penalty_weight=(
+                        0.0 if method == "dagma_notreks_tcc" else 1.0))
                 optimizer_diag.update(calibration_diag)
                 optimizer_diag["lambda_nt_base"] = float(effective_trek_weight)
+                if method == "dagma_notreks_tcc":
+                    optimizer_diag["constraint_regime"] = "tcc"
+                    optimizer_diag["tcc_coupling"] = float(config.dagma_tcc_w)
+                    optimizer_diag["dag_penalty_weight"] = 0.0
                 optimizer_diag["notreks_stage_scaling"] = (
+                    "none" if method == "dagma_notreks_tcc" else
                     "s2_over_pairs" if method in {
                         "dagma_notreks_s2_over_i",
                         "dagma_notreks_s2_over_i_calibrated"}
@@ -1848,6 +1866,9 @@ def main():
                     "adjacency_map_theoretical_max_entry"),
                 "notreks_resolvent_normalization": optimizer_diag.get(
                     "notreks_resolvent_normalization", False),
+                "constraint_regime": optimizer_diag.get(
+                    "constraint_regime"),
+                "tcc_coupling": optimizer_diag.get("tcc_coupling"),
                 "dagma_stage_diagnostics": json.dumps(
                     optimizer_diag.get("stage_diagnostics", [])),
                 "notreks_pairs": len(pairs),

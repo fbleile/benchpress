@@ -47,6 +47,9 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.loca
 from workflow.rules.structure_learning_algorithms.dagma.gaussian_bic import (
     gaussian_bic,
 )
+from workflow.rules.structure_learning_algorithms.dagma_nonlinear_notreks import (
+    nonlinear_dagma_candidate,
+)
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.thermalgagge import (
     ThermalConfig,
     generate as generate_thermal,
@@ -266,6 +269,17 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
         candidate, diag = dagma_candidate(
             X, pairs, True, False, seed, attempts, dagma_warm_iter,
             dagma_max_iter, dagma_stages, trek_weight=trek_weight)
+    elif name == "dagma_notreks_tcc":
+        candidate, diag = dagma_candidate(
+            X, pairs, True, False, seed, attempts, dagma_warm_iter,
+            dagma_max_iter, dagma_stages, trek_weight=trek_weight,
+            constraint_regime="tcc", tcc_coupling=1.0,
+            dag_penalty_weight=0.0)
+    elif name in {"dagma-nonlinear", "dagma-nonlinear-pstrek"}:
+        candidate, diag = nonlinear_dagma_candidate(
+            X, pairs if name.endswith("pstrek") else [], seed,
+            trek_weight=trek_weight, stages=dagma_stages,
+            warm_iter=dagma_warm_iter, max_iter=dagma_max_iter)
     elif name in {"dagma-edge-mask", "dagma-nt-edge-mask"}:
         candidate, diag = dagma_candidate(
             X, pairs, False, True, seed, attempts, dagma_warm_iter,

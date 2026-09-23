@@ -37,6 +37,7 @@ SUPPORTED_METHODS = (
     "dagma_postselection",
     "dagma_edge_mask_postselection",
     "dagma_notreks",
+    "dagma_notreks_tcc",
     "dagma_notreks_edge_mask",
     "dagma_proximal",
     "dagma_notreks_proximal",
@@ -103,6 +104,7 @@ class BenchmarkConfig:
     dagma_warm_iter: int = 30000
     dagma_max_iter: int = 60000
     dagma_trek_weight: float = 1.0
+    dagma_tcc_w: float = 1.0
     dagma_initialization_mode: str = "empty_random"
     dagma_initialization_edge_probability: float = 0.15
     dagma_map_tau: float = 1.0

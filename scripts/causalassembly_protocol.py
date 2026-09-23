@@ -12,6 +12,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import urllib.request
 from pathlib import Path
 
 import networkx as nx
@@ -20,6 +21,10 @@ import pandas as pd
 
 
 SOURCE_URL = "https://github.com/boschresearch/causalAssembly"
+STATIC_DATA_URL = ("https://raw.githubusercontent.com/boschresearch/causalAssembly/"
+                   "main/data/data_sets/n_500_synthdata/assembly_line_500.csv")
+STATIC_TRUTH_URL = ("https://raw.githubusercontent.com/boschresearch/causalAssembly/"
+                    "main/data/ground_truth/ground_truth.json")
 PAPER_URL = "https://proceedings.mlr.press/v236/gobler24a.html"
 N_NODES = 98
 DISCOVERY_SIZES = (500, 2000, 5000)
@@ -93,6 +98,68 @@ def _graph_and_data():
     adjacency = nx.to_numpy_array(graph, nodelist=nodes, dtype=np.uint8)
     np.fill_diagonal(adjacency, 0)
     return data, adjacency, nodes
+
+
+def _static_graph_and_data(data_csv: Path, truth_json: Path):
+    """Load the official upstream fixed n=500 causalAssembly release."""
+    data = pd.read_csv(data_csv)
+    truth_payload = json.loads(truth_json.read_text())
+    nodes = [entry["id"] for entry in truth_payload["nodes"]]
+    if data.shape != (500, len(nodes)):
+        raise ValueError(
+            f"static causalAssembly data has shape {data.shape}, expected "
+            f"(500, {len(nodes)})")
+    if list(data.columns) != nodes:
+        missing = sorted(set(nodes) - set(data.columns))
+        extra = sorted(set(data.columns) - set(nodes))
+        raise ValueError(f"static columns do not match ground truth; "
+                         f"missing={missing[:3]}, extra={extra[:3]}")
+    adjacency = np.zeros((len(nodes), len(nodes)), dtype=np.uint8)
+    index = {node: i for i, node in enumerate(nodes)}
+    for source, children in enumerate(truth_payload["adjacency"]):
+        for child in children:
+            adjacency[source, index[child["id"]]] = 1
+    np.fill_diagonal(adjacency, 0)
+    if not nx.is_directed_acyclic_graph(nx.DiGraph(adjacency)):
+        raise ValueError("static causalAssembly ground truth is cyclic")
+    values = data.to_numpy(dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError("static causalAssembly data contains nonfinite values")
+    return data, adjacency, nodes
+
+
+def prepare_static_cache(cache_dir: Path, seeds: list[int], data_csv: Path,
+                         truth_json: Path) -> dict:
+    """Create seed-compatible cache artifacts without DRF regeneration.
+
+    The upstream release is one fixed 500-row dataset.  Requested seeds are
+    retained as protocol labels, but intentionally point to identical data;
+    the manifest records this so they cannot be mistaken for independent
+    generated replicates.
+    """
+    data, truth, nodes = _static_graph_and_data(data_csv, truth_json)
+    values = data.to_numpy(dtype=float)
+    pairs = oracle_no_treks(truth)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(cache_dir / "ground_truth.npz", truth=truth)
+    manifest = {
+        "dataset": "causalassembly_upstream_static_n500",
+        "node_count": len(nodes), "nodes": nodes, "truth_edges": int(truth.sum()),
+        "oracle_no_trek_pairs": len(pairs), "seeds": list(seeds),
+        "source_url": SOURCE_URL, "data_url": STATIC_DATA_URL,
+        "truth_url": STATIC_TRUTH_URL, "data_csv": str(data_csv),
+        "truth_json": str(truth_json), "fixed_dataset": True,
+        "independent_seed_replicates": False,
+        "data_checksum": hashlib.sha256(values.tobytes()).hexdigest(),
+        "truth_checksum": hashlib.sha256(truth.tobytes()).hexdigest(),
+        "completed_seeds": [],
+    }
+    for seed in seeds:
+        np.savez_compressed(cache_dir / f"seed_{seed}.npz",
+                            reference=values, discovery=values)
+        manifest["completed_seeds"].append(seed)
+    (cache_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    return manifest
 
 
 def oracle_no_treks(truth: np.ndarray) -> list[tuple[int, int]]:
@@ -213,7 +280,8 @@ def nonlinear_screen(reference: np.ndarray, *, candidate_cap: int = 750,
 def prepare_cache(cache_dir: Path, seeds: list[int], *, fit_seed: int = 20260917,
                   sizes: tuple[int, ...] = DISCOVERY_SIZES,
                   reference_size: int = REFERENCE_SIZE,
-                  num_trees: int = 2000) -> dict:
+                  num_trees: int = 2000,
+                  num_threads: int | None = None) -> dict:
     """Fit official DRFs once and write portable paired sample artifacts."""
     data, truth, nodes = _graph_and_data()
     _, DRF = _require_upstream()
@@ -231,6 +299,7 @@ def prepare_cache(cache_dir: Path, seeds: list[int], *, fit_seed: int = 20260917
                 "package": package_metadata(), "fit_seed": fit_seed,
                 "reference_size": reference_size, "discovery_sizes": list(sizes),
                 "drf_num_trees": num_trees,
+                "drf_num_threads": num_threads,
                 "seeds": list(seeds), "source_url": SOURCE_URL,
                 "sampling_seeds": {
                     str(seed): {
@@ -286,8 +355,12 @@ def prepare_cache(cache_dir: Path, seeds: list[int], *, fit_seed: int = 20260917
                     max_size, seed=discovery_rngs[seed])[0]
             del kde
             continue
-        forest = DRF(min_node_size=15, num_trees=num_trees,
-                     splitting_rule="FourierMMD")
+        fit_params = {"min_node_size": 15, "num_trees": num_trees,
+                      "splitting_rule": "FourierMMD",
+                      "seed": derive_seed("drf-fit", fit_seed, node_index)}
+        if num_threads is not None:
+            fit_params["num_threads"] = num_threads
+        forest = DRF(**fit_params)
         forest.fit(data[parents], data[node])
         for seed in pending:
             ref_parents = pd.DataFrame(generated[seed]["reference"][:,
@@ -319,6 +392,13 @@ def main() -> None:
     prep.add_argument("--seeds", type=int, nargs="+", required=True)
     prep.add_argument("--fit-seed", type=int, default=20260917)
     prep.add_argument("--drf-num-trees", type=int, default=2000)
+    prep.add_argument("--drf-num-threads", type=int, default=None,
+                      help="threads used inside each official R DRF fit")
+    static = sub.add_parser("prepare-static")
+    static.add_argument("--cache", type=Path, required=True)
+    static.add_argument("--seeds", type=int, nargs="+", required=True)
+    static.add_argument("--data-csv", type=Path, required=True)
+    static.add_argument("--truth-json", type=Path, required=True)
     screen = sub.add_parser("screen")
     screen.add_argument("--cache", type=Path, required=True)
     screen.add_argument("--seed", type=int, required=True)
@@ -330,7 +410,11 @@ def main() -> None:
     if args.command == "prepare":
         print(json.dumps(prepare_cache(args.cache, args.seeds,
                                         fit_seed=args.fit_seed,
-                                        num_trees=args.drf_num_trees), indent=2))
+                                        num_trees=args.drf_num_trees,
+                                        num_threads=args.drf_num_threads), indent=2))
+    elif args.command == "prepare-static":
+        print(json.dumps(prepare_static_cache(
+            args.cache, args.seeds, args.data_csv, args.truth_json), indent=2))
     elif args.command == "screen":
         artifact = np.load(args.cache / f"seed_{args.seed}.npz")
         selected, diagnostics, summary = nonlinear_screen(

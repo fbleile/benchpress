@@ -17,7 +17,7 @@ import pandas as pd
 
 from scripts.causalassembly_protocol import (
     DISCOVERY_SIZES, derive_seed, nested_pairs, nonlinear_screen,
-    oracle_no_treks, standardize_discovery,
+    oracle_no_treks,
 )
 from scripts.notreks_benchmark_pipeline import method_run
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import metrics
@@ -26,6 +26,7 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.syst
 CORE_METHODS = (
     "flop", "flop-nt-standard", "flop-nt-edge-mask", "flop-nt-post",
     "dagma", "dagma-pstrek", "dagma-nt-post",
+    "dagma-nonlinear", "dagma-nonlinear-pstrek",
 )
 
 
@@ -50,6 +51,41 @@ def _screen(cache: Path, seed: int, args) -> list[tuple[int, int]]:
     return pairs
 
 
+def _ensure_cached_seeds(cache: Path, seeds: tuple[int, ...], manifest: dict) -> None:
+    """Materialize missing labels for the fixed upstream static release.
+
+    The official static causalAssembly release is one fixed 500-row dataset;
+    protocol seeds are labels, not independent regenerated datasets.  A
+    partially prepared cache may therefore safely reuse any existing static
+    artifact for missing requested labels.  Dynamic DRF caches are never
+    filled this way.
+    """
+    missing = [seed for seed in seeds
+               if not (cache / f"seed_{seed}.npz").exists()]
+    if not missing:
+        return
+    if not manifest.get("fixed_dataset", False):
+        raise FileNotFoundError(
+            "missing causalAssembly cache artifacts for seeds "
+            f"{missing}; prepare those seeds before running the benchmark")
+    existing = sorted(cache.glob("seed_*.npz"))
+    if not existing:
+        raise FileNotFoundError(
+            "the fixed causalAssembly cache has no seed artifact; run "
+            "prepare-static first")
+    source = existing[0]
+    with np.load(source) as artifact:
+        reference = np.asarray(artifact["reference"])
+        discovery = np.asarray(artifact["discovery"])
+    for seed in missing:
+        np.savez_compressed(cache / f"seed_{seed}.npz",
+                            reference=reference, discovery=discovery)
+    manifest["completed_seeds"] = sorted(set(manifest.get("completed_seeds", []))
+                                          | set(seeds))
+    (cache / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, default=str) + "\n")
+
+
 def run(args) -> None:
     cache = args.cache.resolve()
     manifest = json.loads((cache / "manifest.json").read_text())
@@ -61,6 +97,8 @@ def run(args) -> None:
         "flop_notreks_postselection": "flop-nt-post",
         "dagma_notreks": "dagma-pstrek",
         "dagma_notreks_postselection": "dagma-nt-post",
+        "dagma_nonlinear": "dagma-nonlinear",
+        "dagma_nonlinear_notreks": "dagma-nonlinear-pstrek",
     }
     methods = tuple(aliases.get(m, m) for m in (args.methods or CORE_METHODS))
     unknown = set(methods) - set(CORE_METHODS)
@@ -68,6 +106,7 @@ def run(args) -> None:
         raise ValueError(f"unknown causalAssembly methods: {sorted(unknown)}")
     sizes = tuple(args.n or DISCOVERY_SIZES)
     seeds = tuple(args.seeds)
+    _ensure_cached_seeds(cache, seeds, manifest)
     rows_path = args.output / "raw" / "results.csv"
     rows_path.parent.mkdir(parents=True, exist_ok=True)
     rows = pd.read_csv(rows_path).to_dict("records") if rows_path.exists() else []
@@ -85,7 +124,12 @@ def run(args) -> None:
             knowledge = {"estimated": inferred}
         for n in sizes:
             raw = artifact["discovery"][:n]
-            X, means, scales = standardize_discovery(raw)
+            # Keep the published causalAssembly variables in their original
+            # physical units. Synthetic protocol data are standardized, but
+            # this real-world/semisynthetic benchmark is intentionally not.
+            X = np.asarray(raw, dtype=float).copy()
+            means = X.mean(axis=0)
+            scales = X.std(axis=0, ddof=0)
             q_items = list(knowledge.items())
             # Vanilla methods are run once and then paired with every q in
             # analysis; NOTREKS methods run for each supplied set.
@@ -94,7 +138,7 @@ def run(args) -> None:
                          args.mode) for q, pairs in q_items)
             for q_label, pairs, q_value, knowledge_mode in jobs:
                 for method in methods:
-                    if method in {"flop", "dagma"} and q_label != "q0":
+                    if method in {"flop", "dagma", "dagma-nonlinear"} and q_label != "q0":
                         continue
                     key = (seed, n, knowledge_mode, q_value, method)
                     if key in done:
@@ -127,6 +171,7 @@ def run(args) -> None:
                         "data_model": "causalAssembly_semisynthetic_nonlinear",
                         "discovery_score": "gaussian_bic_existing_solver",
                         "score_misspecification": True,
+                        "standardized_for_discovery": False,
                         "sample_mean_checksum": _hash(means.tolist()),
                         "sample_scale_checksum": _hash(scales.tolist()),
                         "sample_checksum": _hash(raw.tolist()),

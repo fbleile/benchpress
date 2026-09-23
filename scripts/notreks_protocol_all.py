@@ -22,9 +22,13 @@ from scripts.notreks_benchmark_pipeline import method_run
 
 
 def _job_key(row):
+    strategy = row.get("knowledge_strategy", "random")
+    if not isinstance(strategy, str) or not strategy:
+        strategy = "random"
     return (row.get("experiment_id"), row.get("data_id"),
             float(row.get("knowledge_fraction")),
-            int(row.get("knowledge_round")), row.get("method"))
+            int(row.get("knowledge_round")),
+            strategy, row.get("method"))
 
 
 def _replicate_count(spec, args):
@@ -34,15 +38,42 @@ def _replicate_count(spec, args):
 
 
 def _knowledge_round_count(spec, q, args):
-    # q=1 contains the complete set and therefore has no distinct random
-    # subset draws; keep exactly one round even when q25 rounds are overridden.
+    # q=0 is the single vanilla job and q=1 is the complete set; only q=.25
+    # has multiple independent subset draws.
+    if q in {0.0, 1.0}:
+        return 1
     if q == .25 and args.knowledge_rounds is not None:
         return args.knowledge_rounds
     return spec.q25_rounds if q == .25 else 1
 
 
+def _knowledge_strategy_list(spec, q):
+    # Structural subset constructions are part of the prior-structure study.
+    # q=0 and q=1 have deterministic knowledge sets.
+    return spec.knowledge_strategies if q == .25 else ("random",)
+
+
 def _attempts_for(spec, method, args):
     return int(args.attempts) if args.attempts is not None else spec.attempts_for(method)
+
+
+def _methods_for_job(spec, d, q):
+    """Return methods that are meaningful for this knowledge level.
+
+    SortnRegress does not consume NOTREKS information, so it is run once at
+    q=1 as a knowledge-independent baseline rather than duplicated for every
+    prior subset.
+    """
+    methods = spec.methods_for(d)
+    if spec.name == "main":
+        vanilla = {"flop", "dagma", "var_sortnregress", "r2_sortnregress"}
+        if q == 0.0:
+            return tuple(m for m in methods if m in vanilla)
+        return tuple(m for m in methods if m not in vanilla)
+    if q != 1.0:
+        methods = tuple(m for m in methods
+                        if m not in {"var_sortnregress", "r2_sortnregress"})
+    return methods
 
 
 def print_design_and_objective(specs, args):
@@ -59,7 +90,7 @@ def print_design_and_objective(specs, args):
         print(f"  solver restarts override (--attempts): {args.attempts}", flush=True)
     print(f"  independent NOTREKS-set rounds at q=.25: "
           f"{args.knowledge_rounds if args.knowledge_rounds is not None else 'registry default 5'}; "
-          "q=1 uses one deterministic complete set",
+          "q=0 is vanilla; q=1 uses one deterministic complete set",
           flush=True)
     print(f"  workers: {args.workers}; FLOP sweeps: {args.flop_sweeps}; "
           f"DAGMA stages: {args.dagma_stages}; DAGMA warm/max iterations: "
@@ -72,12 +103,16 @@ def print_design_and_objective(specs, args):
         parts = []
         for q in spec.q_values:
             parts.append(f"q={q:g}: {_knowledge_round_count(spec, q, args)} set(s)")
-        rows = (len(spec.cells) * reps * len(spec.n_values)
-                * sum(_knowledge_round_count(spec, q, args)
-                      for q in spec.q_values) * len(spec.methods))
+        rows = sum(
+            reps * len(spec.n_values)
+            * sum(_knowledge_round_count(spec, q, args)
+                  * len(_knowledge_strategy_list(spec, q)) for q in spec.q_values)
+            * len(spec.methods_for(d))
+            for d, _, _ in spec.cells
+        )
         print(f"    {spec.name}: {len(spec.cells)} graph cells × {reps} graph seeds × "
               f"n={spec.n_values} × {', '.join(parts)} × "
-              f"{len(spec.methods)} methods = {rows} solver rows", flush=True)
+              f"dimension-specific methods = {rows} solver rows", flush=True)
 
     print("\nDAGMA objective (standard square-map production path):", flush=True)
     print("  J_{mu,s}(W) = mu * [Q_n(W) + lambda_1 ||W||_1] "
@@ -103,23 +138,38 @@ def _checkpoint(rows, path):
     if not frame.empty:
         frame = frame.drop_duplicates(
             ["experiment_id", "data_id", "knowledge_fraction",
-             "knowledge_round", "method"], keep="last")
+             "knowledge_round", "knowledge_strategy", "method"], keep="last")
     temporary = path.with_suffix(path.suffix + ".tmp")
     frame.to_csv(temporary, index=False)
     temporary.replace(path)
 
 
 def dispatch(name, x, pairs, seed, args, attempts):
+    if name in {"var_sortnregress", "r2_sortnregress"}:
+        # These baselines are implemented in the benchmark toolchain, but
+        # are not part of the legacy method_run dispatcher.  Wire them here
+        # explicitly so the protocol cannot silently fall through to the
+        # legacy unknown-method error.
+        from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.sortnregress import (
+            sortnregress,
+        )
+        started = time.perf_counter()
+        kind = "variance" if name == "var_sortnregress" else "r2"
+        candidate, diag = sortnregress(x, kind=kind)
+        return candidate, diag, time.perf_counter() - started
     if name == "flop_notreks":
         start = time.perf_counter()
         candidate, diag = flop_notreks_candidate(
             x, pairs, seed, attempts, args.flop_sweeps,
             search_version="flop_like", local_greedy_passes=8)
         return candidate, diag, time.perf_counter() - start
-    aliases = {"dagma_notreks": "dagma-pstrek", "dagma": "dagma",
+    aliases = {"dagma_notreks": "dagma-pstrek", "dagma_notreks_tcc": "dagma_notreks_tcc",
+               "dagma": "dagma",
                "flop": "flop", "flop-nt-edge-mask": "flop-nt-edge-mask",
                "flop-nt-post": "flop-nt-post", "dagma-nt-edge-mask": "dagma-nt-edge-mask",
-               "dagma-nt-post": "dagma-nt-post"}
+               "dagma-nt-post": "dagma-nt-post",
+               "var_sortnregress": "var_sortnregress",
+               "r2_sortnregress": "r2_sortnregress"}
     return method_run(aliases[name], x, pairs, seed, attempts,
                       args.flop_sweeps, args.dagma_stages,
                       args.dagma_warm_iter, args.dagma_max_iter,
@@ -183,6 +233,10 @@ def run(args):
     result_path = out / "raw" / "results.csv"
     if result_path.exists():
         rows = pd.read_csv(result_path).to_dict("records")
+        for row in rows:
+            row.setdefault("knowledge_strategy", "random")
+            if not isinstance(row.get("knowledge_strategy"), str):
+                row["knowledge_strategy"] = "random"
         print(f"resuming {len(rows)} checkpointed solver rows from {result_path}",
               flush=True)
     else:
@@ -226,38 +280,43 @@ def run(args):
                     cache = {}
                     for q in spec.q_values:
                         rounds = _knowledge_round_count(spec, q, args)
-                        for round_id in range(rounds):
+                        for strategy in _knowledge_strategy_list(spec, q):
+                          for round_id in range(rounds):
                             knowledge_seed = derive_seed("knowledge", graph_id, n,
-                                                         q, round_id, master=args.master_seed)
-                            pairs = select_pairs(all_pairs, q, knowledge_seed)
-                            prior_id = f"{data_id}_q{q:g}_r{round_id}"
+                                                         q, strategy, round_id,
+                                                         master=args.master_seed)
+                            pairs = select_pairs(all_pairs, q, knowledge_seed, strategy)
+                            methods_for_job = _methods_for_job(spec, d, q)
+                            prior_id = f"{data_id}_q{q:g}_{strategy}_r{round_id}"
                             write_json(out / "knowledge" / f"{prior_id}.json", {
                                 "experiment": spec.name, "graph_id": graph_id,
                                 "data_id": data_id, "q": q, "round": round_id,
+                                "knowledge_strategy": strategy,
                                 "knowledge_seed": knowledge_seed,
                                 "pairs": [list(p) for p in pairs]})
                             expected = {
-                                (spec.name, data_id, float(q), round_id, method)
-                                for method in spec.methods
+                                (spec.name, data_id, float(q), round_id, strategy, method)
+                                for method in methods_for_job
                             }
                             if expected <= successful:
                                 continue
                             pending = {}
                             cached = {}
                             methods_to_run = []
-                            for method in spec.methods:
-                                if (spec.name, data_id, float(q), round_id, method) in successful:
+                            for method in methods_for_job:
+                                if (spec.name, data_id, float(q), round_id, strategy, method) in successful:
                                     continue
                                 if time.time() >= started + args.max_wall_hours * 3600:
                                     raise TimeoutError("protocol all-experiment wall-clock guard reached")
                                 method_seed = derive_seed("method", spec.name, data_id,
-                                                          q, round_id, method,
+                                                          q, strategy, round_id, method,
                                                           master=args.master_seed)
                                 ledger.append({"experiment": spec.name, "graph_id": graph_id,
                                                "data_id": data_id, "prior_id": prior_id,
                                                "method": method, "graph_seed": graph_seed,
                                                "data_seed": data_seed,
                                                "knowledge_seed": knowledge_seed,
+                                               "knowledge_strategy": strategy,
                                                "method_seed": method_seed,
                                                "attempts": _attempts_for(spec, method, args)})
                                 methods_to_run.append(method)
@@ -280,7 +339,7 @@ def run(args):
                             for method in methods_to_run:
                                 result = results.get(method)
                                 method_seed = derive_seed("method", spec.name, data_id,
-                                                          q, round_id, method,
+                                                          q, strategy, round_id, method,
                                                           master=args.master_seed)
                                 if isinstance(result, Exception):
                                     row = {"protocol_version": "20260917-v2",
@@ -293,11 +352,12 @@ def run(args):
                                            "knowledge_fraction": q, "knowledge_round": round_id,
                                            "graph_seed": graph_seed, "data_seed": data_seed,
                                            "knowledge_seed": knowledge_seed, "method_seed": method_seed,
+                                           "knowledge_strategy": strategy,
                                            "method": method, "solver_status": "failed",
                                            "solver_error": repr(result),
                                            "knowledge_pairs": len(pairs),
-                                           "data_model": "linear_gaussian_scm",
-                                           "discovery_score": "gaussian_bic",
+                                           "data_model": "unequal_variance_linear_gaussian_scm",
+                                           "discovery_score": "profiled_unequal_variance_gaussian",
                                            "candidate_runtime": np.nan, "SHD_cpdag": np.nan,
                                            "F1_skel": np.nan, "violations_after": np.nan}
                                     print(f"{spec.name} {graph_id} n={n} q={q} "
@@ -319,9 +379,10 @@ def run(args):
                                                 "knowledge_fraction": q, "knowledge_round": round_id,
                                                 "graph_seed": graph_seed, "data_seed": data_seed,
                                                 "knowledge_seed": knowledge_seed, "method_seed": method_seed,
+                                                "knowledge_strategy": strategy,
                                                 "solver_status": "ok", "knowledge_pairs": len(pairs),
-                                                "data_model": "linear_gaussian_scm",
-                                                "discovery_score": "gaussian_bic"})
+                                                "data_model": "unequal_variance_linear_gaussian_scm",
+                                                "discovery_score": "profiled_unequal_variance_gaussian"})
                                     if spec.name == "prior-structure":
                                         row.update(prior_properties(d, pairs, diag["candidate_graph"]))
                                     successful.add(_job_key(row))
@@ -329,9 +390,11 @@ def run(args):
                                           f"{method} SHD={row['SHD_cpdag']}", flush=True)
                                 rows.append(row)
                                 _checkpoint(rows, result_path)
+                          # end round
+                        # end strategy
     frame = pd.DataFrame(rows).drop_duplicates(
         ["experiment_id", "data_id", "knowledge_fraction",
-         "knowledge_round", "method"], keep="last")
+         "knowledge_round", "knowledge_strategy", "method"], keep="last")
     # Compute the truth-support reference after resumption as well, so old
     # checkpoints gain the same BIC-gap fields as newly completed jobs.
     if not frame.empty:
@@ -366,7 +429,10 @@ def run(args):
         "experiments": [s.name for s in specs],
         "planned_solver_rows": sum(len(s.cells) * _replicate_count(s, args) *
                                     len(s.n_values) * sum(_knowledge_round_count(s, q, args) for q in s.q_values) *
-                                    len(s.methods) for s in executable),
+                                    sum(len(s.methods_for(d)) for d, _, _ in s.cells) / max(1, len(s.cells))
+                                    * sum(len(_knowledge_strategy_list(s, q)) * _knowledge_round_count(s, q, args)
+                                          for q in s.q_values)
+                                    for s in executable),
         "derived_experiments": [s.name for s in specs if s.derives_from],
         "attempts_override": args.attempts,
         "attempts_by_family": {family: attempts for family, attempts in

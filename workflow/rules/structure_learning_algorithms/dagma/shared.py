@@ -21,6 +21,87 @@ from .structural import feasibility_thresholds, support_diagnostics
 Pair = tuple[int, int]
 
 
+def tcc_value_grad(W: np.ndarray, pairs: Sequence[Pair], coupling: float = 1.0,
+                   max_iter: int = 48, tolerance: float = 1e-8):
+    """Spectral trek-cycle penalty and a Perron-eigenvector gradient.
+
+    This is an experimental diagnostic implementation of TCC.  Each supplied
+    pair is evaluated separately; combining connectors for several pairs in a
+    single auxiliary graph can create spurious cycles.  The DAGMA structural
+    proxy is ``A=W**2``.  At a simple Perron root, the returned gradient is the
+    analytic spectral-radius gradient pulled back through that proxy.  At a
+    zero or numerically multiple root we use the deterministic zero
+    subgradient, which is the safe value at the empty initialization.
+    """
+    W = np.asarray(W, dtype=float)
+    d = W.shape[0]
+    pairs = tuple((int(i), int(j)) for i, j in pairs)
+    if not pairs:
+        return 0.0, np.zeros_like(W)
+    if coupling <= 0 or not np.isfinite(coupling):
+        raise ValueError("TCC coupling must be finite and positive")
+    A = W * W
+    np.fill_diagonal(A, 0.0)
+    # All pair-specific matrices have the same two diagonal blocks.  We run
+    # their Perron iterations in a batch instead of constructing and
+    # eigendecomposing one 2d-by-2d matrix per pair.
+    pair_i = np.asarray([i for i, _ in pairs], dtype=int)
+    pair_j = np.asarray([j for _, j in pairs], dtype=int)
+    n_pairs = len(pairs)
+    x_left = np.ones((n_pairs, d), dtype=float)
+    x_right = np.ones((n_pairs, d), dtype=float)
+    y_left = np.ones((n_pairs, d), dtype=float)
+    y_right = np.ones((n_pairs, d), dtype=float)
+
+    def normalize(left, right):
+        left_norm = np.linalg.norm(left, axis=1, keepdims=True)
+        right_norm = np.linalg.norm(right, axis=1, keepdims=True)
+        left_norm[left_norm == 0.0] = 1.0
+        right_norm[right_norm == 0.0] = 1.0
+        return left / left_norm, right / right_norm
+
+    x_left, x_right = normalize(x_left, x_right)
+    y_left, y_right = normalize(y_left, y_right)
+    previous = None
+    for _ in range(max(1, int(max_iter))):
+        # H x, with H = [[A, w e_i e_j^T], [I, A^T]].
+        new_left = x_left @ A.T
+        new_left[np.arange(n_pairs), pair_i] += coupling * x_right[
+            np.arange(n_pairs), pair_j]
+        new_right = x_left + x_right @ A
+        # H^T y = [[A^T, I], [w e_j e_i^T, A]] y.
+        new_y_left = y_left @ A + y_right
+        new_y_right = y_right @ A.T
+        new_y_right[np.arange(n_pairs), pair_j] += coupling * y_left[
+            np.arange(n_pairs), pair_i]
+        x_left, x_right = normalize(new_left, new_right)
+        y_left, y_right = normalize(new_y_left, new_y_right)
+        state = np.concatenate((x_left, x_right, y_left, y_right), axis=1)
+        if previous is not None and np.max(np.abs(state - previous)) < tolerance:
+            break
+        previous = state
+
+    # Collatz ratios are stable once the Perron vectors have converged.  A
+    # nilpotent auxiliary graph has zero final action and therefore exactly
+    # zero TCC value under the diagnostic tolerance.
+    hx_left = x_left @ A.T
+    hx_left[np.arange(n_pairs), pair_i] += coupling * x_right[
+        np.arange(n_pairs), pair_j]
+    hx_right = x_left + x_right @ A
+    hx_norm = np.linalg.norm(np.concatenate((hx_left, hx_right), axis=1), axis=1)
+    x_norm = np.linalg.norm(np.concatenate((x_left, x_right), axis=1), axis=1)
+    rho = np.divide(hx_norm, x_norm, out=np.zeros_like(hx_norm), where=x_norm > 0)
+    rho[hx_norm <= 1e-12] = 0.0
+
+    # d rho / d A = y_L x_L^T + x_R y_R^T, then pull through A=W^2.
+    denom = np.sum(y_left * x_left, axis=1) + np.sum(y_right * x_right, axis=1)
+    valid = np.abs(denom) > 1e-10
+    grad_A = np.einsum("pi,pj->ij", y_left[valid], x_left[valid])
+    grad_A += np.einsum("pi,pj->ij", x_right[valid], y_right[valid])
+    gradient = (2.0 * W) * grad_A / float(n_pairs)
+    return float(np.mean(rho)), gradient
+
+
 def soft_threshold(values: np.ndarray, threshold: float | np.ndarray) -> np.ndarray:
     """Elementwise proximal map for ``threshold * ||W||_1``."""
     threshold = np.asarray(threshold, dtype=float)
@@ -385,7 +466,12 @@ class SharedDagmaLinear(DagmaLinear):
         shared_resolvent_iterations = 0
         for iteration in range(1, int(max_iter) + 1):
             inverse_result = None
-            if self.dag_constraint == "inverse_trace":
+            if getattr(self, "constraint_regime", None) == "tcc":
+                # TCC deliberately has no ordinary DAG penalty or resolvent
+                # domain check.  Its per-pair auxiliary spectral radii are
+                # evaluated below.
+                M = np.zeros_like(W)
+            elif self.dag_constraint == "inverse_trace":
                 started = time.perf_counter()
                 try:
                     inverse_result = self._inverse_structural_kernel.evaluate(W)
@@ -430,7 +516,11 @@ class SharedDagmaLinear(DagmaLinear):
             G_score = mu * score_gradient
             if profile:
                 component_times["dagma_score_gradient_seconds"] += time.perf_counter() - started
-            if self.dag_constraint == "inverse_trace":
+            if getattr(self, "constraint_regime", None) == "tcc":
+                G_h = np.zeros_like(W)
+                _, G_nt = tcc_value_grad(
+                    W, self.no_trek_pairs, self.tcc_coupling)
+            elif self.dag_constraint == "inverse_trace":
                 G_h = self.gamma_inv * inverse_result.inverse_dag_gradient
                 G_nt = (
                     inverse_result.notreks_gradient
@@ -471,7 +561,10 @@ class SharedDagmaLinear(DagmaLinear):
                     )
                 if profile:
                     component_times["notreks_value_gradient_seconds"] += time.perf_counter() - started
-            if self.dag_constraint != "inverse_trace":
+            if getattr(self, "constraint_regime", None) == "tcc":
+                grad_A = np.zeros_like(W)
+                G_h = np.zeros_like(W)
+            elif self.dag_constraint != "inverse_trace":
                 grad_A = M.T
                 G_h = self.dag_penalty_weight * (
                     dagma_adjacency_pullback(
@@ -563,7 +656,10 @@ class SharedDagmaLinear(DagmaLinear):
                     nt = checkpoint_inverse.notreks_value
                 else:
                     h = self._h(W, s)[0] if self.dag_penalty_weight else 0.0
-                    if self.trek_function == "inv":
+                    if getattr(self, "constraint_regime", None) == "tcc":
+                        nt, _ = tcc_value_grad(
+                            W, self.no_trek_pairs, self.tcc_coupling)
+                    elif self.trek_function == "inv":
                         stage_A = make_dagma_adjacency(
                             W, self.adjacency_map, self.stable_s_star,
                             self.adjacency_map_tau) if (
@@ -580,10 +676,10 @@ class SharedDagmaLinear(DagmaLinear):
                                 penalty_scale=kernel_penalty_scale)
                     else:
                         nt, _ = self._trek_kernel.value_grad(
-                            W, self.trek_function,
-                            log_terms=self.trek_log_terms,
-                            inverse_epsilon=self.trek_inverse_epsilon,
-                        )
+                                W, self.trek_function,
+                                log_terms=self.trek_log_terms,
+                                inverse_epsilon=self.trek_inverse_epsilon,
+                            )
                 structural_weight = (
                     self.gamma_inv if self.dag_constraint == "inverse_trace"
                     else self.dag_penalty_weight)
@@ -670,8 +766,14 @@ class SharedDagmaLinear(DagmaLinear):
             spectral_radius = exact_spectral_radius(W * W)
             minimum_inverse_entry = final_inverse.minimum_inverse_entry
         else:
-            h, h_gradient = self._h(W, s)
-            if self.trek_function == "inv":
+            if getattr(self, "constraint_regime", None) == "tcc":
+                h, h_gradient = 0.0, np.zeros_like(W)
+                nt, nt_gradient = tcc_value_grad(
+                    W, self.no_trek_pairs, self.tcc_coupling)
+            else:
+                h, h_gradient = self._h(W, s)
+            if (getattr(self, "constraint_regime", None) != "tcc"
+                    and self.trek_function == "inv"):
                 final_A = make_dagma_adjacency(
                     W, self.adjacency_map, self.stable_s_star,
                     self.adjacency_map_tau) if (
@@ -691,7 +793,7 @@ class SharedDagmaLinear(DagmaLinear):
                     self.adjacency_map_tau)
                     if self.adjacency_map != "square"
                     else 2.0 * W * grad_A)
-            else:
+            elif getattr(self, "constraint_regime", None) != "tcc":
                 nt, nt_gradient = self._trek_kernel.value_grad(
                     W, self.trek_function,
                     log_terms=self.trek_log_terms,
@@ -832,6 +934,13 @@ class SharedDagmaLinear(DagmaLinear):
                 "none", "s2_over_pairs", "s2_over_d_minus_1"}:
             raise ValueError("unsupported NOTREKS stage scaling")
         self.notreks_stage_scaling = str(notreks_stage_scaling)
+        constraint_regime = kwargs.pop("constraint_regime", None)
+        self.constraint_regime = constraint_regime
+        self.tcc_coupling = float(kwargs.pop("tcc_coupling", 1.0))
+        if self.tcc_coupling <= 0 or not np.isfinite(self.tcc_coupling):
+            raise ValueError("tcc_coupling must be finite and positive")
+        if self.constraint_regime not in {None, "tcc"}:
+            raise ValueError("unsupported constraint_regime")
         self.no_trek_pairs = _validate_pairs(no_trek_pairs, np.asarray(X).shape[1])
         d = np.asarray(X).shape[1]
         if edge_mask is None:

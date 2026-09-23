@@ -58,6 +58,9 @@ class ProductionConfig:
     # The kernel's internal 2/(d-1) factor is converted to the continuation-
     # aware total normalization s^2/(d-1) by an outer s^2/2 multiplier.
     notreks_stage_scaling: str = "s2_over_d_minus_1"
+    constraint_regime: str | None = None
+    tcc_coupling: float = 1.0
+    dag_penalty_weight: float = 1.0
     restarts: int = 5
     seed: int = 1729
     initialization_scale: float = 0.05
@@ -404,6 +407,9 @@ def run_production_pipeline(
             notreks_resolvent_normalization=(
                 config.notreks_resolvent_normalization),
             notreks_stage_scaling=config.notreks_stage_scaling,
+            constraint_regime=config.constraint_regime,
+            tcc_coupling=config.tcc_coupling,
+            dag_penalty_weight=config.dag_penalty_weight,
             proximal_l1=config.proximal_l1,
             initial_W=initial_W,
             lambda1=effective_lambda,
