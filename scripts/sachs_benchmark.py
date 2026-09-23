@@ -17,7 +17,7 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.syst
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import metrics
 
 
-DATA = Path("resources/data/mydatasets/2005_sachs_2_cd3cd28icam2_log_std.csv")
+DATA = Path("resources/data/mydatasets/2005_sachs/1_cd3cd28_n854.csv")
 TRUTH = Path("resources/adjmat/myadjmats/sachs.csv")
 METHODS = (
     "flop", "flop-nt-standard", "flop-nt-edge-mask", "flop-nt-post",
