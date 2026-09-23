@@ -121,12 +121,18 @@ def run(args) -> None:
     for seed in seeds:
         artifact = np.load(cache / f"seed_{seed}.npz")
         if args.mode == "oracle_notreks":
-            knowledge = {q: nested_pairs(
-                all_oracle_pairs, q,
-                derive_seed("oracle-order", seed)) for q in args.q}
+            knowledge = []
+            for q in args.q:
+                rounds = 5 if np.isclose(q, .25) else 1
+                for round_id in range(rounds):
+                    knowledge.append((f"q{q:g}_r{round_id}", q,
+                                      nested_pairs(
+                                          all_oracle_pairs, q,
+                                          derive_seed("oracle-order", seed, q,
+                                                      round_id))))
         else:
             inferred = _screen(cache, seed, args)
-            knowledge = {"estimated": inferred}
+            knowledge = [("estimated_r0", np.nan, inferred)]
         for n in sizes:
             raw = artifact["discovery"][:n]
             # Keep the published causalAssembly variables in their original
@@ -135,17 +141,17 @@ def run(args) -> None:
             X = np.asarray(raw, dtype=float).copy()
             means = X.mean(axis=0)
             scales = X.std(axis=0, ddof=0)
-            q_items = list(knowledge.items())
+            q_items = list(knowledge)
             # Vanilla methods are run once. Every constrained q receives the
             # full comparison set, including edge masks and postselection.
             vanilla = {"flop", "dagma", "var_sortnregress", "r2_sortnregress",
                        "dagma-nonlinear"}
             jobs = [("q0", [], 0.0, "vanilla",
                      tuple(m for m in methods if m in vanilla))]
-            jobs.extend((str(q), pairs, float(q) if q != "estimated" else np.nan,
-                         args.mode,
+            jobs.extend((label, pairs, float(q) if np.isfinite(q) else np.nan,
+                         f"{args.mode}_{label}",
                          tuple(m for m in methods if m not in vanilla))
-                        for q, pairs in q_items)
+                        for label, q, pairs in q_items)
             solver_cache = {}
             for q_label, pairs, q_value, knowledge_mode, methods_for_job in jobs:
                 for method in methods_for_job:

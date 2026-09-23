@@ -65,7 +65,8 @@ def run(args):
     path = args.output / "results.csv"
     rows = pd.read_csv(path).to_dict("records") if path.exists() else []
     done = {(int(r["seed"]), int(r.get("bootstrap", 0)),
-             float(r["knowledge_fraction"]), r["method"])
+             float(r["knowledge_fraction"]), int(r.get("knowledge_round", 0)),
+             r["method"])
             for r in rows if r.get("status") == "ok"}
     pair_path = args.output / "notreks_pairs.csv"
     for seed in args.seeds:
@@ -74,15 +75,20 @@ def run(args):
             rng = np.random.default_rng(sample_seed)
             X_boot = X[rng.integers(0, len(X), size=len(X))]
             solver_cache = {}
-            for fraction in [0.0, *[q for q in args.knowledge_fraction if q > 0]]:
+            for fraction, knowledge_round in (
+                    (fraction, round_id)
+                    for fraction in [0.0, *[q for q in args.knowledge_fraction if q > 0]]
+                    for round_id in range(5 if np.isclose(fraction, .25) else 1)):
                 constrained_pairs = select_pairs(
-                    pairs, fraction, sample_seed + int(round(10000 * fraction)))
+                    pairs, fraction,
+                    sample_seed + int(round(10000 * fraction)) + knowledge_round * 104729)
                 named_pairs = [(names[i], names[j]) for i, j in constrained_pairs]
                 print(f"sachs seed={seed} bootstrap={bootstrap} q={fraction:g} "
-                      f"NOTREKS pairs={named_pairs}", flush=True)
+                      f"round={knowledge_round} NOTREKS pairs={named_pairs}", flush=True)
                 pair_row = pd.DataFrame([{
                     "seed": seed, "bootstrap": bootstrap,
                     "knowledge_fraction": fraction,
+                    "knowledge_round": knowledge_round,
                     "pair_count": len(named_pairs),
                     "pairs": json.dumps(named_pairs),
                 }])
@@ -90,7 +96,7 @@ def run(args):
                     pair_row = pd.concat([pd.read_csv(pair_path), pair_row],
                                          ignore_index=True)
                 pair_row.drop_duplicates(
-                    subset=["seed", "bootstrap", "knowledge_fraction"],
+                    subset=["seed", "bootstrap", "knowledge_fraction", "knowledge_round"],
                     keep="last").to_csv(pair_path, index=False)
                 vanilla = {"flop", "dagma", "var_sortnregress", "r2_sortnregress",
                            "dagma-nonlinear"}
@@ -99,7 +105,7 @@ def run(args):
                                    tuple(m for m in methods if m not in vanilla))
                 for method in methods_for_job:
                     effective_pairs = [] if fraction == 0.0 else constrained_pairs
-                    key = (seed, bootstrap, float(fraction), method)
+                    key = (seed, bootstrap, float(fraction), knowledge_round, method)
                     if key in done and not args.force:
                         continue
                     started = time.perf_counter()
@@ -142,6 +148,7 @@ def run(args):
                         "seed": seed, "bootstrap": bootstrap,
                         "n": X_boot.shape[0], "d": X_boot.shape[1],
                         "method": method, "knowledge_fraction": fraction,
+                        "knowledge_round": knowledge_round,
                         "notreks_pairs": len(effective_pairs),
                         "notreks_pairs_named": json.dumps(
                             [(names[i], names[j]) for i, j in effective_pairs]),
@@ -155,6 +162,7 @@ def run(args):
                             int(r.get("seed", -1)) == seed
                             and int(r.get("bootstrap", -1)) == bootstrap
                             and float(r.get("knowledge_fraction", -1)) == float(fraction)
+                            and int(r.get("knowledge_round", 0)) == knowledge_round
                             and r.get("method") == method)]
                     rows.append(row)
                     pd.DataFrame(rows).to_csv(path, index=False)
