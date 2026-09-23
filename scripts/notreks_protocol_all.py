@@ -17,6 +17,7 @@ from scripts.notreks_protocol import (
 from scripts.notreks_protocol_registry import REGISTRY, select_registry, scaled_replicates
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import (
     flop_notreks_candidate, gaussian_bic, metrics,
+    order_parent_postselection_from_candidate,
 )
 from scripts.notreks_benchmark_pipeline import method_run
 
@@ -316,7 +317,20 @@ def run(args):
                                                "attempts": _attempts_for(spec, method, args)})
                                 methods_to_run.append(method)
                                 key = (data_id, method)
-                                if method in {"flop", "dagma"} and key in cache:
+                                base_method = "flop" if method.startswith("flop") else "dagma"
+                                if method in {"flop-nt-post", "dagma-nt-post"} and (data_id, base_method) in cache:
+                                    base_candidate, base_diag, base_runtime = cache[(data_id, base_method)]
+                                    started_post = time.perf_counter()
+                                    post_candidate, post_diag = order_parent_postselection_from_candidate(
+                                        x, base_candidate, pairs)
+                                    cached[method] = (
+                                        post_candidate,
+                                        {**post_diag,
+                                         "candidate_graph": base_candidate.copy(),
+                                         "optimizer_restarts": base_diag.get("optimizer_restarts", _attempts_for(spec, method, args)),
+                                         "base_solver_runtime": base_runtime},
+                                        time.perf_counter() - started_post)
+                                elif method in {"flop", "dagma"} and key in cache:
                                     cached[method] = cache[key]
                                 else:
                                     pending[method] = pool.submit(
