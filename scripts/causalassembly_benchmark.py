@@ -20,12 +20,15 @@ from scripts.causalassembly_protocol import (
     oracle_no_treks,
 )
 from scripts.notreks_benchmark_pipeline import method_run
-from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import metrics
+from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import (
+    metrics, order_parent_postselection_from_candidate,
+)
 
 
 CORE_METHODS = (
     "flop", "flop-nt-standard", "flop-nt-edge-mask", "flop-nt-post",
-    "dagma", "dagma-pstrek", "dagma-nt-post",
+    "dagma", "dagma-pstrek", "dagma-nt-edge-mask", "dagma-nt-post",
+    "var_sortnregress", "r2_sortnregress",
     "dagma-nonlinear", "dagma-nonlinear-pstrek",
 )
 
@@ -96,6 +99,8 @@ def run(args) -> None:
         "flop_notreks_edge_mask": "flop-nt-edge-mask",
         "flop_notreks_postselection": "flop-nt-post",
         "dagma_notreks": "dagma-pstrek",
+        "dagma_notreks_edge_mask": "dagma-nt-edge-mask",
+        "dagma_notreks_postselection": "dagma-nt-post",
         "dagma_notreks_postselection": "dagma-nt-post",
         "dagma_nonlinear": "dagma-nonlinear",
         "dagma_nonlinear_notreks": "dagma-nonlinear-pstrek",
@@ -131,30 +136,50 @@ def run(args) -> None:
             means = X.mean(axis=0)
             scales = X.std(axis=0, ddof=0)
             q_items = list(knowledge.items())
-            # Vanilla methods are run once and then paired with every q in
-            # analysis; NOTREKS methods run for each supplied set.
-            jobs = [("q0", [], 0.0, "vanilla")]
+            # Vanilla methods are run once. Every constrained q receives the
+            # full comparison set, including edge masks and postselection.
+            vanilla = {"flop", "dagma", "var_sortnregress", "r2_sortnregress",
+                       "dagma-nonlinear"}
+            jobs = [("q0", [], 0.0, "vanilla",
+                     tuple(m for m in methods if m in vanilla))]
             jobs.extend((str(q), pairs, float(q) if q != "estimated" else np.nan,
-                         args.mode) for q, pairs in q_items)
-            for q_label, pairs, q_value, knowledge_mode in jobs:
-                for method in methods:
-                    if method in {"flop", "dagma", "dagma-nonlinear"} and q_label != "q0":
-                        continue
+                         args.mode,
+                         tuple(m for m in methods if m not in vanilla))
+                        for q, pairs in q_items)
+            solver_cache = {}
+            for q_label, pairs, q_value, knowledge_mode, methods_for_job in jobs:
+                for method in methods_for_job:
                     key = (seed, n, knowledge_mode, q_value, method)
                     if key in done:
                         continue
                     start = time.perf_counter()
                     status, error = "ok", ""
                     try:
-                        candidate, diag, runtime = method_run(
-                            method, X, pairs, derive_seed("method", seed, n,
-                            q_label, method), args.attempts, args.flop_sweeps,
-                            args.dagma_stages, args.dagma_warm_iter,
-                            args.dagma_max_iter, args.trek_weight)
+                        attempt_count = (args.attempts if args.attempts is not None else
+                                         (args.flop_attempts if method.startswith("flop")
+                                          else args.dagma_attempts))
+                        base_family = "flop" if method.startswith("flop") else "dagma"
+                        base_key = (seed, n, base_family)
+                        if method in {"flop-nt-post", "dagma-nt-post"} and base_key in solver_cache:
+                            base_candidate, base_diag, base_runtime = solver_cache[base_key]
+                            candidate, post_diag = order_parent_postselection_from_candidate(
+                                X, base_candidate, pairs)
+                            diag = {**post_diag, "candidate_graph": base_candidate.copy(),
+                                    "optimizer_restarts": base_diag.get("optimizer_restarts", attempt_count),
+                                    "base_solver_runtime": base_runtime}
+                            runtime = time.perf_counter() - start
+                        else:
+                            candidate, diag, runtime = method_run(
+                                method, X, pairs, derive_seed("method", seed, n,
+                                q_label, method), attempt_count, args.flop_sweeps,
+                                args.dagma_stages, args.dagma_warm_iter,
+                                args.dagma_max_iter, args.trek_weight)
+                            if method in {"flop", "dagma"}:
+                                solver_cache[(seed, n, method)] = (candidate, diag, runtime)
                         row = metrics(X, truth, pairs, method,
                                       diag["candidate_graph"], candidate,
-                                      diag["cpdag"], runtime, args.attempts,
-                                      diag.get("optimizer_restarts", args.attempts))
+                                      diag["cpdag"], runtime, attempt_count,
+                                      diag.get("optimizer_restarts", attempt_count))
                     except Exception as exc:
                         status, error = "failed", repr(exc)
                         row = {"SHD_cpdag": np.nan, "F1_skel": np.nan,
@@ -176,6 +201,7 @@ def run(args) -> None:
                         "sample_scale_checksum": _hash(scales.tolist()),
                         "sample_checksum": _hash(raw.tolist()),
                         "solver_status": status, "solver_error": error,
+                        "attempts_requested": attempt_count,
                         "package_metadata": json.dumps(manifest.get("package", {})),
                     })
                     supplied = {tuple(map(int, p)) for p in pairs}
@@ -207,6 +233,8 @@ def run(args) -> None:
         "experiment": "causalassembly", "mode": args.mode,
         "seeds": list(seeds), "n": list(sizes), "q": args.q,
         "methods": list(methods), "attempts": args.attempts,
+        "flop_attempts": args.flop_attempts,
+        "dagma_attempts": args.dagma_attempts,
         "oracle_pairs": len(all_oracle_pairs), "cache_manifest": manifest,
     }, indent=2, default=str) + "\n")
 
@@ -221,7 +249,10 @@ def main() -> None:
     p.add_argument("--n", type=int, nargs="*")
     p.add_argument("--q", type=float, nargs="+", default=[.10, .25, .50, 1.0])
     p.add_argument("--methods", nargs="+")
-    p.add_argument("--attempts", type=int, default=2)
+    p.add_argument("--attempts", type=int, default=None,
+                   help="override both solver-family restart counts")
+    p.add_argument("--flop-attempts", type=int, default=20)
+    p.add_argument("--dagma-attempts", type=int, default=2)
     p.add_argument("--flop-sweeps", type=int, default=16)
     p.add_argument("--dagma-stages", type=int, default=5)
     p.add_argument("--dagma-warm-iter", type=int, default=3000)

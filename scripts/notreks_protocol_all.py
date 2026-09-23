@@ -65,15 +65,10 @@ def _methods_for_job(spec, d, q):
     prior subset.
     """
     methods = spec.methods_for(d)
-    if spec.name == "main":
-        vanilla = {"flop", "dagma", "var_sortnregress", "r2_sortnregress"}
-        if q == 0.0:
-            return tuple(m for m in methods if m in vanilla)
-        return tuple(m for m in methods if m not in vanilla)
-    if q != 1.0:
-        methods = tuple(m for m in methods
-                        if m not in {"var_sortnregress", "r2_sortnregress"})
-    return methods
+    vanilla = {"flop", "dagma", "var_sortnregress", "r2_sortnregress"}
+    if q == 0.0:
+        return tuple(m for m in methods if m in vanilla)
+    return tuple(m for m in methods if m not in vanilla)
 
 
 def print_design_and_objective(specs, args):

@@ -235,7 +235,11 @@ def cells(experiment: str, *, n_override: int | None = None,
 def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
                dagma_warm_iter, dagma_max_iter, trek_weight):
     started = time.perf_counter()
-    if name == "flop":
+    if name in {"var_sortnregress", "r2_sortnregress"}:
+        from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.sortnregress import sortnregress
+        candidate, diag = sortnregress(
+            X, kind="variance" if name == "var_sortnregress" else "r2")
+    elif name == "flop":
         candidate, diag = vanilla_flop_candidate(X, seed, attempts)
     elif name == "flop-nt-standard":
         candidate, diag = flop_notreks_candidate(

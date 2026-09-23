@@ -75,20 +75,26 @@ REGISTRY = {
         ((100, "er", 2), (100, "er", 4), (100, "er", 8),
          (100, "ws", 2), (100, "ws", 4), (100, "ws", 8)),
         (1000,), (.25, 1.0), 5,
-        ("flop", "flop-nt-edge-mask", "flop-nt-post", "flop_notreks")),
+        ("flop", "flop-nt-edge-mask", "flop-nt-post", "flop_notreks"),
+        derives_from="main"),
     "heterogeneity": ExperimentSpec(
         "heterogeneity", "descriptive stratum heterogeneity summaries", (),
         (), (), 0, (), derives_from="main"),
     "causalassembly": ExperimentSpec(
         "causalassembly", "causalAssembly nonlinear n=500 benchmark", (),
         (500,), (.25, 1.0), 1,
-        ("flop", "flop_notreks", "dagma", "dagma_notreks",
+        ("flop", "flop_notreks", "flop-nt-edge-mask", "flop-nt-post",
+         "dagma", "dagma_notreks", "dagma-nt-edge-mask", "dagma-nt-post",
+         "var_sortnregress", "r2_sortnregress",
          "dagma_nonlinear", "dagma_nonlinear_notreks"),
         graph_replicates=5, dataset="causalassembly_static_n500"),
     "sachs": ExperimentSpec(
         "sachs", "Sachs 50-bootstrap fixed-data benchmark", (),
         (853,), (0.25, 1.0), 1,
-        ("flop", "flop_notreks", "dagma", "dagma_notreks"),
+        ("flop", "flop_notreks", "flop-nt-edge-mask", "flop-nt-post",
+         "dagma", "dagma_notreks", "dagma-nt-edge-mask", "dagma-nt-post",
+         "var_sortnregress", "r2_sortnregress",
+         "dagma_nonlinear", "dagma_nonlinear_notreks"),
         graph_replicates=50, dataset="sachs_fixed"),
     "pstrek-vs-tcc": ExperimentSpec(
         "pstrek-vs-tcc", "PSTrek versus spectral trek-cycle constraint", (
@@ -99,8 +105,10 @@ REGISTRY = {
         # knowledge draws: 20 graph replicates, five q=.25 draws, and one
         # complete q=1 draw per graph. There is intentionally no q=0 vanilla
         # row here because this experiment compares two NOTREKS penalties.
-        (100,), (.25, 1.0), 5,
-        ("dagma_notreks", "dagma_notreks_tcc"),
+        (100,), (0.0, .25, 1.0), 5,
+        ("dagma", "var_sortnregress", "r2_sortnregress",
+         "dagma_notreks", "dagma_notreks_tcc",
+         "dagma-nt-edge-mask", "dagma-nt-post"),
         graph_replicates=20),
 }
 

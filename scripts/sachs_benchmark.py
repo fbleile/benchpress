@@ -11,13 +11,18 @@ import numpy as np
 import pandas as pd
 
 from scripts.notreks_benchmark_pipeline import method_run
+from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import (
+    order_parent_postselection_from_candidate,
+)
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import metrics
 
 
 DATA = Path("resources/data/mydatasets/2005_sachs_2_cd3cd28icam2_log_std.csv")
 TRUTH = Path("resources/adjmat/myadjmats/sachs.csv")
 METHODS = (
-    "flop", "flop-nt-standard", "dagma", "dagma-pstrek",
+    "flop", "flop-nt-standard", "flop-nt-edge-mask", "flop-nt-post",
+    "dagma", "dagma-pstrek", "dagma-nt-edge-mask", "dagma-nt-post",
+    "var_sortnregress", "r2_sortnregress",
     "dagma-nonlinear", "dagma-nonlinear-pstrek",
 )
 
@@ -68,7 +73,8 @@ def run(args):
             sample_seed = seed * 1000003 + bootstrap
             rng = np.random.default_rng(sample_seed)
             X_boot = X[rng.integers(0, len(X), size=len(X))]
-            for fraction in args.knowledge_fraction:
+            solver_cache = {}
+            for fraction in [0.0, *[q for q in args.knowledge_fraction if q > 0]]:
                 constrained_pairs = select_pairs(
                     pairs, fraction, sample_seed + int(round(10000 * fraction)))
                 named_pairs = [(names[i], names[j]) for i, j in constrained_pairs]
@@ -86,26 +92,45 @@ def run(args):
                 pair_row.drop_duplicates(
                     subset=["seed", "bootstrap", "knowledge_fraction"],
                     keep="last").to_csv(pair_path, index=False)
-                for method in methods:
-                    effective_pairs = (
-                        [] if method in {"flop", "dagma"}
-                        else constrained_pairs)
+                vanilla = {"flop", "dagma", "var_sortnregress", "r2_sortnregress",
+                           "dagma-nonlinear"}
+                methods_for_job = (tuple(m for m in methods if m in vanilla)
+                                   if fraction == 0.0 else
+                                   tuple(m for m in methods if m not in vanilla))
+                for method in methods_for_job:
+                    effective_pairs = [] if fraction == 0.0 else constrained_pairs
                     key = (seed, bootstrap, float(fraction), method)
                     if key in done and not args.force:
                         continue
                     started = time.perf_counter()
                     status, error = "ok", ""
                     try:
-                        candidate, diag, runtime = method_run(
-                            method, X_boot, effective_pairs, sample_seed,
-                            args.attempts, args.flop_sweeps,
-                            args.dagma_stages, args.dagma_warm_iter,
-                            args.dagma_max_iter, args.trek_weight)
+                        attempt_count = (args.attempts if args.attempts is not None else
+                                         (args.flop_attempts if method.startswith("flop")
+                                          else args.dagma_attempts))
+                        base_family = "flop" if method.startswith("flop") else "dagma"
+                        base_key = (seed, bootstrap, base_family)
+                        if method in {"flop-nt-post", "dagma-nt-post"} and base_key in solver_cache:
+                            base_candidate, base_diag, base_runtime = solver_cache[base_key]
+                            candidate, post_diag = order_parent_postselection_from_candidate(
+                                X_boot, base_candidate, effective_pairs)
+                            diag = {**post_diag, "candidate_graph": base_candidate.copy(),
+                                    "optimizer_restarts": base_diag.get("optimizer_restarts", attempt_count),
+                                    "base_solver_runtime": base_runtime}
+                            runtime = time.perf_counter() - started
+                        else:
+                            candidate, diag, runtime = method_run(
+                                method, X_boot, effective_pairs, sample_seed,
+                                attempt_count, args.flop_sweeps, args.dagma_stages,
+                                args.dagma_warm_iter, args.dagma_max_iter,
+                                args.trek_weight)
+                            if method in {"flop", "dagma"}:
+                                solver_cache[base_key] = (candidate, diag, runtime)
                         row = metrics(
                             X_boot, truth, effective_pairs, method,
                             diag["candidate_graph"], candidate,
                             diag["cpdag"], runtime, args.attempts,
-                            diag.get("optimizer_restarts", args.attempts))
+                            diag.get("optimizer_restarts", attempt_count))
                     except Exception as exc:
                         status, error = "failed", repr(exc)
                         row = {"SHD_cpdag": np.nan,
@@ -123,6 +148,7 @@ def run(args):
                         "all_no_trek_pairs": len(pairs),
                         "standardized_input": data_path.name.endswith("_std.csv"),
                         "status": status, "error": error,
+                        "attempts_requested": attempt_count,
                     })
                     if args.force:
                         rows = [r for r in rows if not (
@@ -170,7 +196,10 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+", default=[1])
     parser.add_argument("--knowledge-fraction", type=float, nargs="+",
                         default=[.25, 1.0])
-    parser.add_argument("--attempts", type=int, default=5)
+    parser.add_argument("--attempts", type=int, default=None,
+                        help="override both solver-family restart counts")
+    parser.add_argument("--flop-attempts", type=int, default=20)
+    parser.add_argument("--dagma-attempts", type=int, default=2)
     parser.add_argument("--flop-sweeps", type=int, default=16)
     parser.add_argument("--dagma-stages", type=int, default=5)
     parser.add_argument("--dagma-warm-iter", type=int, default=30000)
