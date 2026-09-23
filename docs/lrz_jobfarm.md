@@ -49,14 +49,27 @@ command generator with `--python /absolute/path/to/python`.
 The benchmark should use the official static upstream data, not the expensive
 R/DRF generator, when that data is available. Download the upstream data and
 truth JSON into the project (or copy them from a shared project filesystem),
-then prepare a resumable cache:
+then prepare a resumable cache. The repository records the official upstream
+URLs; on the cluster the files can be fetched directly with:
+
+```bash
+mkdir -p "$PROJECT_DIR/cluster/causalassembly_input"
+curl -L --fail --retry 3 \
+  https://raw.githubusercontent.com/boschresearch/causalAssembly/main/data/data_sets/n_500_synthdata/assembly_line_500.csv \
+  -o "$PROJECT_DIR/cluster/causalassembly_input/assembly_line_500.csv"
+curl -L --fail --retry 3 \
+  https://raw.githubusercontent.com/boschresearch/causalAssembly/main/data/ground_truth/ground_truth.json \
+  -o "$PROJECT_DIR/cluster/causalassembly_input/ground_truth.json"
+```
+
+Then prepare a resumable cache:
 
 ```bash
 env PYTHONPATH="$PROJECT_DIR" .venv-lrz/bin/python \
   scripts/causalassembly_protocol.py prepare-static \
   --cache "$PROJECT_DIR/cluster/causalassembly_cache" \
-  --data-csv /absolute/path/to/assembly_line_500.csv \
-  --truth-json /absolute/path/to/ground_truth.json \
+  --data-csv "$PROJECT_DIR/cluster/causalassembly_input/assembly_line_500.csv" \
+  --truth-json "$PROJECT_DIR/cluster/causalassembly_input/ground_truth.json" \
   --seeds 1001 1002 1003 1004 1005
 ```
 
