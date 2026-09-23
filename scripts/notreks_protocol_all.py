@@ -283,6 +283,10 @@ def run(args):
                                                          master=args.master_seed)
                             pairs = select_pairs(all_pairs, q, knowledge_seed, strategy)
                             methods_for_job = _methods_for_job(spec, d, q)
+                            if args.methods:
+                                methods_for_job = tuple(
+                                    method for method in methods_for_job
+                                    if method in args.methods)
                             prior_id = f"{data_id}_q{q:g}_{strategy}_r{round_id}"
                             write_json(out / "knowledge" / f"{prior_id}.json", {
                                 "experiment": spec.name, "graph_id": graph_id,
@@ -458,6 +462,8 @@ def run(args):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--experiments", nargs="+", choices=[*REGISTRY, "all"], default=["all"])
+    p.add_argument("--methods", nargs="+", default=None,
+                   help="run only these registered method identifiers")
     p.add_argument("--fraction", type=float, default=.1)
     p.add_argument("--master-seed", type=int, default=20260917)
     p.add_argument("--graph-replicates", type=int, default=None,
