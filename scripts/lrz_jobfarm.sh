@@ -5,6 +5,7 @@
 # Keep #SBATCH directives immediately after the shebang. Slurm ignores
 # directives that occur after executable shell statements.
 #SBATCH -J notreks-jobfarm
+#SBATCH --get-user-env
 #SBATCH --clusters=cm4
 #SBATCH --partition=cm4_std
 #SBATCH --qos=cm4_std
