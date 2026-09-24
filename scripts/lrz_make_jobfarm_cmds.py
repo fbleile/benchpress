@@ -16,9 +16,14 @@ def main() -> None:
     p.add_argument("--python", default=".venv-lrz/bin/python")
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--command-file", type=Path, required=True)
+    p.add_argument("--fraction", type=float, default=1.0,
+                   help="synthetic protocol fraction (default: 1.0)")
     p.add_argument("--causal-seeds", default="1001 1002 1003 1004 1005")
     p.add_argument("--sachs-seed", default="1")
+    p.add_argument("--sachs-bootstrap-replicates", type=int, default=50)
     args = p.parse_args()
+    if not 0.0 < args.fraction <= 1.0:
+        p.error("--fraction must lie in (0, 1]")
     root = args.repo.resolve()
     py = str((root / args.python).resolve()) if not str(args.python).startswith("/") else args.python
     out = args.output_root.resolve()
@@ -38,7 +43,7 @@ def main() -> None:
             job_out = out / f"job_{experiment}_{method.replace('-', '_')}"
             lines.append(
                 f"{env} {py} {root}/scripts/notreks_protocol_all.py "
-                f"--experiments {experiment} --fraction 1.0 --methods {method} "
+                f"--experiments {experiment} --fraction {args.fraction:g} --methods {method} "
                 f"--workers 1 --flop-sweeps 16 --dagma-stages 5 "
                 f"--dagma-warm-iter 30000 --dagma-max-iter 60000 "
                 f"--max-wall-hours 24 --output-root {job_out}")
@@ -54,7 +59,7 @@ def main() -> None:
             f"{env} {py} {root}/scripts/sachs_benchmark.py "
             f"--data {root}/resources/data/mydatasets/2005_sachs/1_cd3cd28_n854.csv "
             f"--truth {root}/resources/adjmat/myadjmats/sachs.csv "
-            f"--seeds {args.sachs_seed} --bootstrap-replicates 50 "
+            f"--seeds {args.sachs_seed} --bootstrap-replicates {args.sachs_bootstrap_replicates} "
             f"--knowledge-fraction 0.25 1.0 --methods {method} "
             f"--flop-attempts 20 --dagma-attempts 2 --flop-sweeps 16 "
             f"--dagma-stages 5 --dagma-warm-iter 30000 --dagma-max-iter 60000 "
