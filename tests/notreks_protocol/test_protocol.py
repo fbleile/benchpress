@@ -37,3 +37,10 @@ def test_knowledge_rounds_are_reproducible_and_bounded():
     assert set(selected) <= set(pairs)
     assert select_pairs(pairs, .25, 99) == selected
     assert select_pairs(pairs, 1.0, 99) == pairs
+
+
+def test_ws_graph_generation_does_not_depend_on_current_working_directory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    graph = make_graph(5, "ws", 2, 12346)
+    assert graph.shape == (5, 5)
+    assert np.all(np.diag(graph) == 0)

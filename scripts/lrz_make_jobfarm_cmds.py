@@ -46,7 +46,7 @@ def main() -> None:
                 f"--experiments {experiment} --fraction {args.fraction:g} --methods {method} "
                 f"--workers 1 --flop-sweeps 16 --dagma-stages 5 "
                 f"--dagma-warm-iter 30000 --dagma-max-iter 60000 "
-                f"--max-wall-hours 24 --output-root {job_out}")
+                f"--max-wall-hours 24 --skip-figures --output-root {job_out}")
 
     sachs_methods = (
         "flop flop-nt-standard flop-nt-edge-mask flop-nt-post "

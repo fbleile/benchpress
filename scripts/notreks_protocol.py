@@ -28,6 +28,7 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.syst
 )
 
 MASTER_SEED = 20260917
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 METHODS = ("flop", "flop_notreks", "dagma", "dagma_notreks")
 METHOD_LABELS = {
     "flop": "vanilla_flop",
@@ -68,8 +69,9 @@ def make_graph(d: int, family: str, density: int, seed: int) -> np.ndarray:
         # `d` argument is the mean total neighbourhood degree, matching the
         # ER-k naming used by this protocol.
         del rng, order, graph
+        r_script = (REPOSITORY_ROOT / "resources/binarydatagen/generate_DAG.R").as_posix()
         expression = (
-            'source("resources/binarydatagen/generate_DAG.R"); '
+            f'source("{r_script}"); '
             'args <- commandArgs(trailingOnly=TRUE); '
             # R uses signed 32-bit seeds; protocol hashes are uint32 values.
             'set.seed(as.integer(as.numeric(args[[1]]) %% 2147483647)); '
@@ -84,6 +86,7 @@ def make_graph(d: int, family: str, density: int, seed: int) -> np.ndarray:
                 ["Rscript", "--vanilla", "-e", expression,
                  str(int(seed)), str(int(d)), str(int(density))],
                 check=True, capture_output=True, text=True,
+                cwd=REPOSITORY_ROOT,
             )
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(

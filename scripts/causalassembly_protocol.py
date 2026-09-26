@@ -12,6 +12,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 import urllib.request
 from pathlib import Path
 
@@ -29,6 +30,46 @@ PAPER_URL = "https://proceedings.mlr.press/v236/gobler24a.html"
 N_NODES = 98
 DISCOVERY_SIZES = (500, 2000, 5000)
 REFERENCE_SIZE = 5000
+
+
+def causalassembly_station_structural_knowledge(
+        truth: np.ndarray, nodes: list[str]) -> dict:
+    """Return hard directed exclusions for the station/source prior.
+
+    The prior is deliberately kept separate from NOTREKS: it forbids edges
+    from a downstream station to an upstream station and forbids incoming
+    edges to the two source nodes in Station 1.
+    """
+    truth = np.asarray(truth, dtype=bool)
+    if len(nodes) != truth.shape[0]:
+        raise ValueError("causalAssembly node labels do not match truth")
+    station = []
+    for node in nodes:
+        match = re.match(r"Station(\d+)_", str(node))
+        if match is None:
+            raise ValueError(f"cannot infer station from node {node!r}")
+        station.append(int(match.group(1)))
+    station1 = [i for i, value in enumerate(station) if value == 1]
+    sources = [i for i in station1 if not truth[:, i].any()]
+    if len(sources) != 2:
+        raise ValueError(
+            f"expected two Station 1 source nodes, found "
+            f"{[(i, nodes[i]) for i in sources]}")
+    forbidden = set()
+    for parent in range(len(nodes)):
+        for child in range(len(nodes)):
+            if parent != child and station[parent] > station[child]:
+                forbidden.add((parent, child))
+    for source in sources:
+        for parent in range(len(nodes)):
+            if parent != source:
+                forbidden.add((parent, source))
+    return {
+        "sources": [nodes[i] for i in sources],
+        "station_by_node": station,
+        "forbidden_edges": sorted(forbidden),
+        "forbidden_edge_count": len(forbidden),
+    }
 
 
 class _NormalizingChoiceRNG:
@@ -50,6 +91,11 @@ def derive_seed(namespace: str, *parts: object, master: int = 20260917) -> int:
     payload = json.dumps([namespace, master, *parts], sort_keys=False,
                          separators=(",", ":")).encode()
     return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big") % (2**32)
+
+
+def r_seed(value: int) -> int:
+    """Map a reproducible Python seed into R's signed 32-bit integer range."""
+    return int(int(value) % (2**31 - 1)) or 1
 
 
 def _require_upstream():
@@ -357,7 +403,8 @@ def prepare_cache(cache_dir: Path, seeds: list[int], *, fit_seed: int = 20260917
             continue
         fit_params = {"min_node_size": 15, "num_trees": num_trees,
                       "splitting_rule": "FourierMMD",
-                      "seed": derive_seed("drf-fit", fit_seed, node_index)}
+                      "seed": r_seed(derive_seed("drf-fit", fit_seed,
+                                                   node_index))}
         if num_threads is not None:
             fit_params["num_threads"] = num_threads
         forest = DRF(**fit_params)

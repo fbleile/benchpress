@@ -17,7 +17,7 @@ import pandas as pd
 
 from scripts.causalassembly_protocol import (
     DISCOVERY_SIZES, derive_seed, nested_pairs, nonlinear_screen,
-    oracle_no_treks,
+    oracle_no_treks, causalassembly_station_structural_knowledge,
 )
 from scripts.notreks_benchmark_pipeline import method_run
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import (
@@ -27,9 +27,12 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.syst
 
 CORE_METHODS = (
     "flop", "flop-nt-standard", "flop-nt-edge-mask", "flop-nt-post",
+    "flop-nt-notreks",
     "dagma", "dagma-pstrek", "dagma-nt-edge-mask", "dagma-nt-post",
+    "dagma-nt-notreks",
     "var_sortnregress", "r2_sortnregress",
     "dagma-nonlinear", "dagma-nonlinear-pstrek",
+    "dagma-nonlinear-nt-notreks",
 )
 
 
@@ -38,7 +41,12 @@ def _hash(value) -> str:
 
 
 def _screen(cache: Path, seed: int, args) -> list[tuple[int, int]]:
-    path = cache / f"screen_{seed}.json"
+    config_key = (
+        f"cap{args.screen_candidate_cap}_b{args.screen_blocks}_"
+        f"p{args.screen_permutations}_q{args.screen_null_quantile:g}_"
+        f"m{args.screen_effect_margin:g}"
+    )
+    path = cache / f"screen_{seed}_{config_key}.json"
     if path.exists():
         return [tuple(p) for p in json.loads(path.read_text())["pairs"]]
     artifact = np.load(cache / f"seed_{seed}.npz")
@@ -48,10 +56,20 @@ def _screen(cache: Path, seed: int, args) -> list[tuple[int, int]]:
         null_quantile=args.screen_null_quantile,
         effect_margin=args.screen_effect_margin,
         seed=derive_seed("screen", seed))
-    diagnostics.to_csv(cache / f"screen_{seed}.csv", index=False)
+    diagnostics.to_csv(path.with_suffix(".csv"), index=False)
     (cache / f"screen_{seed}.json").write_text(
         json.dumps({**summary, "pairs": [list(p) for p in pairs]}, indent=2) + "\n")
     return pairs
+
+
+def _knowledge_signature(args) -> str:
+    if args.mode != "estimated_notreks":
+        return "oracle_graphical_no_trek"
+    return (f"screen_cap={args.screen_candidate_cap};"
+            f"blocks={args.screen_blocks};"
+            f"permutations={args.screen_permutations};"
+            f"null_quantile={args.screen_null_quantile:g};"
+            f"effect_margin={args.screen_effect_margin:g}")
 
 
 def _ensure_cached_seeds(cache: Path, seeds: tuple[int, ...], manifest: dict) -> None:
@@ -93,6 +111,14 @@ def run(args) -> None:
     cache = args.cache.resolve()
     manifest = json.loads((cache / "manifest.json").read_text())
     truth = np.load(cache / "ground_truth.npz")["truth"].astype(np.uint8)
+    nodes = manifest.get("nodes")
+    structural = {"forbidden_edges": [], "sources": []}
+    if args.structural_knowledge == "station_order_sources":
+        if not nodes:
+            raise ValueError("cache manifest has no node labels")
+        structural = causalassembly_station_structural_knowledge(truth, nodes)
+    forbidden_edges = tuple(tuple(map(int, edge))
+                            for edge in structural["forbidden_edges"])
     all_oracle_pairs = oracle_no_treks(truth)
     aliases = {
         "flop_notreks": "flop-nt-standard",
@@ -109,14 +135,22 @@ def run(args) -> None:
     unknown = set(methods) - set(CORE_METHODS)
     if unknown:
         raise ValueError(f"unknown causalAssembly methods: {sorted(unknown)}")
+    estimated_methods = {"flop-nt-notreks", "dagma-nt-notreks",
+                         "dagma-nonlinear-nt-notreks"}
+    if estimated_methods.intersection(methods) and args.mode != "estimated_notreks":
+        raise ValueError(
+            "flop-nt-notreks and dagma-nt-notreks require "
+            "--mode estimated_notreks")
     sizes = tuple(args.n or DISCOVERY_SIZES)
     seeds = tuple(args.seeds)
     _ensure_cached_seeds(cache, seeds, manifest)
     rows_path = args.output / "raw" / "results.csv"
     rows_path.parent.mkdir(parents=True, exist_ok=True)
     rows = pd.read_csv(rows_path).to_dict("records") if rows_path.exists() else []
+    knowledge_signature = _knowledge_signature(args)
     done = {(r.get("seed"), r.get("n"), r.get("knowledge_mode"),
-             r.get("knowledge_fraction"), r.get("method"))
+             r.get("knowledge_fraction"), r.get("method"),
+             r.get("knowledge_signature"))
             for r in rows if r.get("solver_status") == "ok"}
     for seed in seeds:
         artifact = np.load(cache / f"seed_{seed}.npz")
@@ -155,7 +189,8 @@ def run(args) -> None:
             solver_cache = {}
             for q_label, pairs, q_value, knowledge_mode, methods_for_job in jobs:
                 for method in methods_for_job:
-                    key = (seed, n, knowledge_mode, q_value, method)
+                    key = (seed, n, knowledge_mode, q_value, method,
+                           knowledge_signature)
                     if key in done:
                         continue
                     start = time.perf_counter()
@@ -179,13 +214,21 @@ def run(args) -> None:
                                 method, X, pairs, derive_seed("method", seed, n,
                                 q_label, method), attempt_count, args.flop_sweeps,
                                 args.dagma_stages, args.dagma_warm_iter,
-                                args.dagma_max_iter, args.trek_weight)
+                                args.dagma_max_iter, args.trek_weight,
+                                forbidden_edges=forbidden_edges)
                             if method in {"flop", "dagma"}:
                                 solver_cache[(seed, n, method)] = (candidate, diag, runtime)
                         row = metrics(X, truth, pairs, method,
                                       diag["candidate_graph"], candidate,
                                       diag["cpdag"], runtime, attempt_count,
                                       diag.get("optimizer_restarts", attempt_count))
+                        for diagnostic_key in (
+                                "raw_weight_max", "raw_edges_above_1e-8",
+                                "raw_edges_above_screening_floor",
+                                "nonlinear_dagma_notreks_penalty",
+                                "postselection_policy", "postprocessed_score"):
+                            if diagnostic_key in diag:
+                                row[diagnostic_key] = diag[diagnostic_key]
                     except Exception as exc:
                         status, error = "failed", repr(exc)
                         row = {"SHD_cpdag": np.nan, "F1_skel": np.nan,
@@ -199,9 +242,26 @@ def run(args) -> None:
                         "knowledge_fraction": q_value,
                         "requested_knowledge_pairs": len(pairs),
                         "oracle_knowledge_pairs": len(all_oracle_pairs),
+                        "knowledge_test": (
+                            "conservative_marginal_independence_screen"
+                            if args.mode == "estimated_notreks" else
+                            "oracle_graphical_no_trek"),
+                        "knowledge_signature": knowledge_signature,
                         "data_model": "causalAssembly_semisynthetic_nonlinear",
-                        "discovery_score": "gaussian_bic_existing_solver",
-                        "score_misspecification": True,
+                        "optimizer_score": (
+                            "mlp_profiled_log_mse" if method.startswith("dagma-nonlinear")
+                            else "profiled_unequal_variance_gaussian"),
+                        "selection_score": (
+                            "mlp_profiled_log_mse_plus_l1_fixed_support"
+                            if method.startswith("dagma-nonlinear")
+                            else "profiled_unequal_variance_gaussian_bic"),
+                        "discovery_score": (
+                            "mlp_profiled_log_mse_plus_structural_penalties"
+                            if method.startswith("dagma-nonlinear")
+                            else "profiled_unequal_variance_gaussian"),
+                        # Nonlinear DAGMA fits an MLP, but its current final
+                        # support selection/refit is still linear-Gaussian.
+                        "score_misspecification": False,
                         "standardized_for_discovery": False,
                         "sample_mean_checksum": _hash(means.tolist()),
                         "sample_scale_checksum": _hash(scales.tolist()),
@@ -209,6 +269,9 @@ def run(args) -> None:
                         "solver_status": status, "solver_error": error,
                         "attempts_requested": attempt_count,
                         "package_metadata": json.dumps(manifest.get("package", {})),
+                        "structural_knowledge": args.structural_knowledge,
+                        "structural_source_nodes": json.dumps(structural["sources"]),
+                        "structural_forbidden_edges": len(forbidden_edges),
                     })
                     supplied = {tuple(map(int, p)) for p in pairs}
                     oracle = {tuple(map(int, p)) for p in all_oracle_pairs}
@@ -242,6 +305,9 @@ def run(args) -> None:
         "flop_attempts": args.flop_attempts,
         "dagma_attempts": args.dagma_attempts,
         "oracle_pairs": len(all_oracle_pairs), "cache_manifest": manifest,
+        "structural_knowledge": args.structural_knowledge,
+        "structural_source_nodes": structural["sources"],
+        "structural_forbidden_edges": len(forbidden_edges),
     }, indent=2, default=str) + "\n")
 
 
@@ -251,6 +317,9 @@ def main() -> None:
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--mode", choices=("oracle_notreks", "estimated_notreks"),
                    default="oracle_notreks")
+    p.add_argument("--structural-knowledge",
+                   choices=("none", "station_order_sources"), default="none",
+                   help="optional hard source/station-order directed prior")
     p.add_argument("--seeds", type=int, nargs="+", required=True)
     p.add_argument("--n", type=int, nargs="*")
     p.add_argument("--q", type=float, nargs="+", default=[.10, .25, .50, 1.0])

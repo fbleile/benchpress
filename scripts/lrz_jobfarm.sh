@@ -14,6 +14,7 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --time=24:00:00
 #SBATCH --export=ALL
+#SBATCH --mail-type=BEGIN,FAIL,END,TIME_LIMIT_50,TIME_LIMIT_80,TIME_LIMIT_90,REQUEUE
 
 set -euo pipefail
 
@@ -46,4 +47,24 @@ if [[ "${RESET_JOBFARM:-0}" == "1" ]]; then
   rm -f "${TASKDB}.db"
   rm -rf "${TASKDB}.txt_res"
 fi
+set +e
 jobfarm start "$CMD_FILE"
+jobfarm_rc=$?
+set -e
+
+# JobFarm can return success even when individual tasks failed.  Convert that
+# condition into a failed Slurm job so --mail-type=FAIL notifies the user.
+status_text="$(jobfarm status "$CMD_FILE" 2>&1 || true)"
+status_counts="$(sed -n 's/.*= \[ \([0-9][0-9]*\) \([0-9][0-9]*\) \([0-9][0-9]*\) \].*/\1 \2 \3/p' <<<"$status_text")"
+if [[ -z "$status_counts" ]]; then
+  echo "$status_text" >&2
+  echo "Could not parse JobFarm status; marking Slurm job failed." >&2
+  exit 1
+fi
+read -r success_count failed_count total_count <<<"$status_counts"
+if (( failed_count > 0 || success_count + failed_count < total_count )); then
+  echo "$status_text" >&2
+  echo "JobFarm reported failed tasks; marking Slurm job failed." >&2
+  exit 1
+fi
+exit "$jobfarm_rc"

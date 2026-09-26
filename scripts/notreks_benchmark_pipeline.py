@@ -233,31 +233,36 @@ def cells(experiment: str, *, n_override: int | None = None,
 
 
 def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
-               dagma_warm_iter, dagma_max_iter, trek_weight):
+               dagma_warm_iter, dagma_max_iter, trek_weight,
+               forbidden_edges=()):
     started = time.perf_counter()
     if name in {"var_sortnregress", "r2_sortnregress"}:
         from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.sortnregress import sortnregress
         candidate, diag = sortnregress(
             X, kind="variance" if name == "var_sortnregress" else "r2")
     elif name == "flop":
-        candidate, diag = vanilla_flop_candidate(X, seed, attempts)
-    elif name == "flop-nt-standard":
+        candidate, diag = vanilla_flop_candidate(
+            X, seed, attempts, forbidden_edges=forbidden_edges)
+    elif name in {"flop-nt-standard", "flop-nt-notreks"}:
         candidate, diag = flop_notreks_candidate(
             X, pairs, seed, attempts, flop_sweeps,
-            search_version="flop_like", local_greedy_passes=8)
+            search_version="flop_like", local_greedy_passes=8,
+            forbidden_edges=forbidden_edges)
     elif name == "flop-nt-local":
         candidate, diag = hybrid_flop_notreks_candidate(
             X, pairs, seed, attempts, flop_sweeps,
-            search_version="local_greedy_rust", local_greedy_passes=8)
+            search_version="local_greedy_rust", local_greedy_passes=8,
+            forbidden_edges=forbidden_edges)
     elif name == "flop-nt-global":
         candidate, diag = hybrid_flop_notreks_candidate(
             X, pairs, seed, attempts, flop_sweeps,
-            search_version="global_greedy_rust", local_greedy_passes=8)
+            search_version="global_greedy_rust", local_greedy_passes=8,
+            forbidden_edges=forbidden_edges)
     elif name in {"flop-edge-mask", "flop-nt-edge-mask"}:
         from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import direct_mask_edges
         candidate, diag = flop_notreks_candidate(
             X, [], seed, attempts, flop_sweeps,
-            forbidden_edges=direct_mask_edges(pairs),
+            forbidden_edges=tuple(direct_mask_edges(pairs)) + tuple(forbidden_edges),
             search_version="local_greedy_rust", local_greedy_passes=8)
     elif name == "flop-nt-post":
         candidate, diag = flop_notreks_order_postselection_candidate(
@@ -268,26 +273,32 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
     elif name == "dagma":
         candidate, diag = dagma_candidate(
             X, [], False, False, seed, attempts, dagma_warm_iter,
-            dagma_max_iter, dagma_stages, trek_weight=trek_weight)
-    elif name == "dagma-pstrek":
+            dagma_max_iter, dagma_stages, trek_weight=trek_weight,
+            extra_forbidden_edges=forbidden_edges)
+    elif name in {"dagma-pstrek", "dagma-nt-notreks"}:
         candidate, diag = dagma_candidate(
             X, pairs, True, False, seed, attempts, dagma_warm_iter,
-            dagma_max_iter, dagma_stages, trek_weight=trek_weight)
+            dagma_max_iter, dagma_stages, trek_weight=trek_weight,
+            extra_forbidden_edges=forbidden_edges)
     elif name == "dagma_notreks_tcc":
         candidate, diag = dagma_candidate(
             X, pairs, True, False, seed, attempts, dagma_warm_iter,
             dagma_max_iter, dagma_stages, trek_weight=trek_weight,
             constraint_regime="tcc", tcc_coupling=1.0,
-            dag_penalty_weight=0.0)
-    elif name in {"dagma-nonlinear", "dagma-nonlinear-pstrek"}:
+            dag_penalty_weight=0.0,
+            extra_forbidden_edges=forbidden_edges)
+    elif name in {"dagma-nonlinear", "dagma-nonlinear-pstrek",
+                  "dagma-nonlinear-nt-notreks"}:
         candidate, diag = nonlinear_dagma_candidate(
-            X, pairs if name.endswith("pstrek") else [], seed,
+            X, pairs if name.endswith(("pstrek", "nt-notreks")) else [], seed,
             trek_weight=trek_weight, stages=dagma_stages,
-            warm_iter=dagma_warm_iter, max_iter=dagma_max_iter)
+            warm_iter=dagma_warm_iter, max_iter=dagma_max_iter,
+            forbidden_edges=forbidden_edges)
     elif name in {"dagma-edge-mask", "dagma-nt-edge-mask"}:
         candidate, diag = dagma_candidate(
             X, pairs, False, True, seed, attempts, dagma_warm_iter,
-            dagma_max_iter, dagma_stages, trek_weight=trek_weight)
+            dagma_max_iter, dagma_stages, trek_weight=trek_weight,
+            extra_forbidden_edges=tuple(forbidden_edges))
     elif name == "dagma-nt-post":
         candidate, diag = dagma_candidate(
             X, pairs, False, False, seed, attempts, dagma_warm_iter,
@@ -295,6 +306,16 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
             apply_notreks_postselection=True, trek_weight=trek_weight)
     else:
         raise ValueError(f"unknown method {name}")
+    if forbidden_edges:
+        # Directed structural knowledge is deletion-safe.  This also covers
+        # the order-postselection methods, whose optimizer wrapper predates
+        # the general hard-edge-mask argument.
+        candidate = np.asarray(candidate, dtype=np.uint8).copy()
+        for parent, child in forbidden_edges:
+            candidate[int(parent), int(child)] = 0
+        from workflow.rules.structure_learning_algorithms.flop.adapter import convert_flop_cpdag
+        diag["candidate_graph"] = candidate.copy()
+        diag["cpdag"] = convert_flop_cpdag(candidate, X.shape[1])
     elapsed = time.perf_counter() - started
     return candidate, diag, elapsed
 

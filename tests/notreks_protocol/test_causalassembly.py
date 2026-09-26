@@ -10,10 +10,10 @@ from scripts.notreks_protocol_registry import REGISTRY
 
 def test_causalassembly_is_registered_with_paired_grid():
     spec = REGISTRY["causalassembly"]
-    assert spec.dataset == "causalassembly_full"
-    assert spec.n_values == (500, 2000, 5000)
-    assert spec.q_values == (.10, .25, .50, 1.0)
-    assert spec.graph_replicates == 10
+    assert spec.dataset == "causalassembly_static_n500"
+    assert spec.n_values == (500,)
+    assert spec.q_values == (.25, 1.0)
+    assert spec.graph_replicates == 5
     assert spec.attempts_for("flop") == 20
     assert spec.attempts_for("dagma_notreks") == 2
 

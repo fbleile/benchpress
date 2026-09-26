@@ -435,8 +435,9 @@ def run(args):
             SHD_cpdag_std=("SHD_cpdag", "std"), runtime_mean=("candidate_runtime", "mean"),
             violations_max=("violations_after", "max"))
     summary.to_csv(out / "analysis" / "summary.csv", index=False)
-    from scripts.notreks_production_figures import write_protocol_figures
-    write_protocol_figures(frame, out / "analysis" / "figures", out)
+    if not args.skip_figures:
+        from scripts.notreks_production_figures import write_protocol_figures
+        write_protocol_figures(frame, out / "analysis" / "figures", out)
     write_json(out / "manifest.json", {"protocol_version": "20260917-v2",
         "master_seed": args.master_seed, "fraction": args.fraction,
         "experiments": [s.name for s in specs],
@@ -482,6 +483,8 @@ def main():
     p.add_argument("--workers", type=int, default=1,
                    help="number of concurrent solver jobs per data/prior cell")
     p.add_argument("--output-root", type=Path, required=True)
+    p.add_argument("--skip-figures", action="store_true",
+                   help="do not generate publication figures; use the separate analysis step")
     args = p.parse_args()
     if args.workers < 1:
         p.error("--workers must be at least 1")

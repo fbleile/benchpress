@@ -80,6 +80,14 @@ def _metric_label(metric):
 def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False):
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+    columns = ["solver", "knowledge", "n", "runtime_mean", "runtime_q25",
+               "runtime_q75", "SHD_mean", "SHD_sd", "runs"]
+    plot_data = out / ("plot_data_paired_pareto" + suffix + ".csv")
+    required = {"experiment_id", "d", "graph_family", "graph_density", "n",
+                "method", "knowledge_fraction", "candidate_runtime", metric}
+    if not required.issubset(df.columns):
+        pd.DataFrame(columns=columns).to_csv(plot_data, index=False)
+        return
     if all_datasets:
         x = df[df.experiment_id == "main"].copy()
     else:
@@ -113,7 +121,10 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False):
                                  runtime_q75=t.candidate_runtime.quantile(.75),
                                  SHD_mean=t[metric].mean(), SHD_sd=t[metric].std(ddof=1),
                                  runs=len(t)))
-    src=pd.DataFrame(rows); src.to_csv(out/("plot_data_paired_pareto"+suffix+".csv"),index=False)
+    src=pd.DataFrame(rows, columns=columns)
+    src.to_csv(plot_data, index=False)
+    if src.empty:
+        return
     # One shared axis makes the solver comparison direct.  A signed-log scale
     # keeps the low FLOP region visible while still accommodating DAGMA values.
     fig, ax = plt.subplots(figsize=(5.9, 4.35))
