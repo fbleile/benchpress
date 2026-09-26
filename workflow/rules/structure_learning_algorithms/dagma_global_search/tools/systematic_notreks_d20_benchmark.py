@@ -2140,6 +2140,14 @@ def main():
         )
     summary.to_csv(args.output_dir / "summary.csv", index=False)
     print(summary.to_string(index=False))
+    compact_columns = [
+        "method", "SHD_cpdag_mean", "Ancestor_AID_cpdag_mean",
+        "notreks_pair_f1_mean", "notreks_supplied_pairs_mean",
+        "runtime_mean",
+    ]
+    compact_columns = [c for c in compact_columns if c in summary.columns]
+    print("\nCompact summary:\n" +
+          summary[compact_columns].to_string(index=False))
 
 
 if __name__ == "__main__":
