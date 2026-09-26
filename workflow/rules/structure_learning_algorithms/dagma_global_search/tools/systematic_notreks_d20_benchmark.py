@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import flopsearch
+from scipy.stats import pearsonr
 
 from workflow.rules.structure_learning_algorithms.flop.adapter import (
     convert_flop_cpdag,
@@ -60,6 +61,36 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.benc
 
 ROOT = Path(__file__).resolve().parents[5]
 R_EVAL = ROOT / "workflow/rules/evaluation/benchmarks/run_summarise.R"
+
+
+def marginal_independence_screen(X, *, correlation_threshold=0.10,
+                                 alpha=0.01, blocks=5):
+    """Conservatively infer marginally independent pairs from data only.
+
+    A pair is supplied as a no-oracle NOTREKS pair only when Pearson's test
+    fails to reject independence and the absolute correlation remains below
+    the effect threshold in the full sample and in every contiguous block.
+    This is deliberately a marginal screen, not a graphical-oracle shortcut.
+    """
+    X = np.asarray(X, dtype=float)
+    n, d = X.shape
+    if blocks < 1 or blocks > n:
+        raise ValueError("blocks must lie in [1, n]")
+    cuts = np.array_split(np.arange(n), blocks)
+    selected = []
+    diagnostics = []
+    for i, j in combinations(range(d), 2):
+        rs, ps = [], []
+        for idx in [np.arange(n), *cuts]:
+            r, p = pearsonr(X[idx, i], X[idx, j])
+            rs.append(float(r)); ps.append(float(p))
+        accepted = (max(abs(r) for r in rs) <= correlation_threshold
+                    and min(ps) >= alpha)
+        diagnostics.append({"i": i, "j": j, "max_abs_r": max(abs(r) for r in rs),
+                            "min_p": min(ps), "accepted": accepted})
+        if accepted:
+            selected.append((i, j))
+    return selected, pd.DataFrame(diagnostics)
 
 
 def trek_violation_mass(graph, pairs):
@@ -121,10 +152,12 @@ def _diagnostic_graph(d, diagnostics):
     return graph
 
 
-def vanilla_flop_candidate(X, seed, attempts, lambda_bic=2.0):
+def vanilla_flop_candidate(X, seed, attempts, lambda_bic=2.0,
+                           forbidden_edges=()):
     raw, diagnostics = flopsearch.flop_notreks(
         X, lambda_bic, [], restarts=max(0, attempts - 1),
         seed=seed, search_version="global_greedy_rust",
+        forbidden_edges=tuple(forbidden_edges),
         return_diagnostics=True)
     graph = _diagnostic_graph(X.shape[1], diagnostics)
     return graph, {
@@ -460,7 +493,7 @@ def flop_notreks_adaptive_candidate(X, pairs, seed, attempts, *, lambda_bic=2.0)
 def hybrid_flop_notreks_candidate(X, pairs, seed, attempts, sweeps,
                                    lambda_bic=2.0,
                                    search_version="local_greedy_rust",
-                                   local_greedy_passes=8):
+                                   local_greedy_passes=8, forbidden_edges=()):
     """Pool one vanilla attempt with the remaining constrained attempts.
 
     The vanilla candidate is retained only when it already satisfies the
@@ -470,10 +503,12 @@ def hybrid_flop_notreks_candidate(X, pairs, seed, attempts, sweeps,
         return flop_notreks_candidate(
             X, pairs, seed, attempts, sweeps, lambda_bic=lambda_bic,
             search_version=search_version,
-            local_greedy_passes=local_greedy_passes)
+            local_greedy_passes=local_greedy_passes,
+            forbidden_edges=forbidden_edges)
 
     vanilla_candidate, vanilla_diag = vanilla_flop_candidate(
-        X, seed, 1, lambda_bic=lambda_bic)
+        X, seed, 1, lambda_bic=lambda_bic,
+        forbidden_edges=forbidden_edges)
     vanilla_bic = float(gaussian_bic(
         X, vanilla_candidate, lambda_bic=lambda_bic)[0])
     vanilla_feasible = common_ancestor_violations(
@@ -483,7 +518,8 @@ def hybrid_flop_notreks_candidate(X, pairs, seed, attempts, sweeps,
     constrained_candidate, constrained_diag = flop_notreks_candidate(
         X, pairs, seed, constrained_attempts, sweeps,
         lambda_bic=lambda_bic, search_version=search_version,
-        local_greedy_passes=local_greedy_passes)
+        local_greedy_passes=local_greedy_passes,
+        forbidden_edges=forbidden_edges)
     constrained_bic = float(gaussian_bic(
         X, constrained_candidate, lambda_bic=lambda_bic)[0])
 
@@ -879,10 +915,12 @@ def corrupt_knowledge(pairs, all_pairs, d, fraction, seed):
     return sorted(retained)
 
 
-def dagma_mask(d, pairs):
+def dagma_mask(d, pairs, extra_forbidden_edges=()):
     mask = np.ones((d, d), dtype=float)
     for left, right in direct_mask_edges(pairs):
         mask[left, right] = 0.0
+    for left, right in extra_forbidden_edges:
+        mask[int(left), int(right)] = 0.0
     np.fill_diagonal(mask, 0.0)
     return mask
 
@@ -901,7 +939,8 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
                     notreks_resolvent_normalization=False,
                     notreks_stage_scaling="s2_over_d_minus_1",
                     lambda1=0.03, constraint_regime=None,
-                    tcc_coupling=1.0, dag_penalty_weight=1.0):
+                    tcc_coupling=1.0, dag_penalty_weight=1.0,
+                    extra_forbidden_edges=()):
     config = ProductionConfig(
         restarts=attempts,
         seed=seed,
@@ -924,7 +963,8 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
         mu_schedule=(tuple(mu_schedule) if mu_schedule is not None else (1.0, .3, .1, .01, .001)),
         s=(tuple(s_schedule) if s_schedule is not None else (1.1, 1.0, .9, .8, .7)),
         record_trajectory=record_trajectory,
-        edge_mask=dagma_mask(X.shape[1], pairs) if direct_mask else None,
+        edge_mask=(dagma_mask(X.shape[1], pairs, extra_forbidden_edges)
+                   if direct_mask or extra_forbidden_edges else None),
     )
     result, all_restarts = run_production_pipeline(
         X, pairs if use_notreks else [], config)
@@ -1404,6 +1444,13 @@ def main():
                  "row_capped_abs"),
         help="run DAGMA-only adjacency-map ablations")
     parser.add_argument("--dagma-map-tau", type=float, default=1.0)
+    parser.add_argument("--no-oracle-correlation-threshold", type=float,
+                        default=0.10,
+                        help="maximum absolute block Pearson correlation")
+    parser.add_argument("--no-oracle-alpha", type=float, default=0.01,
+                        help="minimum Pearson-test p-value for the screen")
+    parser.add_argument("--no-oracle-blocks", type=int, default=5,
+                        help="number of stability blocks for marginal screening")
     parser.add_argument(
         "--dagma-learned-lambda1-ratio", type=float, default=0.03,
         help="frozen c* in lambda1=c*lambda_max for learned coefficient fits")
@@ -1535,6 +1582,16 @@ def main():
         partial_chromatic = chromatic_upper_bound(config.d, pairs)
         full_chromatic = chromatic_upper_bound(config.d, all_pairs)
         candidates = {}
+        no_oracle_methods = {"flop-nt-no-oracle", "dagma-nt-no-oracle"}
+        screened_pairs = []
+        screen_diagnostics = pd.DataFrame()
+        if no_oracle_methods.intersection(args.methods):
+            screened_pairs, screen_diagnostics = marginal_independence_screen(
+                X, correlation_threshold=args.no_oracle_correlation_threshold,
+                alpha=args.no_oracle_alpha, blocks=args.no_oracle_blocks)
+            screen_diagnostics.to_csv(
+                args.output_dir / f"no_oracle_screen_seed_{seed}.csv",
+                index=False)
         for method in args.methods:
             started = time.perf_counter()
             if method == "flop":
@@ -1566,6 +1623,14 @@ def main():
                     lambda_bic=config.flop_lambda_bic,
                     search_version="flop_like",
                     local_greedy_passes=config.flop_local_passes)
+            elif method == "flop-nt-no-oracle":
+                candidate, optimizer_diag = flop_notreks_candidate(
+                    X, screened_pairs, seed, config.attempts, config.flop_sweeps,
+                    lambda_bic=config.flop_lambda_bic,
+                    search_version="flop_like",
+                    local_greedy_passes=config.flop_local_passes)
+                optimizer_diag["no_oracle_screen"] = "marginal_pearson_blocks"
+                optimizer_diag["no_oracle_screen_pairs"] = len(screened_pairs)
             elif method == "flop_notreks_greedy":
                 candidate, optimizer_diag = flop_notreks_candidate(
                     X, pairs, seed, config.attempts, config.flop_sweeps,
@@ -1721,7 +1786,10 @@ def main():
                 # supplied pairs during optimization as dagma_notreks.
                 use_notreks = (
                     method.startswith("dagma_notreks")
+                    or method == "dagma-nt-no-oracle"
                     or "normalized_projection" in method)
+                solver_pairs = (screened_pairs if method == "dagma-nt-no-oracle"
+                                else pairs)
                 map_labels = {
                     "square", "abs", "pseudo_huber",
                     "entrywise_capped_square", "row_capped_square",
@@ -1764,7 +1832,7 @@ def main():
                         X, pairs, seed, config.dagma_warm_iter,
                         config.dagma_max_iter, config.dagma_stages)
                 candidate, optimizer_diag = dagma_candidate(
-                    X, pairs, use_notreks, direct_mask, seed,
+                    X, solver_pairs, use_notreks, direct_mask, seed,
                     config.attempts, config.dagma_warm_iter,
                     config.dagma_max_iter, config.dagma_stages,
                     trek_weight=effective_trek_weight,
@@ -1828,8 +1896,9 @@ def main():
 
         for method, (candidate, optimizer_diag,
                      candidate_runtime) in candidates.items():
+            metric_pairs = screened_pairs if method in no_oracle_methods else pairs
             row = metrics(
-                X, truth, pairs, method, optimizer_diag["candidate_graph"],
+                X, truth, metric_pairs, method, optimizer_diag["candidate_graph"],
                 candidate, optimizer_diag["cpdag"], candidate_runtime,
                 config.attempts, optimizer_diag["optimizer_restarts"],
                 config.flop_lambda_bic)
@@ -1852,6 +1921,7 @@ def main():
                     "notreks_stage_scaling", "none"),
                 "notreks_used": bool(
                     method.startswith("dagma_notreks")
+                    or method in no_oracle_methods
                     or "normalized_projection" in method),
                 "sortnregress_data_scale": optimizer_diag.get(
                     "sortnregress_data_scale"),
@@ -1864,6 +1934,9 @@ def main():
                     "adjacency_map_s_floor"),
                 "adjacency_map_theoretical_max_entry": optimizer_diag.get(
                     "adjacency_map_theoretical_max_entry"),
+                "no_oracle_screen": optimizer_diag.get("no_oracle_screen"),
+                "no_oracle_screen_pairs": optimizer_diag.get(
+                    "no_oracle_screen_pairs"),
                 "notreks_resolvent_normalization": optimizer_diag.get(
                     "notreks_resolvent_normalization", False),
                 "constraint_regime": optimizer_diag.get(
@@ -1871,12 +1944,26 @@ def main():
                 "tcc_coupling": optimizer_diag.get("tcc_coupling"),
                 "dagma_stage_diagnostics": json.dumps(
                     optimizer_diag.get("stage_diagnostics", [])),
-                "notreks_pairs": len(pairs),
+                "notreks_pairs": len(screened_pairs if method in no_oracle_methods
+                                      else pairs),
                 "clean_notreks_pairs": len(clean_pairs),
                 "corrupted_notreks_pairs": sum(
                     tuple(sorted(pair)) not in true_pair_set for pair in pairs),
                 "chromatic_partial_dsat_upper": partial_chromatic,
                 "chromatic_full_dsat_upper": full_chromatic,
+            })
+            metric_pairs = screened_pairs if method in no_oracle_methods else pairs
+            supplied = {tuple(sorted((int(i), int(j))))
+                        for i, j in metric_pairs}
+            pair_tp = len(supplied & true_pair_set)
+            pair_fp = len(supplied - true_pair_set)
+            pair_fn = len(true_pair_set - supplied)
+            row.update({
+                "notreks_pair_precision": pair_tp / max(1, pair_tp + pair_fp),
+                "notreks_pair_recall": pair_tp / max(1, pair_tp + pair_fn),
+                "notreks_pair_f1": 2 * pair_tp / max(
+                    1, 2 * pair_tp + pair_fp + pair_fn),
+                "notreks_supplied_pairs": len(supplied),
             })
             for key in (
                     "order_guided_raw_feasible_count",
@@ -2025,6 +2112,10 @@ def main():
             Ancestor_AID_dag_mean=("Ancestor_AID_dag", "mean"),
             Parent_AID_cpdag_mean=("Parent_AID_cpdag", "mean"),
             Ancestor_AID_cpdag_mean=("Ancestor_AID_cpdag", "mean"),
+            notreks_pair_precision_mean=("notreks_pair_precision", "mean"),
+            notreks_pair_recall_mean=("notreks_pair_recall", "mean"),
+            notreks_pair_f1_mean=("notreks_pair_f1", "mean"),
+            notreks_supplied_pairs_mean=("notreks_supplied_pairs", "mean"),
             directed_SHD_mean=("directed_SHD", "mean"),
             directed_SHD_std=("directed_SHD", "std"),
             F1_skel_mean=("F1_skel", "mean"),
