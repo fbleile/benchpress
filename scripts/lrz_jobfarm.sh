@@ -15,6 +15,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --export=ALL
 #SBATCH --mail-type=BEGIN,FAIL,END,TIME_LIMIT_50,TIME_LIMIT_80,TIME_LIMIT_90,REQUEUE
+#SBATCH --mail-user=f.bleile@tum.de
 
 set -euo pipefail
 
