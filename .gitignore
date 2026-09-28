@@ -11,6 +11,8 @@ causal-cmd.log
 .java/
 .cache/
 __pycache__
+udg_pilot/.tmp/
+udg_pilot/rust/target/
 workflow/schemas/tmp.config.schema.json
 .RData
 .Rhistory
