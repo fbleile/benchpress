@@ -52,19 +52,28 @@ jobfarm start "$CMD_FILE"
 jobfarm_rc=$?
 set -e
 
-# JobFarm can return success even when individual tasks failed.  Convert that
-# condition into a failed Slurm job so --mail-type=FAIL notifies the user.
-status_text="$(jobfarm status "$CMD_FILE" 2>&1 || true)"
-status_counts="$(sed -n 's/.*= \[ \([0-9][0-9]*\) \([0-9][0-9]*\) \([0-9][0-9]*\) \].*/\1 \2 \3/p' <<<"$status_text")"
-if [[ -z "$status_counts" ]]; then
-  echo "$status_text" >&2
-  echo "Could not parse JobFarm status; marking Slurm job failed." >&2
-  exit 1
-fi
-read -r success_count failed_count total_count <<<"$status_counts"
-if (( failed_count > 0 || success_count + failed_count < total_count )); then
-  echo "$status_text" >&2
-  echo "JobFarm reported failed tasks; marking Slurm job failed." >&2
+# JobFarm can return success even when individual tasks failed.  Do not use
+# `jobfarm status` here: LRZ's status helper depends on `bc`, which is not
+# guaranteed on compute nodes.  The per-task result markers are sufficient.
+result_dir="${CMD_FILE}_res"
+total_count="$(awk 'NF && $0 !~ /^#/ && $0 != "set -euo pipefail" {n++} END {print n+0}' "$CMD_FILE")"
+success_count=0
+failed_count=0
+processed_count=0
+shopt -s nullglob
+for result_file in "$result_dir"/[0-9]*; do
+  if grep -q "STOP SUCCESS" "$result_file"; then
+    success_count=$((success_count + 1))
+    processed_count=$((processed_count + 1))
+  elif grep -q "STOP FAILED" "$result_file"; then
+    failed_count=$((failed_count + 1))
+    processed_count=$((processed_count + 1))
+  fi
+done
+printf 'JobFarm task markers: success=%d failed=%d processed=%d total=%d\n' \
+  "$success_count" "$failed_count" "$processed_count" "$total_count"
+if (( failed_count > 0 || processed_count < total_count )); then
+  echo "JobFarm reported failed or incomplete tasks; marking Slurm job failed." >&2
   exit 1
 fi
 exit "$jobfarm_rc"
