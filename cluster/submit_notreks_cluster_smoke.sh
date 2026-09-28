@@ -6,6 +6,7 @@ MAMBA_ENV="$PROJECT_DIR/.venv-lrz"
 CMD_FILE="$PROJECT_DIR/cluster/notreks_cluster_smoke_cmd.txt"
 
 cd "$PROJECT_DIR"
+unset TASKDB RESET_JOBFARM
 module load slurm_setup
 module load jobfarm
 
