@@ -8,6 +8,8 @@ Repository:
 
 The four stages are: local smoke, LRZ login-node smoke, LRZ JobFarm smoke, and the full synthetic JobFarm run.
 
+All stages use the deterministic master seed `20260917`. The protocol derives graph, data, NOTREKS, and solver seeds from this master seed. If a different seed is desired, add `--master-seed <integer>` to the protocol command or generator invocation.
+
 ## 1. Local smoke
 
 Run from the repository root. This tests one representative cell from every synthetic arm, with low solver budgets.
