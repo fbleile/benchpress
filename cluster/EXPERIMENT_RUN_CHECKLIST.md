@@ -114,7 +114,12 @@ Submit through Slurm; do not execute the JobFarm script with `bash`:
 ```bash
 export CMD_FILE="$PROJECT_DIR/cluster/notreks_smoke_cmd.txt"
 export RESET_JOBFARM=1
-sbatch "$PROJECT_DIR/scripts/lrz_jobfarm.sh"
+sbatch \
+  --nodes=2 \
+  --ntasks=112 \
+  --cpus-per-task=1 \
+  --time=00:30:00 \
+  "$PROJECT_DIR/scripts/lrz_jobfarm.sh"
 ```
 
 Check the allocation:
