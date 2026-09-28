@@ -81,7 +81,7 @@ set -e
 # `jobfarm status` here: LRZ's status helper depends on `bc`, which is not
 # guaranteed on compute nodes.  The per-task result markers are sufficient.
 result_dir="${CMD_FILE}_res"
-total_count="$(awk 'NF && $0 !~ /^#/ && $0 != "set -euo pipefail" {n++} END {print n+0}' "$CMD_FILE")"
+total_count="$(grep -c '^env ' "$CMD_FILE" || true)"
 success_count=0
 failed_count=0
 processed_count=0

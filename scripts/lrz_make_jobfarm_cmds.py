@@ -68,7 +68,9 @@ def main() -> None:
     # turn .venv-local-smoke/bin/python into the base interpreter path.
     py = str(root / args.python) if not str(args.python).startswith("/") else args.python
     out = args.output_root.resolve()
-    lines: list[str] = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
+    # JobFarm input files must contain commands only.  Shell headers would be
+    # interpreted as additional worker tasks by JobFarm.
+    lines: list[str] = []
     env = f"env PYTHONPATH={root} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1"
 
     synthetic = {
@@ -174,7 +176,7 @@ def main() -> None:
 
     args.command_file.parent.mkdir(parents=True, exist_ok=True)
     args.command_file.write_text("\n".join(lines) + "\n")
-    print(f"wrote {len(lines)-3} disjoint commands to {args.command_file}")
+    print(f"wrote {len(lines)} disjoint commands to {args.command_file}")
 
 
 if __name__ == "__main__":
