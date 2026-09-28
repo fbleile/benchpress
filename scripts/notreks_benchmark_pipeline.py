@@ -243,7 +243,7 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
     elif name == "flop":
         candidate, diag = vanilla_flop_candidate(
             X, seed, attempts, forbidden_edges=forbidden_edges)
-    elif name in {"flop-nt-standard", "flop-nt-notreks"}:
+    elif name in {"flop-nt-standard", "flop-nt-notreks", "flop-nt-no-oracle"}:
         candidate, diag = flop_notreks_candidate(
             X, pairs, seed, attempts, flop_sweeps,
             search_version="flop_like", local_greedy_passes=8,
@@ -275,7 +275,19 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
             X, [], False, False, seed, attempts, dagma_warm_iter,
             dagma_max_iter, dagma_stages, trek_weight=trek_weight,
             extra_forbidden_edges=forbidden_edges)
-    elif name in {"dagma-pstrek", "dagma-nt-notreks"}:
+    elif name in {"dagma-flat-mu", "dagma-flat-mu-notreks"}:
+        # Continuation stages, optimizer, penalties, and post-selection are
+        # unchanged; only the regularization schedule is held at mu=1.
+        flat_mu = (1.0,) * int(dagma_stages)
+        use_notreks = name.endswith("-notreks")
+        candidate, diag = dagma_candidate(
+            X, pairs if use_notreks else [], use_notreks, False, seed,
+            attempts, dagma_warm_iter, dagma_max_iter, dagma_stages,
+            trek_weight=trek_weight, mu_schedule=flat_mu,
+            extra_forbidden_edges=forbidden_edges)
+        diag["mu_schedule"] = flat_mu
+        diag["mu_schedule_variant"] = "constant_one"
+    elif name in {"dagma-pstrek", "dagma-nt-notreks", "dagma-nt-no-oracle"}:
         candidate, diag = dagma_candidate(
             X, pairs, True, False, seed, attempts, dagma_warm_iter,
             dagma_max_iter, dagma_stages, trek_weight=trek_weight,

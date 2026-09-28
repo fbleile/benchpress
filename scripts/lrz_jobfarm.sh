@@ -44,9 +44,33 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 mkdir -p "$PROJECT_DIR/cluster/slurm_logs"
 cd "$PROJECT_DIR"
+
+# Capture the exact runtime used by every JobFarm allocation and fail before
+# launching workers if the batch environment cannot import the protocol.
+env_manifest="$PROJECT_DIR/cluster/slurm_logs/jobfarm.env.${SLURM_JOB_ID:-manual}.txt"
+{
+  echo "timestamp=$(date -Is)"
+  echo "host=$(hostname)"
+  echo "job_id=${SLURM_JOB_ID:-unknown}"
+  echo "project=$PROJECT_DIR"
+  echo "mamba_env=$MAMBA_ENV"
+  echo "python=$(command -v python)"
+  python --version
+  git rev-parse HEAD 2>/dev/null || true
+  git diff --quiet 2>/dev/null && echo "git_dirty=false" || echo "git_dirty=true"
+  sha256sum "$CMD_FILE" 2>/dev/null || true
+} > "$env_manifest"
+if ! "$MAMBA_ENV/bin/python" "$PROJECT_DIR/scripts/notreks_protocol_all.py" --help \
+    > "$env_manifest.protocol_help" 2>&1; then
+  echo "Protocol import/CLI preflight failed; see $env_manifest.protocol_help" >&2
+  exit 1
+fi
 if [[ "${RESET_JOBFARM:-0}" == "1" ]]; then
-  rm -f "${TASKDB}.db"
-  rm -rf "${TASKDB}.txt_res"
+  # JobFarm keys its database/results to the input filename, not TASKDB.
+  # Remove the actual state directory so a newly generated command list
+  # cannot inherit stale task markers.
+  rm -f "${CMD_FILE}_res/.db"
+  rm -rf "${CMD_FILE}_res"
 fi
 set +e
 jobfarm start "$CMD_FILE"

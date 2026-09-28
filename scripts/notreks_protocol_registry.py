@@ -28,6 +28,8 @@ class ExperimentSpec:
     # DAGMA is intentionally disabled for runtime reasons.
     excluded_methods_by_dimension: tuple[tuple[int, tuple[str, ...]], ...] = ()
     knowledge_strategies: tuple[str, ...] = ("random",)
+    # Paired ablations can reuse the parent experiment's graph/data seeds.
+    seed_namespace: str | None = None
 
     def attempts_for(self, method: str) -> int:
         family = "dagma" if method.startswith("dagma") else "flop"
@@ -52,39 +54,34 @@ MAIN_METHODS = (
     "var_sortnregress", "r2_sortnregress",
 )
 
+MAIN_EXCLUSIONS = ((100, ("dagma", "dagma-nt-edge-mask",
+                           "dagma-nt-post", "dagma_notreks")),)
+
 REGISTRY = {
     "main": ExperimentSpec(
-        "main", "primary paired recovery benchmark", MAIN_CELLS,
+        "main", "primary paired recovery benchmark, including integration, prior-structure, and d100 FLOP slices", MAIN_CELLS,
         (100, 500, 2000), (0.0, .25, 1.0), 5,
         MAIN_METHODS,
-        excluded_methods_by_dimension=((100, ("dagma", "dagma-nt-edge-mask",
-                                               "dagma-nt-post", "dagma_notreks")),)),
-    "integration-ablation": ExperimentSpec(
-        "integration-ablation", "integration and post-selection ablation",
-        ((50, "er", 2), (50, "er", 4)), (500,), (.25, 1.0), 1,
-        ("flop", "flop-nt-edge-mask", "flop-nt-post", "flop_notreks",
-         "dagma", "dagma-nt-edge-mask", "dagma-nt-post", "dagma_notreks"),
-        derives_from="main"),
-    "prior-structure": ExperimentSpec(
-        "prior-structure", "NOTREKS information-graph structure study",
-        ((20, "er", 2), (20, "er", 4), (20, "ws", 2), (20, "ws", 4)),
-        (500,), (.25,), 5, ("flop", "flop_notreks", "dagma", "dagma_notreks"),
+        excluded_methods_by_dimension=MAIN_EXCLUSIONS,
         knowledge_strategies=("random", "bipartite-max-capacity", "chromatic-greedy")),
-    "d100-flop": ExperimentSpec(
-        "d100-flop", "high-dimensional FLOP scaling study",
-        ((100, "er", 2), (100, "er", 4), (100, "er", 8),
-         (100, "ws", 2), (100, "ws", 4), (100, "ws", 8)),
-        (1000,), (.25, 1.0), 5,
-        ("flop", "flop-nt-edge-mask", "flop-nt-post", "flop_notreks"),
-        derives_from="main"),
-    "heterogeneity": ExperimentSpec(
-        "heterogeneity", "descriptive stratum heterogeneity summaries", (),
-        (), (), 0, (), derives_from="main"),
+    "main-misspec-linear-nongaussian": ExperimentSpec(
+        "main-misspec-linear-nongaussian",
+        "main-sized linear SCM with non-Gaussian Laplace innovations",
+        MAIN_CELLS, (100, 500, 2000), (0.0, .25, 1.0), 5, MAIN_METHODS,
+        dataset="synthetic_linear_nongaussian",
+        excluded_methods_by_dimension=MAIN_EXCLUSIONS),
+    "main-misspec-nonlinear-gaussian": ExperimentSpec(
+        "main-misspec-nonlinear-gaussian",
+        "main-sized nonlinear additive Gaussian-noise SCM",
+        MAIN_CELLS, (100, 500, 2000), (0.0, .25, 1.0), 5, MAIN_METHODS,
+        dataset="synthetic_nonlinear_gaussian",
+        excluded_methods_by_dimension=MAIN_EXCLUSIONS),
     "causalassembly": ExperimentSpec(
         "causalassembly", "causalAssembly nonlinear n=500 benchmark", (),
         (500,), (.25, 1.0), 1,
-        ("flop", "flop_notreks", "flop-nt-edge-mask", "flop-nt-post",
-         "dagma", "dagma_notreks", "dagma-nt-edge-mask", "dagma-nt-post",
+         ("flop", "flop_notreks", "flop-nt-edge-mask", "flop-nt-post",
+         "flop-nt-no-oracle", "dagma", "dagma_notreks",
+         "dagma-nt-edge-mask", "dagma-nt-post", "dagma-nt-no-oracle",
          "var_sortnregress", "r2_sortnregress",
          "dagma_nonlinear", "dagma_nonlinear_notreks"),
         graph_replicates=5, dataset="causalassembly_static_n500"),

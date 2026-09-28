@@ -32,6 +32,21 @@ def _job_key(row):
             strategy, row.get("method"))
 
 
+def _valid_success(row):
+    """Whether a checkpoint row is safe to reuse after a fresh JobFarm run."""
+    if row.get("solver_status") != "ok":
+        return False
+    if not row.get("experiment_id") or not row.get("data_id") or not row.get("method"):
+        return False
+    for field in ("SHD_cpdag", "candidate_runtime"):
+        try:
+            if not np.isfinite(float(row.get(field))):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
 def _replicate_count(spec, args):
     if args.graph_replicates is not None:
         return args.graph_replicates
@@ -66,7 +81,8 @@ def _methods_for_job(spec, d, q):
     prior subset.
     """
     methods = spec.methods_for(d)
-    vanilla = {"flop", "dagma", "var_sortnregress", "r2_sortnregress"}
+    vanilla = {"flop", "dagma",
+               "var_sortnregress", "r2_sortnregress"}
     if q == 0.0:
         return tuple(m for m in methods if m in vanilla)
     return tuple(m for m in methods if m not in vanilla)
@@ -99,15 +115,26 @@ def print_design_and_objective(specs, args):
         parts = []
         for q in spec.q_values:
             parts.append(f"q={q:g}: {_knowledge_round_count(spec, q, args)} set(s)")
+        if args.cell_indices is not None:
+            cells = [spec.cells[index] for index in args.cell_indices
+                     if index < len(spec.cells)]
+        else:
+            cell_start = args.cell_start or 0
+            cells = spec.cells[cell_start:]
+            if args.cell_limit is not None:
+                cells = cells[:args.cell_limit]
+        n_values = tuple(args.n_values) if args.n_values else spec.n_values
         rows = sum(
-            reps * len(spec.n_values)
-            * sum(_knowledge_round_count(spec, q, args)
-                  * len(_knowledge_strategy_list(spec, q)) for q in spec.q_values)
-            * len(spec.methods_for(d))
-            for d, _, _ in spec.cells
+            reps * len(n_values) * sum(
+                _knowledge_round_count(spec, q, args)
+                * len(_knowledge_strategy_list(spec, q))
+                * len(tuple(method for method in _methods_for_job(spec, d, q)
+                           if args.methods is None or method in args.methods))
+                for q in spec.q_values)
+            for d, _, _ in cells
         )
-        print(f"    {spec.name}: {len(spec.cells)} graph cells × {reps} graph seeds × "
-              f"n={spec.n_values} × {', '.join(parts)} × "
+        print(f"    {spec.name}: {len(cells)} graph cells × {reps} graph seeds × "
+              f"n={n_values} × {', '.join(parts)} × "
               f"dimension-specific methods = {rows} solver rows", flush=True)
 
     print("\nDAGMA objective (standard square-map production path):", flush=True)
@@ -164,6 +191,8 @@ def dispatch(name, x, pairs, seed, args, attempts):
                "flop": "flop", "flop-nt-edge-mask": "flop-nt-edge-mask",
                "flop-nt-post": "flop-nt-post", "dagma-nt-edge-mask": "dagma-nt-edge-mask",
                "dagma-nt-post": "dagma-nt-post",
+               "dagma-flat-mu": "dagma-flat-mu",
+               "dagma-flat-mu-notreks": "dagma-flat-mu-notreks",
                "var_sortnregress": "var_sortnregress",
                "r2_sortnregress": "r2_sortnregress"}
     return method_run(aliases[name], x, pairs, seed, attempts,
@@ -214,9 +243,9 @@ def prior_properties(d, pairs, candidate=None):
 def run(args):
     specs = select_registry(args.experiments, args.fraction)
     executable = [s for s in specs if s.derives_from is None
-                  and s.dataset == "synthetic_linear_gaussian"]
+                  and s.dataset.startswith("synthetic_")]
     external = [s for s in specs if s.derives_from is None
-                and s.dataset != "synthetic_linear_gaussian"]
+                and not s.dataset.startswith("synthetic_")]
     if external:
         print("Skipping non-synthetic registry datasets in this runner: "
               + ", ".join(s.name for s in external)
@@ -237,21 +266,31 @@ def run(args):
               flush=True)
     else:
         rows = []
-    successful = {
-        _job_key(row) for row in rows if row.get("solver_status") == "ok"
-    }
+    successful = {_job_key(row) for row in rows if _valid_success(row)}
     ledger, audits = [], []
     pool = ThreadPoolExecutor(max_workers=args.workers)
     for spec in executable:
-        for cell_index, (d, family, density) in enumerate(spec.cells):
+        seed_namespace = spec.seed_namespace or spec.name
+        if args.cell_indices is not None:
+            selected = [(index, spec.cells[index]) for index in args.cell_indices
+                        if index < len(spec.cells)]
+        else:
+            cell_start = args.cell_start or 0
+            selected = list(enumerate(spec.cells[cell_start:], start=cell_start))
+            if args.cell_limit is not None:
+                selected = selected[:args.cell_limit]
+        n_values = tuple(args.n_values) if args.n_values else spec.n_values
+        for cell_index, (d, family, density) in selected:
             reps = _replicate_count(spec, args)
-            for replicate in range(reps):
+            replicate_stop = reps if args.replicate_limit is None else min(
+                reps, args.replicate_start + args.replicate_limit)
+            for replicate in range(args.replicate_start, replicate_stop):
                 # Some dense/Watts--Strogatz DAGs legitimately have no no-trek
                 # pairs: every node pair shares an ancestor.  Keep those
                 # cells in the registry with an empty information set rather
                 # than changing the graph distribution or aborting the run.
                 seed_attempt = 0
-                graph_seed = derive_seed("graph", spec.name, d, family,
+                graph_seed = derive_seed("graph", seed_namespace, d, family,
                                          density, replicate, seed_attempt,
                                          master=args.master_seed)
                 truth = make_graph(d, family, density, graph_seed)
@@ -267,12 +306,28 @@ def run(args):
                                "edges": int(truth.sum()),
                                "no_trek_pairs": len(all_pairs),
                                "eligible_information": bool(all_pairs)})
-                for n in spec.n_values:
-                    data_seed = derive_seed("data", graph_id, n, master=args.master_seed)
-                    x, weights = make_data(truth, n, graph_seed, data_seed)
+                for n in n_values:
+                    data_seed = derive_seed("data", seed_namespace, d, family,
+                                           density, replicate, n,
+                                           master=args.master_seed)
+                    data_model = {
+                        "synthetic_linear_gaussian": "linear_gaussian",
+                        "synthetic_linear_nongaussian": "linear_nongaussian",
+                        "synthetic_nonlinear_gaussian": "nonlinear_gaussian",
+                    }.get(spec.dataset)
+                    if data_model is None:
+                        raise ValueError(f"unsupported synthetic dataset {spec.dataset}")
+                    data_model_label = {
+                        "linear_gaussian": "linear_gaussian_scm",
+                        "linear_nongaussian": "linear_nongaussian_scm",
+                        "nonlinear_gaussian": "nonlinear_gaussian_scm",
+                    }[data_model]
+                    x, weights = make_data(
+                        truth, n, graph_seed, data_seed, model=data_model)
                     data_id = f"{graph_id}_n{n}"
                     np.savez_compressed(out / "data" / f"{data_id}.npz", X=x,
-                                        truth=truth, weights=weights, data_seed=data_seed)
+                                        truth=truth, weights=weights, data_seed=data_seed,
+                                        data_model=data_model)
                     cache = {}
                     for q in spec.q_values:
                         rounds = _knowledge_round_count(spec, q, args)
@@ -369,7 +424,7 @@ def run(args):
                                            "method": method, "solver_status": "failed",
                                            "solver_error": repr(result),
                                            "knowledge_pairs": len(pairs),
-                                           "data_model": "unequal_variance_linear_gaussian_scm",
+                                           "data_model": data_model_label,
                                            "discovery_score": "profiled_unequal_variance_gaussian",
                                            "candidate_runtime": np.nan, "SHD_cpdag": np.nan,
                                            "F1_skel": np.nan, "violations_after": np.nan}
@@ -394,7 +449,7 @@ def run(args):
                                                 "knowledge_seed": knowledge_seed, "method_seed": method_seed,
                                                 "knowledge_strategy": strategy,
                                                 "solver_status": "ok", "knowledge_pairs": len(pairs),
-                                                "data_model": "unequal_variance_linear_gaussian_scm",
+                                                "data_model": data_model_label,
                                                 "discovery_score": "profiled_unequal_variance_gaussian"})
                                     if spec.name == "prior-structure":
                                         row.update(prior_properties(d, pairs, diag["candidate_graph"]))
@@ -454,6 +509,12 @@ def run(args):
                                  for spec in specs for family, _ in spec.attempts_by_family}.items()},
         "workers": args.workers,
         "graph_replicates_override": args.graph_replicates,
+        "n_values_override": args.n_values,
+        "cell_limit": args.cell_limit,
+        "cell_start": args.cell_start,
+        "cell_indices": args.cell_indices,
+        "replicate_start": args.replicate_start,
+        "replicate_limit": args.replicate_limit,
         "knowledge_rounds_override": args.knowledge_rounds,
         "elapsed_seconds": time.time() - started})
     print("\nSummary:\n" + summary.to_string(index=False))
@@ -469,6 +530,18 @@ def main():
     p.add_argument("--master-seed", type=int, default=20260917)
     p.add_argument("--graph-replicates", type=int, default=None,
                    help="explicit graph seeds per registry cell; overrides --fraction")
+    p.add_argument("--replicate-start", type=int, default=0,
+                   help="zero-based graph-replicate offset for sharding")
+    p.add_argument("--replicate-limit", type=int, default=None,
+                   help="number of graph replicates to process for this task")
+    p.add_argument("--n-values", nargs="+", type=int, default=None,
+                   help="override registered sample sizes for a bounded smoke")
+    p.add_argument("--cell-limit", type=int, default=None,
+                   help="run only the first registered graph cells for a bounded smoke")
+    p.add_argument("--cell-start", type=int, default=0,
+                   help="zero-based registered graph-cell offset for sharding")
+    p.add_argument("--cell-indices", nargs="+", type=int, default=None,
+                   help="explicit registered graph-cell indices for coverage smokes")
     p.add_argument("--knowledge-rounds", type=int, default=None,
                    help="explicit independent NOTREKS subset draws at q=.25; q=1 remains one full set")
     p.add_argument("--attempts", "--restarts", dest="attempts", type=int,
@@ -492,6 +565,16 @@ def main():
         p.error("--attempts/--restarts must be at least 1")
     if args.graph_replicates is not None and args.graph_replicates < 1:
         p.error("--graph-replicates must be at least 1")
+    if args.replicate_start < 0:
+        p.error("--replicate-start must be nonnegative")
+    if args.replicate_limit is not None and args.replicate_limit < 1:
+        p.error("--replicate-limit must be at least 1")
+    if args.cell_limit is not None and args.cell_limit < 1:
+        p.error("--cell-limit must be at least 1")
+    if args.cell_start < 0:
+        p.error("--cell-start must be nonnegative")
+    if args.cell_indices is not None and any(index < 0 for index in args.cell_indices):
+        p.error("--cell-indices must be nonnegative")
     if args.knowledge_rounds is not None and args.knowledge_rounds < 1:
         p.error("--knowledge-rounds must be at least 1")
     specs = select_registry(args.experiments, args.fraction)

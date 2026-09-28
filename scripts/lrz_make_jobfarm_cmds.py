@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.notreks_protocol_registry import REGISTRY, scaled_replicates
 
 
 def main() -> None:
@@ -21,11 +25,48 @@ def main() -> None:
     p.add_argument("--causal-seeds", default="1001 1002 1003 1004 1005")
     p.add_argument("--sachs-seed", default="1")
     p.add_argument("--sachs-bootstrap-replicates", type=int, default=50)
+    p.add_argument("--synthetic-experiments", nargs="+",
+                   default=("main", "main-misspec-linear-nongaussian",
+                            "main-misspec-nonlinear-gaussian",
+                            "pstrek-vs-tcc"),
+                   help="registered synthetic arms to shard")
+    p.add_argument("--batch-size", type=int, default=1,
+                   help="methods per JobFarm command (default: one method)")
+    p.add_argument("--cell-batch-size", type=int, default=1,
+                   help="registered graph cells per JobFarm command (default: one cell)")
+    p.add_argument("--cell-indices", nargs="+", type=int, default=None,
+                   help="explicit registered cell indices for a smoke")
+    p.add_argument("--replicate-batch-size", type=int, default=2,
+                   help="graph replicates per task; all replicates remain in the full run")
+    p.add_argument("--include-real-world", action="store_true",
+                   help="also add Sachs and causalAssembly commands")
+    p.add_argument("--attempts", type=int, default=None,
+                   help="override registry attempts; omit for FLOP=20/DAGMA=2")
+    p.add_argument("--flop-sweeps", type=int, default=16)
+    p.add_argument("--dagma-stages", type=int, default=5)
+    p.add_argument("--dagma-warm-iter", type=int, default=30000)
+    p.add_argument("--dagma-max-iter", type=int, default=60000)
+    p.add_argument("--max-wall-hours", type=float, default=23.0,
+                   help="per-task solver guard; leave one hour before cm4_std timeout")
+    p.add_argument("--n-values", nargs="+", type=int, default=None)
+    p.add_argument("--knowledge-rounds", type=int, default=None)
     args = p.parse_args()
     if not 0.0 < args.fraction <= 1.0:
         p.error("--fraction must lie in (0, 1]")
+    if args.batch_size < 1:
+        p.error("--batch-size must be at least 1")
+    if args.cell_batch_size < 1:
+        p.error("--cell-batch-size must be at least 1")
+    if args.replicate_batch_size < 1:
+        p.error("--replicate-batch-size must be at least 1")
+    if args.cell_indices is not None and any(index < 0 for index in args.cell_indices):
+        p.error("--cell-indices must be nonnegative")
+    if args.attempts is not None and args.attempts < 1:
+        p.error("--attempts must be at least 1")
     root = args.repo.resolve()
-    py = str((root / args.python).resolve()) if not str(args.python).startswith("/") else args.python
+    # Preserve the environment wrapper path.  Resolving a venv symlink can
+    # turn .venv-local-smoke/bin/python into the base interpreter path.
+    py = str(root / args.python) if not str(args.python).startswith("/") else args.python
     out = args.output_root.resolve()
     lines: list[str] = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
     env = f"env PYTHONPATH={root} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1"
@@ -34,36 +75,80 @@ def main() -> None:
         "main": ("flop flop-nt-edge-mask flop-nt-post flop_notreks "
                  "dagma dagma-nt-edge-mask dagma-nt-post dagma_notreks "
                  "var_sortnregress r2_sortnregress"),
-        "prior-structure": "flop flop_notreks dagma dagma_notreks",
+        "main-misspec-linear-nongaussian": (
+            "flop flop-nt-edge-mask flop-nt-post flop_notreks "
+            "dagma dagma-nt-edge-mask dagma-nt-post dagma_notreks "
+            "var_sortnregress r2_sortnregress"),
+        "main-misspec-nonlinear-gaussian": (
+            "flop flop-nt-edge-mask flop-nt-post flop_notreks "
+            "dagma dagma-nt-edge-mask dagma-nt-post dagma_notreks "
+            "var_sortnregress r2_sortnregress"),
         "pstrek-vs-tcc": ("dagma var_sortnregress r2_sortnregress "
                            "dagma_notreks dagma_notreks_tcc dagma-nt-edge-mask dagma-nt-post"),
     }
-    for experiment, methods in synthetic.items():
-        for method in methods.split():
-            job_out = out / f"job_{experiment}_{method.replace('-', '_')}"
-            lines.append(
-                f"{env} {py} {root}/scripts/notreks_protocol_all.py "
-                f"--experiments {experiment} --fraction {args.fraction:g} --methods {method} "
-                f"--workers 1 --flop-sweeps 16 --dagma-stages 5 "
-                f"--dagma-warm-iter 30000 --dagma-max-iter 60000 "
-                f"--max-wall-hours 24 --skip-figures --output-root {job_out}")
+    unknown = sorted(set(args.synthetic_experiments) - set(synthetic))
+    if unknown:
+        p.error(f"unknown synthetic experiments: {unknown}")
+    for experiment in args.synthetic_experiments:
+        methods = synthetic[experiment].split()
+        cell_count = len(REGISTRY[experiment].cells)
+        task_index = 0
+        if args.cell_indices is not None:
+            cell_starts = [(index, 1) for index in args.cell_indices
+                           if index < cell_count]
+        else:
+            cell_starts = [(cell_start, min(args.cell_batch_size, cell_count - cell_start))
+                           for cell_start in range(0, cell_count, args.cell_batch_size)]
+        for cell_start, cell_limit in cell_starts:
+            replicate_count = scaled_replicates(REGISTRY[experiment], args.fraction)
+            for replicate_start in range(0, replicate_count,
+                                         args.replicate_batch_size):
+                replicate_limit = min(args.replicate_batch_size,
+                                      replicate_count - replicate_start)
+                for batch_index in range(0, len(methods), args.batch_size):
+                    batch = methods[batch_index:batch_index + args.batch_size]
+                    method_args = " ".join(batch)
+                    batch_label = "_".join(method.replace('-', '_') for method in batch)
+                    job_out = out / f"job_{experiment}_{task_index:03d}_c{cell_start:02d}_r{replicate_start:02d}_{batch_label}"
+                    optional = (f" --replicate-start {replicate_start}"
+                                f" --replicate-limit {replicate_limit}")
+                    if args.n_values:
+                        optional += " --n-values " + " ".join(map(str, args.n_values))
+                    if args.knowledge_rounds is not None:
+                        optional += f" --knowledge-rounds {args.knowledge_rounds}"
+                    attempts = f" --attempts {args.attempts}" if args.attempts is not None else ""
+                    lines.append(
+                        f"{env} {py} {root}/scripts/notreks_protocol_all.py "
+                        f"--experiments {experiment} --fraction {args.fraction:g} "
+                        f"--cell-start {cell_start} --cell-limit {cell_limit} "
+                        f"--methods {method_args} --workers 1{attempts} "
+                        f"--flop-sweeps {args.flop_sweeps} --dagma-stages {args.dagma_stages} "
+                        f"--dagma-warm-iter {args.dagma_warm_iter} "
+                        f"--dagma-max-iter {args.dagma_max_iter} "
+                        f"--max-wall-hours {args.max_wall_hours:g}{optional} "
+                        f"--skip-figures --output-root {job_out}")
+                    task_index += 1
 
     sachs_methods = (
         "flop flop-nt-standard flop-nt-edge-mask flop-nt-post "
         "dagma dagma-pstrek dagma-nt-edge-mask dagma-nt-post "
         "var_sortnregress r2_sortnregress dagma-nonlinear dagma-nonlinear-pstrek"
     )
-    for method in sachs_methods.split():
-        job_out = out / f"job_sachs_{method.replace('-', '_')}"
-        lines.append(
-            f"{env} {py} {root}/scripts/sachs_benchmark.py "
-            f"--data {root}/resources/data/mydatasets/2005_sachs/1_cd3cd28_n854.csv "
-            f"--truth {root}/resources/adjmat/myadjmats/sachs.csv "
-            f"--seeds {args.sachs_seed} --bootstrap-replicates {args.sachs_bootstrap_replicates} "
-            f"--knowledge-fraction 0.25 1.0 --methods {method} "
-            f"--flop-attempts 20 --dagma-attempts 2 --flop-sweeps 16 "
-            f"--dagma-stages 5 --dagma-warm-iter 30000 --dagma-max-iter 60000 "
-            f"--output {job_out}")
+    if args.include_real_world:
+        for batch_index in range(0, len(sachs_methods.split()), args.batch_size):
+            batch = sachs_methods.split()[batch_index:batch_index + args.batch_size]
+            method_args = " ".join(batch)
+            batch_label = "_".join(method.replace('-', '_') for method in batch)
+            job_out = out / f"job_sachs_{batch_index // args.batch_size:02d}_{batch_label}"
+            lines.append(
+                f"{env} {py} {root}/scripts/sachs_benchmark.py "
+                f"--data {root}/resources/data/mydatasets/2005_sachs/1_cd3cd28_n854.csv "
+                f"--truth {root}/resources/adjmat/myadjmats/sachs.csv "
+                f"--seeds {args.sachs_seed} --bootstrap-replicates {args.sachs_bootstrap_replicates} "
+                f"--knowledge-fraction 0.25 1.0 --methods {method_args} "
+                f"--flop-attempts 20 --dagma-attempts 2 --flop-sweeps 16 "
+                f"--dagma-stages 5 --dagma-warm-iter 30000 --dagma-max-iter 60000 "
+                f"--output {job_out}")
 
     causal_methods = (
         "flop flop-nt-standard flop-nt-edge-mask flop-nt-post "
@@ -71,16 +156,21 @@ def main() -> None:
         "var_sortnregress r2_sortnregress dagma-nonlinear dagma-nonlinear-pstrek"
     )
     seeds = args.causal_seeds
-    for mode in ("oracle_notreks", "estimated_notreks"):
-        for method in causal_methods.split():
-            job_out = out / f"job_causalassembly_{mode}_{method.replace('-', '_')}"
-            lines.append(
-                f"{env} {py} {root}/scripts/causalassembly_benchmark.py "
-                f"--cache {out}/causalassembly_cache --output {job_out} "
-                f"--mode {mode} --seeds {seeds} --n 500 --q 0.25 1.0 "
-                f"--methods {method} --flop-attempts 20 --dagma-attempts 2 "
-                f"--flop-sweeps 16 --dagma-stages 5 --dagma-warm-iter 30000 "
-                f"--dagma-max-iter 60000")
+    if args.include_real_world:
+        for mode in ("oracle_notreks", "estimated_notreks"):
+            methods = causal_methods.split()
+            for batch_index in range(0, len(methods), args.batch_size):
+                batch = methods[batch_index:batch_index + args.batch_size]
+                method_args = " ".join(batch)
+                batch_label = "_".join(method.replace('-', '_') for method in batch)
+                job_out = out / f"job_causalassembly_{mode}_{batch_index // args.batch_size:02d}_{batch_label}"
+                lines.append(
+                    f"{env} {py} {root}/scripts/causalassembly_benchmark.py "
+                    f"--cache {out}/causalassembly_cache --output {job_out} "
+                    f"--mode {mode} --seeds {seeds} --n 500 --q 0.25 1.0 "
+                    f"--methods {method_args} --flop-attempts 20 --dagma-attempts 2 "
+                    f"--flop-sweeps 16 --dagma-stages 5 --dagma-warm-iter 30000 "
+                    f"--dagma-max-iter 60000")
 
     args.command_file.parent.mkdir(parents=True, exist_ok=True)
     args.command_file.write_text("\n".join(lines) + "\n")

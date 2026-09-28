@@ -104,7 +104,17 @@ def make_graph(d: int, family: str, density: int, seed: int) -> np.ndarray:
     return graph
 
 
-def make_data(truth: np.ndarray, n: int, graph_seed: int, data_seed: int):
+def make_data(truth: np.ndarray, n: int, graph_seed: int, data_seed: int,
+              model: str = "linear_gaussian"):
+    """Generate standardized discovery data for a registered SCM arm.
+
+    The graph and edge-weight convention are shared across arms.  Only the
+    conditional mechanism/noise law changes, so paired comparisons isolate
+    score misspecification.  ``linear_gaussian`` is the historical default.
+    """
+    allowed = {"linear_gaussian", "linear_nongaussian", "nonlinear_gaussian"}
+    if model not in allowed:
+        raise ValueError(f"unknown data model {model!r}; expected one of {sorted(allowed)}")
     d = truth.shape[0]
     order = _topological_order(truth)
     rng = np.random.default_rng(data_seed)
@@ -116,11 +126,23 @@ def make_data(truth: np.ndarray, n: int, graph_seed: int, data_seed: int):
     # [-log(2), log(2)], independently of graph structure and depth.
     log_variances = rng.uniform(-np.log(2.0), np.log(2.0), size=d)
     innovation_scales = np.exp(0.5 * log_variances)
-    x = rng.normal(size=(n, d)) * innovation_scales
+    if model == "linear_nongaussian":
+        # Laplace innovations have unit variance before the unequal-variance
+        # scale is applied.  This preserves the historical marginal scales
+        # while violating the Gaussian likelihood assumption.
+        innovations = rng.laplace(size=(n, d)) / np.sqrt(2.0)
+    else:
+        innovations = rng.normal(size=(n, d))
+    x = innovations * innovation_scales
     for node in order:
         parents = np.flatnonzero(truth[:, node])
         if len(parents):
-            x[:, node] += x[:, parents] @ weights[parents, node]
+            signal = x[:, parents] @ weights[parents, node]
+            if model == "nonlinear_gaussian":
+                # Smooth additive-noise mechanism with bounded signal.  The
+                # Gaussian innovation remains additive and unequal-variance.
+                signal = np.tanh(signal) + 0.15 * np.sin(signal)
+            x[:, node] += signal
     mean, std = x.mean(0), x.std(0, ddof=0)
     std = np.where(std > 1e-12, std, 1.0)
     return (x - mean) / std, weights
