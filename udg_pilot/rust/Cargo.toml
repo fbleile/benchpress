@@ -7,3 +7,6 @@ edition = "2021"
 name = "udg_source_mask"
 path = "src/main.rs"
 
+[[bin]]
+name = "udg_covbic"
+path = "src/bin/udg_covbic.rs"
