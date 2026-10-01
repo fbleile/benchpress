@@ -64,6 +64,7 @@ Run the same small smoke on the login node, using the LRZ Python environment:
   --experiments main main-misspec-linear-nongaussian \
     main-misspec-nonlinear-gaussian pstrek-vs-tcc \
   --fraction 0.01 \
+  --master-seed 20260917 \
   --cell-indices 0 \
   --n-values 100 \
   --knowledge-rounds 1 \
@@ -141,6 +142,7 @@ Generate the full synthetic protocol only. Do not pass `--attempts`: registry de
   --output-root results/lrz_full \
   --command-file cluster/notreks_full_cmd.txt \
   --fraction 1.0 \
+  --master-seed 20260917 \
   --synthetic-experiments \
     main main-misspec-linear-nongaussian \
     main-misspec-nonlinear-gaussian pstrek-vs-tcc \
