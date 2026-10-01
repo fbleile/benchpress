@@ -9,7 +9,9 @@
 #SBATCH --clusters=cm4
 #SBATCH --partition=cm4_std
 #SBATCH --qos=cm4_std
-#SBATCH --nodes=4
+# Request exactly four nodes for the production farm.  The previous full run
+# was historically submitted with two nodes and a four-hour override.
+#SBATCH --nodes=4-4
 #SBATCH --ntasks=448
 #SBATCH --cpus-per-task=1
 #SBATCH --time=24:00:00

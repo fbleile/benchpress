@@ -69,7 +69,12 @@ def make_graph(d: int, family: str, density: int, seed: int) -> np.ndarray:
         # `d` argument is the mean total neighbourhood degree, matching the
         # ER-k naming used by this protocol.
         del rng, order, graph
-        r_script = (REPOSITORY_ROOT / "resources/binarydatagen/generate_DAG.R").as_posix()
+        r_script_path = REPOSITORY_ROOT / "resources/binarydatagen/generate_DAG.R"
+        if not r_script_path.is_file():
+            raise RuntimeError(
+                f"WS graph generation requires missing repository asset: {r_script_path}"
+            )
+        r_script = r_script_path.as_posix()
         expression = (
             f'source("{r_script}"); '
             'args <- commandArgs(trailingOnly=TRUE); '
