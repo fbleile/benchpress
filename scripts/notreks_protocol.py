@@ -125,7 +125,8 @@ def make_data(truth: np.ndarray, n: int, graph_seed: int, data_seed: int,
     rng = np.random.default_rng(data_seed)
     weights = np.zeros_like(truth, dtype=float)
     count = int(truth.sum())
-    weights[truth.astype(bool)] = rng.uniform(.5, 1.0, size=count)
+    # Production synthetic protocol: moderately strong signed edges.
+    weights[truth.astype(bool)] = rng.uniform(.5, 2.0, size=count)
     weights[truth.astype(bool)] *= rng.choice([-1.0, 1.0], size=count)
     # Unequal-variance Gaussian SCM: log(sigma_j^2) is iid uniform on
     # [-log(2), log(2)], independently of graph structure and depth.
