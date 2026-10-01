@@ -15,7 +15,7 @@ sbatch \
   --mail-user=f.bleile@tum.de \
   --mail-type=BEGIN,FAIL,END,TIME_LIMIT \
   --nodes=1 \
-  --ntasks=1 \
+  --ntasks=17 \
   --cpus-per-task=1 \
   --time=00:30:00 \
   --output="$PROJECT_DIR/cluster/slurm_logs/notreks.failure-smoke.%j.out" \
