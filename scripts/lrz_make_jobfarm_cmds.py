@@ -48,6 +48,8 @@ def main() -> None:
     p.add_argument("--dagma-max-iter", type=int, default=60000)
     p.add_argument("--max-wall-hours", type=float, default=23.0,
                    help="per-task solver guard; leave one hour before cm4_std timeout")
+    p.add_argument("--master-seed", type=int, default=20260917,
+                   help="explicit protocol master seed")
     p.add_argument("--n-values", nargs="+", type=int, default=None)
     p.add_argument("--knowledge-rounds", type=int, default=None)
     args = p.parse_args()
@@ -122,6 +124,7 @@ def main() -> None:
                     lines.append(
                         f"{env} {py} {root}/scripts/notreks_protocol_all.py "
                         f"--experiments {experiment} --fraction {args.fraction:g} "
+                        f"--master-seed {args.master_seed} "
                         f"--cell-start {cell_start} --cell-limit {cell_limit} "
                         f"--methods {method_args} --workers 1{attempts} "
                         f"--flop-sweeps {args.flop_sweeps} --dagma-stages {args.dagma_stages} "

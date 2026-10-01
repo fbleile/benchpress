@@ -25,6 +25,7 @@ PROJECT_DIR="${PROJECT_DIR:?Set PROJECT_DIR to the repository path on LRZ}"
 CMD_FILE="${CMD_FILE:-$PROJECT_DIR/cluster/notreks_cmd.txt}"
 TASKDB="${TASKDB:-$PROJECT_DIR/cluster/notreks_cmd}"
 MAMBA_ENV="${MAMBA_ENV:-$PROJECT_DIR/.venv-lrz}"
+MASTER_SEED="${MASTER_SEED:-20260917}"
 
 module load slurm_setup
 module load jobfarm
@@ -56,6 +57,7 @@ env_manifest="$PROJECT_DIR/cluster/slurm_logs/jobfarm.env.${SLURM_JOB_ID:-manual
   echo "job_id=${SLURM_JOB_ID:-unknown}"
   echo "project=$PROJECT_DIR"
   echo "mamba_env=$MAMBA_ENV"
+  echo "master_seed=$MASTER_SEED"
   echo "python=$(command -v python)"
   python --version
   git rev-parse HEAD 2>/dev/null || true

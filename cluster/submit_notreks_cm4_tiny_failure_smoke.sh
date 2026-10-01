@@ -29,6 +29,7 @@ env PYTHONPATH="$PROJECT_DIR" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_T
 env PYTHONPATH="$PROJECT_DIR" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 \
   "$MAMBA_ENV/bin/python" scripts/notreks_protocol_all.py \
     --experiments main --fraction 0.02 --graph-replicates 1 \
+    --master-seed 20260917 \
     --cell-start 2 --cell-limit 1 --replicate-start 0 --replicate-limit 1 \
     --n-values 100 --methods flop flop-nt-edge-mask flop-nt-post flop_notreks dagma dagma-nt-edge-mask dagma-nt-post dagma_notreks \
     --workers 1 --attempts 1 --flop-sweeps 2 --dagma-stages 2 \
