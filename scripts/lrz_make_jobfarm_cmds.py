@@ -30,8 +30,8 @@ def main() -> None:
                             "main-misspec-nonlinear-gaussian",
                             "pstrek-vs-tcc"),
                    help="registered synthetic arms to shard")
-    p.add_argument("--batch-size", type=int, default=1,
-                   help="methods per JobFarm command (default: one method)")
+    p.add_argument("--batch-size", type=int, default=16,
+                   help="methods per JobFarm command (default: all eligible methods)")
     p.add_argument("--cell-batch-size", type=int, default=1,
                    help="registered graph cells per JobFarm command (default: one cell)")
     p.add_argument("--cell-indices", nargs="+", type=int, default=None,

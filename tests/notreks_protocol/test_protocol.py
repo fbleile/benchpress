@@ -92,8 +92,16 @@ def test_jobfarm_compiler_applies_dimension_method_exclusions(tmp_path, monkeypa
         if any(f"--cell-start {index} " in line for index in range(10, 16))
     ]
     assert d100_lines
-    assert not any(
-        f"--methods {method}" in line
-        for line in d100_lines
-        for method in ("dagma", "dagma-nt-edge-mask", "dagma-nt-post", "dagma_notreks")
-    )
+    for line in d100_lines:
+        methods = line.split("--methods ", 1)[1].split(" --workers", 1)[0].split()
+        assert not set(methods) & {
+            "dagma", "dagma-nt-edge-mask", "dagma-nt-post", "dagma_notreks"
+        }
+
+    d20_lines = [
+        line for line in command_file.read_text().splitlines()
+        if "--cell-start 0 " in line
+    ]
+    assert d20_lines
+    methods = d20_lines[0].split("--methods ", 1)[1].split(" --workers", 1)[0].split()
+    assert {"flop", "flop-nt-post", "dagma", "dagma-nt-post"} <= set(methods)
