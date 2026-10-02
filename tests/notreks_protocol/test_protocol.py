@@ -9,6 +9,7 @@ from scripts.notreks_protocol import (
     select_pairs,
 )
 from scripts.notreks_protocol_registry import REGISTRY
+from scripts.lrz_make_jobfarm_cmds import main as make_jobfarm_commands
 
 
 def test_protocol_uses_the_declared_standard_flop_notreks_method():
@@ -69,3 +70,30 @@ def test_misspecification_arms_match_main_grid():
         assert arm.q25_rounds == main.q25_rounds
         assert arm.methods == main.methods
         assert arm.excluded_methods_by_dimension == main.excluded_methods_by_dimension
+
+
+def test_jobfarm_compiler_applies_dimension_method_exclusions(tmp_path, monkeypatch):
+    command_file = tmp_path / "commands.txt"
+    output_root = tmp_path / "results"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "lrz_make_jobfarm_cmds.py",
+            "--repo", str(tmp_path),
+            "--output-root", str(output_root),
+            "--command-file", str(command_file),
+            "--synthetic-experiments", "main",
+            "--replicate-batch-size", "20",
+        ],
+    )
+    make_jobfarm_commands()
+    d100_lines = [
+        line for line in command_file.read_text().splitlines()
+        if any(f"--cell-start {index} " in line for index in range(10, 16))
+    ]
+    assert d100_lines
+    assert not any(
+        f"--methods {method}" in line
+        for line in d100_lines
+        for method in ("dagma", "dagma-nt-edge-mask", "dagma-nt-post", "dagma_notreks")
+    )

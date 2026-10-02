@@ -95,22 +95,50 @@ def main() -> None:
         p.error(f"unknown synthetic experiments: {unknown}")
     for experiment in args.synthetic_experiments:
         methods = synthetic[experiment].split()
-        cell_count = len(REGISTRY[experiment].cells)
+        spec = REGISTRY[experiment]
+        cell_count = len(spec.cells)
         task_index = 0
         if args.cell_indices is not None:
             cell_starts = [(index, 1) for index in args.cell_indices
                            if index < cell_count]
         else:
-            cell_starts = [(cell_start, min(args.cell_batch_size, cell_count - cell_start))
-                           for cell_start in range(0, cell_count, args.cell_batch_size)]
+            # Never create a command spanning cells with different method
+            # eligibility.  In particular, the protocol excludes DAGMA for
+            # d=100, and JobFarm must not receive a command that names DAGMA
+            # for such a cell even though the runtime would filter it later.
+            cell_starts = []
+            cell_start = 0
+            while cell_start < cell_count:
+                dimension = spec.cells[cell_start][0]
+                cell_limit = 0
+                while (cell_start + cell_limit < cell_count
+                       and cell_limit < args.cell_batch_size
+                       and spec.cells[cell_start + cell_limit][0] == dimension):
+                    cell_limit += 1
+                cell_starts.append((cell_start, cell_limit))
+                cell_start += cell_limit
         for cell_start, cell_limit in cell_starts:
+            cell_dimensions = {
+                spec.cells[index][0]
+                for index in range(cell_start, cell_start + cell_limit)
+            }
+            if len(cell_dimensions) != 1:
+                raise ValueError(
+                    f"cell batch {cell_start}:{cell_limit} crosses dimensions "
+                    f"for {experiment}; split it before compiling commands")
+            dimension = next(iter(cell_dimensions))
+            eligible_methods = set(spec.methods_for(dimension))
+            cell_methods = [method for method in methods
+                            if method in eligible_methods]
+            if not cell_methods:
+                continue
             replicate_count = scaled_replicates(REGISTRY[experiment], args.fraction)
             for replicate_start in range(0, replicate_count,
                                          args.replicate_batch_size):
                 replicate_limit = min(args.replicate_batch_size,
                                       replicate_count - replicate_start)
-                for batch_index in range(0, len(methods), args.batch_size):
-                    batch = methods[batch_index:batch_index + args.batch_size]
+                for batch_index in range(0, len(cell_methods), args.batch_size):
+                    batch = cell_methods[batch_index:batch_index + args.batch_size]
                     method_args = " ".join(batch)
                     batch_label = "_".join(method.replace('-', '_') for method in batch)
                     job_out = out / f"job_{experiment}_{task_index:03d}_c{cell_start:02d}_r{replicate_start:02d}_{batch_label}"
