@@ -93,6 +93,35 @@ def main() -> None:
     unknown = sorted(set(args.synthetic_experiments) - set(synthetic))
     if unknown:
         p.error(f"unknown synthetic experiments: {unknown}")
+
+    def method_batches(methods: list[str]) -> list[list[str]]:
+        """Keep vanilla/post-selection methods in one process, by family.
+
+        The protocol runner's candidate cache is process-local.  FLOP and
+        DAGMA therefore need separate family batches so their post-selection
+        variants see the exact vanilla candidate, while a single task does
+        not combine both expensive solver families and exceed the wall limit.
+        """
+        families: list[list[str]] = []
+        current_family = None
+        current: list[str] = []
+        for method in methods:
+            family = "dagma" if method.startswith("dagma") else (
+                "baseline" if method in {"var_sortnregress", "r2_sortnregress"}
+                else "flop")
+            if current and family != current_family:
+                families.append(current)
+                current = []
+            current_family = family
+            current.append(method)
+        if current:
+            families.append(current)
+        batches: list[list[str]] = []
+        for family in families:
+            for index in range(0, len(family), args.batch_size):
+                batches.append(family[index:index + args.batch_size])
+        return batches
+
     for experiment in args.synthetic_experiments:
         methods = synthetic[experiment].split()
         spec = REGISTRY[experiment]
@@ -137,8 +166,7 @@ def main() -> None:
                                          args.replicate_batch_size):
                 replicate_limit = min(args.replicate_batch_size,
                                       replicate_count - replicate_start)
-                for batch_index in range(0, len(cell_methods), args.batch_size):
-                    batch = cell_methods[batch_index:batch_index + args.batch_size]
+                for batch in method_batches(cell_methods):
                     method_args = " ".join(batch)
                     batch_label = "_".join(method.replace('-', '_') for method in batch)
                     job_out = out / f"job_{experiment}_{task_index:03d}_c{cell_start:02d}_r{replicate_start:02d}_{batch_label}"

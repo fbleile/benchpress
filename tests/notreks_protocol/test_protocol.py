@@ -102,6 +102,11 @@ def test_jobfarm_compiler_applies_dimension_method_exclusions(tmp_path, monkeypa
         line for line in command_file.read_text().splitlines()
         if "--cell-start 0 " in line
     ]
-    assert d20_lines
-    methods = d20_lines[0].split("--methods ", 1)[1].split(" --workers", 1)[0].split()
-    assert {"flop", "flop-nt-post", "dagma", "dagma-nt-post"} <= set(methods)
+    assert len(d20_lines) == 3
+    method_batches = [
+        set(line.split("--methods ", 1)[1].split(" --workers", 1)[0].split())
+        for line in d20_lines
+    ]
+    assert {"flop", "flop-nt-post"} <= method_batches[0]
+    assert {"dagma", "dagma-nt-post"} <= method_batches[1]
+    assert {"var_sortnregress", "r2_sortnregress"} == method_batches[2]
