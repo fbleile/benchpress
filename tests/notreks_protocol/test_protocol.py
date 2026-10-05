@@ -110,3 +110,29 @@ def test_jobfarm_compiler_applies_dimension_method_exclusions(tmp_path, monkeypa
     assert {"flop", "flop-nt-post"} <= method_batches[0]
     assert {"dagma", "dagma-nt-post"} <= method_batches[1]
     assert {"var_sortnregress", "r2_sortnregress"} == method_batches[2]
+
+
+def test_jobfarm_compiler_can_split_main_into_small_prior_tasks(tmp_path, monkeypatch):
+    command_file = tmp_path / "commands.txt"
+    output_root = tmp_path / "results"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "lrz_make_jobfarm_cmds.py",
+            "--repo", str(tmp_path),
+            "--output-root", str(output_root),
+            "--command-file", str(command_file),
+            "--synthetic-experiments", "main",
+            "--fraction", "0.05",
+            "--replicate-batch-size", "1",
+            "--n-values", "100", "500", "2000",
+            "--split-priors",
+        ],
+    )
+    make_jobfarm_commands()
+    lines = command_file.read_text().splitlines()
+    assert lines
+    assert all("--n-values " in line for line in lines)
+    assert all("--q-values " in line for line in lines)
+    assert all("--knowledge-round-limit 1" in line for line in lines)
+    assert len({line.split("--output-root ", 1)[1] for line in lines}) == len(lines)

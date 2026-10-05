@@ -69,6 +69,18 @@ def _knowledge_strategy_list(spec, q):
     return spec.knowledge_strategies if q == .25 else ("random",)
 
 
+def _selected_q_values(spec, args):
+    return tuple(args.q_values) if args.q_values is not None else spec.q_values
+
+
+def _selected_knowledge_strategies(spec, q, args):
+    strategies = _knowledge_strategy_list(spec, q)
+    if args.knowledge_strategies is None:
+        return strategies
+    return tuple(strategy for strategy in strategies
+                 if strategy in args.knowledge_strategies)
+
+
 def _attempts_for(spec, method, args):
     return int(args.attempts) if args.attempts is not None else spec.attempts_for(method)
 
@@ -329,10 +341,18 @@ def run(args):
                                         truth=truth, weights=weights, data_seed=data_seed,
                                         data_model=data_model)
                     cache = {}
-                    for q in spec.q_values:
+                    for q in _selected_q_values(spec, args):
                         rounds = _knowledge_round_count(spec, q, args)
-                        for strategy in _knowledge_strategy_list(spec, q):
-                          for round_id in range(rounds):
+                        strategies = _selected_knowledge_strategies(spec, q, args)
+                        round_start = min(args.knowledge_round_start, rounds)
+                        round_stop = rounds
+                        if args.knowledge_round_limit is not None:
+                            round_stop = min(
+                                rounds,
+                                round_start + args.knowledge_round_limit,
+                            )
+                        for strategy in strategies:
+                          for round_id in range(round_start, round_stop):
                             knowledge_seed = derive_seed("knowledge", graph_id, n,
                                                          q, strategy, round_id,
                                                          master=args.master_seed)
@@ -536,6 +556,14 @@ def main():
                    help="number of graph replicates to process for this task")
     p.add_argument("--n-values", nargs="+", type=int, default=None,
                    help="override registered sample sizes for a bounded smoke")
+    p.add_argument("--q-values", nargs="+", type=float, default=None,
+                   help="select knowledge fractions for a sharded run")
+    p.add_argument("--knowledge-strategies", nargs="+", default=None,
+                   help="select knowledge strategies for a sharded run")
+    p.add_argument("--knowledge-round-start", type=int, default=0,
+                   help="zero-based q=.25 knowledge-round offset")
+    p.add_argument("--knowledge-round-limit", type=int, default=None,
+                   help="number of q=.25 knowledge rounds to process")
     p.add_argument("--cell-limit", type=int, default=None,
                    help="run only the first registered graph cells for a bounded smoke")
     p.add_argument("--cell-start", type=int, default=0,
@@ -577,6 +605,12 @@ def main():
         p.error("--cell-indices must be nonnegative")
     if args.knowledge_rounds is not None and args.knowledge_rounds < 1:
         p.error("--knowledge-rounds must be at least 1")
+    if args.q_values is not None and any(q not in {0.0, .25, 1.0} for q in args.q_values):
+        p.error("--q-values must be drawn from 0, 0.25, 1")
+    if args.knowledge_round_start < 0:
+        p.error("--knowledge-round-start must be nonnegative")
+    if args.knowledge_round_limit is not None and args.knowledge_round_limit < 1:
+        p.error("--knowledge-round-limit must be at least 1")
     specs = select_registry(args.experiments, args.fraction)
     print_design_and_objective(specs, args)
     run(args)

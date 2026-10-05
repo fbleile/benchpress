@@ -38,6 +38,8 @@ def main() -> None:
                    help="explicit registered cell indices for a smoke")
     p.add_argument("--replicate-batch-size", type=int, default=2,
                    help="graph replicates per task; all replicates remain in the full run")
+    p.add_argument("--split-priors", action="store_true",
+                   help="make one task per n/q/strategy/knowledge-round shard")
     p.add_argument("--include-real-world", action="store_true",
                    help="also add Sachs and causalAssembly commands")
     p.add_argument("--attempts", type=int, default=None,
@@ -169,26 +171,47 @@ def main() -> None:
                 for batch in method_batches(cell_methods):
                     method_args = " ".join(batch)
                     batch_label = "_".join(method.replace('-', '_') for method in batch)
-                    job_out = out / f"job_{experiment}_{task_index:03d}_c{cell_start:02d}_r{replicate_start:02d}_{batch_label}"
-                    optional = (f" --replicate-start {replicate_start}"
-                                f" --replicate-limit {replicate_limit}")
-                    if args.n_values:
-                        optional += " --n-values " + " ".join(map(str, args.n_values))
-                    if args.knowledge_rounds is not None:
-                        optional += f" --knowledge-rounds {args.knowledge_rounds}"
-                    attempts = f" --attempts {args.attempts}" if args.attempts is not None else ""
-                    lines.append(
-                        f"{env} {py} {root}/scripts/notreks_protocol_all.py "
-                        f"--experiments {experiment} --fraction {args.fraction:g} "
-                        f"--master-seed {args.master_seed} "
-                        f"--cell-start {cell_start} --cell-limit {cell_limit} "
-                        f"--methods {method_args} --workers 1{attempts} "
-                        f"--flop-sweeps {args.flop_sweeps} --dagma-stages {args.dagma_stages} "
-                        f"--dagma-warm-iter {args.dagma_warm_iter} "
-                        f"--dagma-max-iter {args.dagma_max_iter} "
-                        f"--max-wall-hours {args.max_wall_hours:g}{optional} "
-                        f"--skip-figures --output-root {job_out}")
-                    task_index += 1
+                    n_shards = args.n_values or [None]
+                    prior_shards = [(None, None, None)]
+                    if args.split_priors:
+                        prior_shards = []
+                        for q in spec.q_values:
+                            strategies = spec.knowledge_strategies if q == .25 else ("random",)
+                            rounds = spec.q25_rounds if q == .25 else 1
+                            for strategy in strategies:
+                                for round_id in range(rounds):
+                                    prior_shards.append((q, strategy, round_id))
+                    for n_value in n_shards:
+                        for q_value, strategy, round_id in prior_shards:
+                            job_label = f"job_{experiment}_{task_index:05d}_c{cell_start:02d}_r{replicate_start:02d}"
+                            if n_value is not None:
+                                job_label += f"_n{n_value}"
+                            if q_value is not None:
+                                job_label += f"_q{q_value:g}_{strategy}_k{round_id:02d}"
+                            job_out = out / f"{job_label}_{batch_label}"
+                            optional = (f" --replicate-start {replicate_start}"
+                                        f" --replicate-limit {replicate_limit}")
+                            if n_value is not None:
+                                optional += f" --n-values {n_value}"
+                            if q_value is not None:
+                                optional += f" --q-values {q_value:g}"
+                                optional += f" --knowledge-strategies {strategy}"
+                                optional += f" --knowledge-round-start {round_id} --knowledge-round-limit 1"
+                            if args.knowledge_rounds is not None:
+                                optional += f" --knowledge-rounds {args.knowledge_rounds}"
+                            attempts = f" --attempts {args.attempts}" if args.attempts is not None else ""
+                            lines.append(
+                                f"{env} {py} {root}/scripts/notreks_protocol_all.py "
+                                f"--experiments {experiment} --fraction {args.fraction:g} "
+                                f"--master-seed {args.master_seed} "
+                                f"--cell-start {cell_start} --cell-limit {cell_limit} "
+                                f"--methods {method_args} --workers 1{attempts} "
+                                f"--flop-sweeps {args.flop_sweeps} --dagma-stages {args.dagma_stages} "
+                                f"--dagma-warm-iter {args.dagma_warm_iter} "
+                                f"--dagma-max-iter {args.dagma_max_iter} "
+                                f"--max-wall-hours {args.max_wall_hours:g}{optional} "
+                                f"--skip-figures --output-root {job_out}")
+                            task_index += 1
 
     sachs_methods = (
         "flop flop-nt-standard flop-nt-edge-mask flop-nt-post "
