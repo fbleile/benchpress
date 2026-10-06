@@ -16,7 +16,9 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --time=24:00:00
 #SBATCH --export=ALL
-#SBATCH --mail-type=BEGIN,FAIL,END,TIME_LIMIT_50,TIME_LIMIT_80,TIME_LIMIT_90,REQUEUE
+# Notify only when the allocation starts or ends.  Avoid progress and
+# requeue notifications for the long-running production farms.
+#SBATCH --mail-type=BEGIN,END
 #SBATCH --mail-user=f.bleile@tum.de
 
 set -euo pipefail
