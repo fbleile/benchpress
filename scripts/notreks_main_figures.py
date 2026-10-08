@@ -58,6 +58,7 @@ def main() -> None:
             plotting,
             arm_root / "analysis" / "figures",
             arm_root,
+            protocol_label=arm,
         )
         print(f"generated {arm} figures from {len(subset)} rows")
 

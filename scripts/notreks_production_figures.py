@@ -77,7 +77,8 @@ def _metric_label(metric):
             "Parent_AID_cpdag": "CPDAG Parent-AID",
             "Ancestor_AID_cpdag": "CPDAG Ancestor-AID"}.get(metric, metric)
 
-def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False):
+def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False,
+           protocol_label="main"):
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
     columns = ["solver", "knowledge", "n", "runtime_mean", "runtime_q25",
@@ -125,9 +126,17 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False):
     src.to_csv(plot_data, index=False)
     if src.empty:
         return
-    # One shared axis makes the solver comparison direct.  A signed-log scale
-    # keeps the low FLOP region visible while still accommodating DAGMA values.
-    fig, ax = plt.subplots(figsize=(5.9, 4.35))
+    # Three equal-height y-bands make the small FLOP differences visible while
+    # retaining the large baseline values: 0--10, 10--100, and 100--upper.
+    # This is deliberately not a logarithmic transform: distances within each
+    # protocol band remain directly interpretable.
+    ymax = max(float(src.SHD_mean.max()) * 1.08, 110.0)
+    ymax = float(np.ceil(ymax / 50.0) * 50.0)
+    fig, axes = plt.subplots(
+        3, 1, sharex=True, figsize=(5.9, 5.35),
+        gridspec_kw={"height_ratios": [1, 1, 1], "hspace": .055})
+    axes = list(axes)
+    limits = [(0, 10), (10, 100), (100, ymax)]
     markers={100:"o",500:"^",2000:"s"}
     for r in src.itertuples():
         c = {"FLOP": FLOP, "DAGMA": DAGMA,
@@ -136,47 +145,70 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False):
         # vanilla markers.
         fc = "white" if r.knowledge in ("vanilla", "baseline") else (
             light_fill(c) if r.knowledge == "25% NOTREKS" else c)
-        ax.errorbar(r.runtime_mean,r.SHD_mean,
-                    yerr=[[r.SHD_sd], [r.SHD_sd]],fmt="none",color=c,
-                    capsize=2.2,lw=.8,zorder=2)
-        ax.scatter(r.runtime_mean,r.SHD_mean,marker=markers[r.n],s=48,
-                   color=c,facecolors=fc,edgecolors=c,linewidths=1.1,zorder=4)
-    vals = src.SHD_mean.dropna()
-    flo = src.loc[src.solver == "FLOP", "SHD_mean"].dropna()
-    linthresh = max(1.0, 2.0 ** np.ceil(np.log2(max(float(flo.max()) if len(flo) else 1.0, 1.0))))
-    ymax = max(float(vals.max()) * 1.12 if len(vals) else 1.0, linthresh * 1.5)
-    ax.set_xscale("log"); ax.set_yscale("symlog", linthresh=linthresh, linscale=1.2, base=10)
-    ax.set_ylim(0, ymax)
-    ax.set_xlabel("mean runtime (s)"); ax.set_ylabel(_metric_label(metric)+" (lower is better)")
-    ax.grid(axis="y",alpha=.18); ax.spines[["top","right"]].set_visible(False)
-    # Three explicit legend columns: method, knowledge, sample size.
-    h=[Line2D([],[],color=FLOP,marker="o",ls="None",label="FLOP"),
+        for ax in axes:
+            ax.errorbar(r.runtime_mean,r.SHD_mean,
+                        yerr=[[r.SHD_sd], [r.SHD_sd]],fmt="none",color=c,
+                        capsize=2.2,lw=.8,zorder=2)
+            ax.scatter(r.runtime_mean,r.SHD_mean,marker=markers[r.n],s=48,
+                       color=c,facecolors=fc,edgecolors=c,linewidths=1.1,zorder=4)
+    for ax, (lower, upper) in zip(axes, limits):
+        ax.set_ylim(lower, upper)
+        ax.set_xscale("log")
+        ax.grid(axis="y",alpha=.18)
+        ax.spines[["top","right"]].set_visible(False)
+    axes[0].spines["bottom"].set_visible(False)
+    axes[1].spines[["top", "bottom"]].set_visible(False)
+    axes[2].spines["top"].set_visible(False)
+    axes[0].tick_params(labelbottom=False, bottom=False)
+    axes[1].tick_params(labelbottom=False, bottom=False)
+    axes[0].set_ylabel(_metric_label(metric)+"\n(lower is better)", labelpad=30)
+    axes[2].set_xlabel("mean runtime (s)")
+    # Small diagonal marks indicate the two discontinuities in the y-axis.
+    for upper_ax, lower_ax in ((axes[0], axes[1]), (axes[1], axes[2])):
+        for break_x in (0, 1):
+            upper_ax.plot((break_x-.012, break_x+.012), (-.012, .012),
+                          transform=upper_ax.transAxes, color="k", clip_on=False, lw=.7)
+            lower_ax.plot((break_x-.012, break_x+.012), (1-.012, 1+.012),
+                          transform=lower_ax.transAxes, color="k", clip_on=False, lw=.7)
+    # Three independent one-column legends keep every column aligned at the
+    # same top row; Matplotlib's ncol packing otherwise shifts column 2 when
+    # the method column has a different number of entries.
+    method_handles=[Line2D([],[],color=FLOP,marker="o",ls="None",label="FLOP"),
        Line2D([],[],color=DAGMA,marker="o",ls="None",label="DAGMA")]
     if "Var-SortnRegress" in set(src.solver):
-        h.append(Line2D([],[],color=VAR_SORT,marker="o",ls="None",label="Var-SortnRegress"))
+        method_handles.append(Line2D([],[],color=VAR_SORT,marker="o",ls="None",label="Var-SortnRegress"))
     if "$R^2$-SortnRegress" in set(src.solver):
-        h.append(Line2D([],[],color=R2_SORT,marker="o",ls="None",label="$R^2$-SortnRegress"))
-    h += [
-       Line2D([],[],linestyle="None",label=""),
+        method_handles.append(Line2D([],[],color=R2_SORT,marker="o",ls="None",label="$R^2$-SortnRegress"))
+    knowledge_handles = [
        Line2D([],[],color=NEUTRAL,marker="o",mfc="none",ls="None",label="vanilla"),
        Line2D([],[],color=NEUTRAL,marker="o",mfc=light_fill(NEUTRAL),ls="None",label="25% NOTREKS"),
-       Line2D([],[],color=NEUTRAL,marker="o",mfc=NEUTRAL,ls="None",label="100% NOTREKS"),
+       Line2D([],[],color=NEUTRAL,marker="o",mfc=NEUTRAL,ls="None",label="100% NOTREKS")]
+    sample_handles = [
        Line2D([],[],color=NEUTRAL,marker="o",ls="None",label="$n=100$"),
        Line2D([],[],color=NEUTRAL,marker="^",ls="None",label="$n=500$"),
        Line2D([],[],color=NEUTRAL,marker="s",ls="None",label="$n=2000$")]
-    # Keep the key inside the plotting area so the exported figure has no
-    # oversized header.  The central upper region is intentionally empty in
-    # this Pareto layout.
-    ax.legend(handles=h,ncol=3,loc="upper left",bbox_to_anchor=(.01,.985),
-              frameon=True,facecolor="white",edgecolor=".75",framealpha=.9,
-              fontsize=6.4,columnspacing=.55,handletextpad=.22,borderpad=.3)
-    footer = ("main: all graph types; d=20/50; n=100/500/2000; q=.25/1"
-              if all_datasets else
-              "main: d=50, ER8; 2 graph replicates; q=.25 (5 draws), q=1")
-    fig.text(.98,.035,footer,
+    for handles, title, anchor_x in ((method_handles, "method", .01),
+                                     (knowledge_handles, "knowledge", .35),
+                                     (sample_handles, "sample size", .68)):
+        axes[0].legend(handles=handles, title=title, ncol=1,
+                       loc="upper left", bbox_to_anchor=(anchor_x, .985),
+                       frameon=True, facecolor="white", edgecolor=".75",
+                       framealpha=.9, fontsize=6.2, title_fontsize=6.2,
+                       handletextpad=.22, borderpad=.3, labelspacing=.22)
+        if title != "sample size":
+            axes[0].add_artist(axes[0].get_legend())
+    dimensions = sorted(pd.to_numeric(x.d, errors="coerce").dropna().unique())
+    dimension_text = "/".join(str(int(v)) for v in dimensions)
+    ns = sorted(pd.to_numeric(x.n, errors="coerce").dropna().unique())
+    n_text = "/".join(str(int(v)) for v in ns)
+    footer = (f"{protocol_label}: all graph types; d={dimension_text}; "
+              f"n={n_text}; q=.25/1" if all_datasets else
+              f"{protocol_label}: d={dimension_text}, ER8; 20 graph replicates; "
+              "q=.25 (5 draws), q=1")
+    fig.text(.98,.018,footer,
             ha="right",va="bottom",fontsize=5.4,
             color=".28",bbox=dict(facecolor="white",alpha=.82,edgecolor="none",pad=1.5))
-    fig.subplots_adjust(top=.91,left=.12,right=.98,bottom=.17)
+    fig.subplots_adjust(top=.88,left=.14,right=.98,bottom=.12)
     save(fig,out/("figure1_paired_pareto_aggregate"+suffix)); plt.close(fig)
 
 def ablation(df,out, dimension=50, metric="SHD_cpdag", suffix=""):
@@ -936,7 +968,7 @@ def write_special_protocol_figures(df, out):
         _special_tcc_figure(tcc, out, "Ancestor_AID_cpdag")
 
 
-def write_protocol_figures(df, out, root):
+def write_protocol_figures(df, out, root, protocol_label="main"):
     """Create the agreed publication and appendix figure set."""
     out.mkdir(parents=True, exist_ok=True)
     if df.empty:
@@ -949,9 +981,11 @@ def write_protocol_figures(df, out, root):
     if not required_synthetic.issubset(df.columns):
         return
     df = ensure_bic_gap(df, root)
-    pareto(df, out)
-    pareto(df, out, metric="Ancestor_AID_cpdag", suffix="_cpdag_aid")
-    pareto(df, out, all_datasets=True, suffix="_all_datasets")
+    pareto(df, out, protocol_label=protocol_label)
+    pareto(df, out, metric="Ancestor_AID_cpdag", suffix="_cpdag_aid",
+           protocol_label=protocol_label)
+    pareto(df, out, all_datasets=True, suffix="_all_datasets",
+           protocol_label=protocol_label)
     ablation_pareto(df, out, dimension=50)
     main_rank(df, out, dimension=20)
     main_rank(df, out, dimension=50)
