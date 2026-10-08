@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Create one disjoint LRZ JobFarm command per experiment and method.
 
-Each command writes to its own result directory.  The collector can merge the
-tables afterwards, so no worker ever writes the same CSV or checkpoint.
+Each synthetic command writes below ``results/<experiment>/jobs``.  The
+collector can merge the tables afterwards, so no worker ever writes the same
+CSV or checkpoint.
 """
 from __future__ import annotations
 
@@ -188,7 +189,12 @@ def main() -> None:
                                 job_label += f"_n{n_value}"
                             if q_value is not None:
                                 job_label += f"_q{q_value:g}_{strategy}_k{round_id:02d}"
-                            job_out = out / f"{job_label}_{batch_label}"
+                            # Keep the public result layout stable: experiment
+                            # summaries live in results/<experiment>, while
+                            # every isolated JobFarm process lives below its
+                            # jobs/ subdirectory.
+                            job_out = (out / experiment / "jobs" /
+                                       f"{job_label}_{batch_label}")
                             optional = (f" --replicate-start {replicate_start}"
                                         f" --replicate-limit {replicate_limit}")
                             if n_value is not None:

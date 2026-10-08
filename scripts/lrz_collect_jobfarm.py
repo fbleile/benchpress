@@ -27,11 +27,13 @@ def main() -> None:
             if "--output-root" in tokens:
                 expected_outputs.append(Path(tokens[tokens.index("--output-root") + 1]))
     frames = []
-    for path in sorted(args.root.glob("job_*/raw/results.csv")):
+    # Synthetic runs keep isolated processes in results/<experiment>/jobs/;
+    # rglob also remains compatible with the older flat layout.
+    for path in sorted(args.root.rglob("job_*/raw/results.csv")):
         frame = pd.read_csv(path)
         frame["job_directory"] = str(path.parent.parent)
         frames.append(frame)
-    for path in sorted(args.root.glob("job_*/results.csv")):
+    for path in sorted(args.root.rglob("job_*/results.csv")):
         frame = pd.read_csv(path)
         frame["job_directory"] = str(path.parent)
         frames.append(frame)
