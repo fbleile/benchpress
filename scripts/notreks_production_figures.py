@@ -126,17 +126,10 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False,
     src.to_csv(plot_data, index=False)
     if src.empty:
         return
-    # Three equal-height y-bands make the small FLOP differences visible while
-    # retaining the large baseline values: 0--10, 10--100, and 100--upper.
-    # This is deliberately not a logarithmic transform: distances within each
-    # protocol band remain directly interpretable.
-    ymax = max(float(src.SHD_mean.max()) * 1.08, 110.0)
-    ymax = float(np.ceil(ymax / 50.0) * 50.0)
-    fig, axes = plt.subplots(
-        3, 1, sharex=True, figsize=(5.9, 5.35),
-        gridspec_kw={"height_ratios": [1, 1, 1], "hspace": .055})
-    axes = list(axes)
-    limits = [(0, 10), (10, 100), (100, ymax)]
+    # Use a genuine symmetric-log scale: linear close to zero, logarithmic
+    # afterwards.  Explicit major ticks make the intended decade landmarks
+    # stable across arms and figures.
+    fig, ax = plt.subplots(figsize=(5.9, 4.35))
     markers={100:"o",500:"^",2000:"s"}
     for r in src.itertuples():
         c = {"FLOP": FLOP, "DAGMA": DAGMA,
@@ -145,31 +138,18 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False,
         # vanilla markers.
         fc = "white" if r.knowledge in ("vanilla", "baseline") else (
             light_fill(c) if r.knowledge == "25% NOTREKS" else c)
-        for ax in axes:
-            ax.errorbar(r.runtime_mean,r.SHD_mean,
-                        yerr=[[r.SHD_sd], [r.SHD_sd]],fmt="none",color=c,
-                        capsize=2.2,lw=.8,zorder=2)
-            ax.scatter(r.runtime_mean,r.SHD_mean,marker=markers[r.n],s=48,
-                       color=c,facecolors=fc,edgecolors=c,linewidths=1.1,zorder=4)
-    for ax, (lower, upper) in zip(axes, limits):
-        ax.set_ylim(lower, upper)
-        ax.set_xscale("log")
-        ax.grid(axis="y",alpha=.18)
-        ax.spines[["top","right"]].set_visible(False)
-    axes[0].spines["bottom"].set_visible(False)
-    axes[1].spines[["top", "bottom"]].set_visible(False)
-    axes[2].spines["top"].set_visible(False)
-    axes[0].tick_params(labelbottom=False, bottom=False)
-    axes[1].tick_params(labelbottom=False, bottom=False)
-    axes[0].set_ylabel(_metric_label(metric)+"\n(lower is better)", labelpad=30)
-    axes[2].set_xlabel("mean runtime (s)")
-    # Small diagonal marks indicate the two discontinuities in the y-axis.
-    for upper_ax, lower_ax in ((axes[0], axes[1]), (axes[1], axes[2])):
-        for break_x in (0, 1):
-            upper_ax.plot((break_x-.012, break_x+.012), (-.012, .012),
-                          transform=upper_ax.transAxes, color="k", clip_on=False, lw=.7)
-            lower_ax.plot((break_x-.012, break_x+.012), (1-.012, 1+.012),
-                          transform=lower_ax.transAxes, color="k", clip_on=False, lw=.7)
+        ax.errorbar(r.runtime_mean,r.SHD_mean,
+                    yerr=[[r.SHD_sd], [r.SHD_sd]],fmt="none",color=c,
+                    capsize=2.2,lw=.8,zorder=2)
+        ax.scatter(r.runtime_mean,r.SHD_mean,marker=markers[r.n],s=48,
+                   color=c,facecolors=fc,edgecolors=c,linewidths=1.1,zorder=4)
+    ax.set_xscale("log")
+    ax.set_yscale("symlog", linthresh=1)
+    ax.set_yticks([0, 10, 100, 1000])
+    ax.set_ylim(0, max(1000, float(np.ceil(src.SHD_mean.max() / 100) * 100)))
+    ax.set_xlabel("mean runtime (s)")
+    ax.set_ylabel(_metric_label(metric)+" (lower is better)")
+    ax.grid(axis="y",alpha=.18); ax.spines[["top","right"]].set_visible(False)
     # Three independent one-column legends keep every column aligned at the
     # same top row; Matplotlib's ncol packing otherwise shifts column 2 when
     # the method column has a different number of entries.
@@ -190,13 +170,13 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False,
     for handles, title, anchor_x in ((method_handles, "method", .01),
                                      (knowledge_handles, "knowledge", .35),
                                      (sample_handles, "sample size", .68)):
-        axes[0].legend(handles=handles, title=title, ncol=1,
+        ax.legend(handles=handles, title=title, ncol=1,
                        loc="upper left", bbox_to_anchor=(anchor_x, .985),
                        frameon=True, facecolor="white", edgecolor=".75",
                        framealpha=.9, fontsize=6.2, title_fontsize=6.2,
                        handletextpad=.22, borderpad=.3, labelspacing=.22)
         if title != "sample size":
-            axes[0].add_artist(axes[0].get_legend())
+            ax.add_artist(ax.get_legend())
     dimensions = sorted(pd.to_numeric(x.d, errors="coerce").dropna().unique())
     dimension_text = "/".join(str(int(v)) for v in dimensions)
     ns = sorted(pd.to_numeric(x.n, errors="coerce").dropna().unique())
@@ -208,7 +188,7 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False,
     fig.text(.98,.018,footer,
             ha="right",va="bottom",fontsize=5.4,
             color=".28",bbox=dict(facecolor="white",alpha=.82,edgecolor="none",pad=1.5))
-    fig.subplots_adjust(top=.88,left=.14,right=.98,bottom=.12)
+    fig.subplots_adjust(top=.91,left=.12,right=.98,bottom=.17)
     save(fig,out/("figure1_paired_pareto_aggregate"+suffix)); plt.close(fig)
 
 def ablation(df,out, dimension=50, metric="SHD_cpdag", suffix=""):
