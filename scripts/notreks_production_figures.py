@@ -150,9 +150,10 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False,
     ax.set_xlabel("mean runtime (s)")
     ax.set_ylabel(_metric_label(metric)+" (lower is better)")
     ax.grid(axis="y",alpha=.18); ax.spines[["top","right"]].set_visible(False)
-    # Three independent one-column legends keep every column aligned at the
-    # same top row; Matplotlib's ncol packing otherwise shifts column 2 when
-    # the method column has a different number of entries.
+    # One joined legend with equal-length column blocks keeps every column
+    # aligned at the same top row.  Matplotlib packs handles column-wise, so
+    # the shorter knowledge/sample blocks get trailing blank entries rather
+    # than a leading blank that would shift their visible labels downward.
     method_handles=[Line2D([],[],color=FLOP,marker="o",ls="None",label="FLOP"),
        Line2D([],[],color=DAGMA,marker="o",ls="None",label="DAGMA")]
     if "Var-SortnRegress" in set(src.solver):
@@ -167,16 +168,14 @@ def pareto(df, out, metric="SHD_cpdag", suffix="", all_datasets=False,
        Line2D([],[],color=NEUTRAL,marker="o",ls="None",label="$n=100$"),
        Line2D([],[],color=NEUTRAL,marker="^",ls="None",label="$n=500$"),
        Line2D([],[],color=NEUTRAL,marker="s",ls="None",label="$n=2000$")]
-    for handles, title, anchor_x in ((method_handles, "method", .01),
-                                     (knowledge_handles, "knowledge", .35),
-                                     (sample_handles, "sample size", .68)):
-        ax.legend(handles=handles, title=title, ncol=1,
-                       loc="upper left", bbox_to_anchor=(anchor_x, .985),
-                       frameon=True, facecolor="white", edgecolor=".75",
-                       framealpha=.9, fontsize=6.2, title_fontsize=6.2,
-                       handletextpad=.22, borderpad=.3, labelspacing=.22)
-        if title != "sample size":
-            ax.add_artist(ax.get_legend())
+    blank = Line2D([], [], linestyle="None", label="")
+    legend_handles = (method_handles + knowledge_handles + [blank] +
+                      sample_handles + [blank])
+    ax.legend(handles=legend_handles, ncol=3, loc="upper left",
+              bbox_to_anchor=(.01, .985), frameon=True, facecolor="white",
+              edgecolor=".75", framealpha=.9, fontsize=6.4,
+              columnspacing=.75, handletextpad=.25, borderpad=.35,
+              labelspacing=.25)
     dimensions = sorted(pd.to_numeric(x.d, errors="coerce").dropna().unique())
     dimension_text = "/".join(str(int(v)) for v in dimensions)
     ns = sorted(pd.to_numeric(x.n, errors="coerce").dropna().unique())
