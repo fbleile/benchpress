@@ -73,10 +73,16 @@ if ! "$MAMBA_ENV/bin/python" "$PROJECT_DIR/scripts/notreks_protocol_all.py" --he
 fi
 if [[ "${RESET_JOBFARM:-0}" == "1" ]]; then
   # JobFarm keys its database/results to the input filename, not TASKDB.
-  # Remove the actual state directory so a newly generated command list
-  # cannot inherit stale task markers.
-  rm -f "${CMD_FILE}_res/.db"
-  rm -rf "${CMD_FILE}_res"
+  # Archive the old state instead of deleting/recreating the same directory.
+  # On the shared filesystem, compute-side workers can retain a directory
+  # handle while Slurm starts the next allocation; deleting that directory
+  # can then produce "Stale file handle" and cascading worker Bus errors.
+  old_result_dir="${CMD_FILE}_res"
+  if [[ -e "$old_result_dir" ]]; then
+    archive_dir="${old_result_dir}.archive.${SLURM_JOB_ID:-$$}"
+    mv -- "$old_result_dir" "$archive_dir"
+    echo "Archived previous JobFarm state: $archive_dir"
+  fi
 fi
 set +e
 jobfarm start "$CMD_FILE"
