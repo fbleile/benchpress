@@ -268,7 +268,7 @@ def run(args):
         (out / part).mkdir(parents=True, exist_ok=True)
     started = time.time()
     result_path = out / "raw" / "results.csv"
-    if result_path.exists():
+    if result_path.exists() and result_path.stat().st_size > 0:
         rows = pd.read_csv(result_path).to_dict("records")
         for row in rows:
             row.setdefault("knowledge_strategy", "random")
