@@ -39,6 +39,8 @@ def main() -> None:
                    help="explicit registered cell indices for a smoke")
     p.add_argument("--replicate-batch-size", type=int, default=2,
                    help="graph replicates per task; all replicates remain in the full run")
+    p.add_argument("--graph-replicates", type=int, default=None,
+                   help="override the registry graph-replicate count")
     p.add_argument("--split-priors", action="store_true",
                    help="make one task per n/q/strategy/knowledge-round shard")
     p.add_argument("--include-real-world", action="store_true",
@@ -55,6 +57,8 @@ def main() -> None:
                    help="explicit protocol master seed")
     p.add_argument("--n-values", nargs="+", type=int, default=None)
     p.add_argument("--knowledge-rounds", type=int, default=None)
+    p.add_argument("--no-resume", action="store_true",
+                   help="add --no-resume so existing job CSVs are recomputed")
     args = p.parse_args()
     if not 0.0 < args.fraction <= 1.0:
         p.error("--fraction must lie in (0, 1]")
@@ -64,6 +68,8 @@ def main() -> None:
         p.error("--cell-batch-size must be at least 1")
     if args.replicate_batch_size < 1:
         p.error("--replicate-batch-size must be at least 1")
+    if args.graph_replicates is not None and args.graph_replicates < 1:
+        p.error("--graph-replicates must be at least 1")
     if args.cell_indices is not None and any(index < 0 for index in args.cell_indices):
         p.error("--cell-indices must be nonnegative")
     if args.attempts is not None and args.attempts < 1:
@@ -79,6 +85,10 @@ def main() -> None:
     env = f"env PYTHONPATH={root} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1"
 
     synthetic = {
+        "prior-structure-d50": (
+            "flop flop_notreks dagma dagma_notreks"),
+        "prior-structure-d100": (
+            "flop flop_notreks"),
         "main": ("flop flop-nt-edge-mask flop-nt-post flop_notreks "
                  "dagma dagma-nt-edge-mask dagma-nt-post dagma_notreks "
                  "var_sortnregress r2_sortnregress"),
@@ -164,7 +174,9 @@ def main() -> None:
                             if method in eligible_methods]
             if not cell_methods:
                 continue
-            replicate_count = scaled_replicates(REGISTRY[experiment], args.fraction)
+            replicate_count = (args.graph_replicates
+                                if args.graph_replicates is not None
+                                else scaled_replicates(REGISTRY[experiment], args.fraction))
             for replicate_start in range(0, replicate_count,
                                          args.replicate_batch_size):
                 replicate_limit = min(args.replicate_batch_size,
@@ -177,8 +189,10 @@ def main() -> None:
                     if args.split_priors:
                         prior_shards = []
                         for q in spec.q_values:
-                            strategies = spec.knowledge_strategies if q == .25 else ("random",)
-                            rounds = spec.q25_rounds if q == .25 else 1
+                            strategies = (spec.knowledge_strategies
+                                          if q not in {0.0, 1.0}
+                                          else ("random",))
+                            rounds = spec.q25_rounds if q not in {0.0, 1.0} else 1
                             for strategy in strategies:
                                 for round_id in range(rounds):
                                     prior_shards.append((q, strategy, round_id))
@@ -195,7 +209,8 @@ def main() -> None:
                             # jobs/ subdirectory.
                             job_out = (out / experiment / "jobs" /
                                        f"{job_label}_{batch_label}")
-                            optional = (f" --replicate-start {replicate_start}"
+                            optional = (f" --graph-replicates {replicate_count}"
+                                        f" --replicate-start {replicate_start}"
                                         f" --replicate-limit {replicate_limit}")
                             if n_value is not None:
                                 optional += f" --n-values {n_value}"
@@ -216,7 +231,9 @@ def main() -> None:
                                 f"--dagma-warm-iter {args.dagma_warm_iter} "
                                 f"--dagma-max-iter {args.dagma_max_iter} "
                                 f"--max-wall-hours {args.max_wall_hours:g}{optional} "
-                                f"--skip-figures --output-root {job_out}")
+                                f"--skip-figures"
+                                f"{' --no-resume' if args.no_resume else ''}"
+                                f" --output-root {job_out}")
                             task_index += 1
 
     sachs_methods = (

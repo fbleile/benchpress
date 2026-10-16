@@ -54,19 +54,19 @@ def _replicate_count(spec, args):
 
 
 def _knowledge_round_count(spec, q, args):
-    # q=0 is the single vanilla job and q=1 is the complete set; only q=.25
-    # has multiple independent subset draws.
+    # q=0 is the single vanilla job and q=1 is the complete set. Any partial
+    # knowledge level can have independent subset draws.
     if q in {0.0, 1.0}:
         return 1
-    if q == .25 and args.knowledge_rounds is not None:
+    if args.knowledge_rounds is not None:
         return args.knowledge_rounds
-    return spec.q25_rounds if q == .25 else 1
+    return spec.q25_rounds
 
 
 def _knowledge_strategy_list(spec, q):
-    # Structural subset constructions are part of the prior-structure study.
-    # q=0 and q=1 have deterministic knowledge sets.
-    return spec.knowledge_strategies if q == .25 else ("random",)
+    # q=0 and q=1 have deterministic knowledge sets; partial levels compare
+    # the registered structural constructions.
+    return spec.knowledge_strategies if q not in {0.0, 1.0} else ("random",)
 
 
 def _selected_q_values(spec, args):
@@ -93,6 +93,9 @@ def _methods_for_job(spec, d, q):
     prior subset.
     """
     methods = spec.methods_for(d)
+    if spec.name.startswith("prior-structure"):
+        vanilla = {"flop", "dagma"}
+        return tuple(m for m in methods if (m in vanilla) == (q == 0.0))
     vanilla = {"flop", "dagma",
                "var_sortnregress", "r2_sortnregress"}
     if q == 0.0:
@@ -161,8 +164,12 @@ def print_design_and_objective(specs, args):
           "[(s I - W∘W)^(-T)(s I - W∘W)^(-1)]_{ij}", flush=True)
     print("  The factor 2/(d-1) is the kernel's outer-sum scaling; "
           "there is no division by |I|.", flush=True)
-    print("  mu schedule = (1, 0.3, 0.1, 0.01, 0.001); "
-          "s schedule = (1.1, 1.0, 0.9, 0.8, 0.7)", flush=True)
+    mu_schedule = tuple(1.0 * 0.1 ** i for i in range(args.dagma_stages))
+    s_default = (1.0, 0.9, 0.8, 0.7, 0.6)
+    s_schedule = tuple(s_default[min(i, len(s_default) - 1)]
+                       for i in range(args.dagma_stages))
+    print(f"  linear DAGMA default mu schedule = {mu_schedule}; "
+          f"s schedule = {s_schedule}", flush=True)
     print("  NOTREKS is absent when the method has no supplied pairs; for "
           "DAGMA+NOTREKS, the displayed R_I,s term is active.", flush=True)
 
@@ -268,7 +275,7 @@ def run(args):
         (out / part).mkdir(parents=True, exist_ok=True)
     started = time.time()
     result_path = out / "raw" / "results.csv"
-    if result_path.exists() and result_path.stat().st_size > 0:
+    if result_path.exists() and result_path.stat().st_size > 0 and not args.no_resume:
         rows = pd.read_csv(result_path).to_dict("records")
         for row in rows:
             row.setdefault("knowledge_strategy", "random")
@@ -471,7 +478,7 @@ def run(args):
                                                 "solver_status": "ok", "knowledge_pairs": len(pairs),
                                                 "data_model": data_model_label,
                                                 "discovery_score": "profiled_unequal_variance_gaussian"})
-                                    if spec.name == "prior-structure":
+                                    if spec.name.startswith("prior-structure"):
                                         row.update(prior_properties(d, pairs, diag["candidate_graph"]))
                                     successful.add(_job_key(row))
                                     print(f"{spec.name} {graph_id} n={n} q={q} "
@@ -586,6 +593,8 @@ def main():
     p.add_argument("--output-root", type=Path, required=True)
     p.add_argument("--skip-figures", action="store_true",
                    help="do not generate publication figures; use the separate analysis step")
+    p.add_argument("--no-resume", action="store_true",
+                   help="ignore any existing raw/results.csv and recompute every solver row")
     args = p.parse_args()
     if args.workers < 1:
         p.error("--workers must be at least 1")
@@ -605,8 +614,8 @@ def main():
         p.error("--cell-indices must be nonnegative")
     if args.knowledge_rounds is not None and args.knowledge_rounds < 1:
         p.error("--knowledge-rounds must be at least 1")
-    if args.q_values is not None and any(q not in {0.0, .25, 1.0} for q in args.q_values):
-        p.error("--q-values must be drawn from 0, 0.25, 1")
+    if args.q_values is not None and any(not 0.0 <= q <= 1.0 for q in args.q_values):
+        p.error("--q-values must lie between 0 and 1")
     if args.knowledge_round_start < 0:
         p.error("--knowledge-round-start must be nonnegative")
     if args.knowledge_round_limit is not None and args.knowledge_round_limit < 1:

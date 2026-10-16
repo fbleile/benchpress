@@ -76,6 +76,20 @@ REGISTRY = {
         MAIN_CELLS, (100, 500, 2000), (0.0, .25, 1.0), 5, MAIN_METHODS,
         dataset="synthetic_nonlinear_gaussian",
         excluded_methods_by_dimension=MAIN_EXCLUSIONS),
+    "prior-structure-d50": ExperimentSpec(
+        "prior-structure-d50",
+        "d=50 prior-structure comparison with 50% NOTREKS knowledge",
+        ((50, "er", 4), (50, "ws", 4)), (500,), (0.0, .5), 3,
+        ("flop", "flop_notreks", "dagma", "dagma_notreks"),
+        graph_replicates=1,
+        knowledge_strategies=("random", "bipartite-max-capacity", "chromatic-greedy")),
+    "prior-structure-d100": ExperimentSpec(
+        "prior-structure-d100",
+        "d=100 ER8/WS8 FLOP prior-structure comparison with 50% NOTREKS knowledge",
+        ((100, "er", 8), (100, "ws", 8)), (500,), (0.0, .5), 3,
+        ("flop", "flop_notreks"),
+        graph_replicates=5,
+        knowledge_strategies=("random", "bipartite-max-capacity", "chromatic-greedy")),
     "causalassembly": ExperimentSpec(
         "causalassembly", "causalAssembly nonlinear n=500 benchmark", (),
         (500,), (.25, 1.0), 1,
@@ -107,6 +121,20 @@ REGISTRY = {
          "dagma_notreks", "dagma_notreks_tcc",
          "dagma-nt-edge-mask", "dagma-nt-post"),
         graph_replicates=20),
+    "causalman_small": ExperimentSpec(
+        "causalman_small", "official CausalMan Small simulator benchmark", (),
+        (500, 2000, 5000), (0.25, 1.0), 5,
+        ("flop", "flop-nt-standard", "flop-nt-edge-mask", "flop-nt-post",
+         "dagma", "dagma-pstrek", "dagma-nt-edge-mask", "dagma-nt-post"),
+        graph_replicates=10, dataset="causalman_small",
+        knowledge_strategies=("random",)),
+    "causalman_medium": ExperimentSpec(
+        "causalman_medium", "official CausalMan Medium simulator benchmark", (),
+        (500, 2000, 5000), (0.25, 1.0), 5,
+        ("flop", "flop-nt-standard", "flop-nt-edge-mask", "flop-nt-post",
+         "dagma", "dagma-pstrek", "dagma-nt-edge-mask", "dagma-nt-post"),
+        graph_replicates=10, dataset="causalman_medium",
+        knowledge_strategies=("random",)),
 }
 
 
