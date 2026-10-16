@@ -89,6 +89,8 @@ def main() -> None:
             "flop flop_notreks dagma dagma_notreks"),
         "prior-structure-d100": (
             "flop flop_notreks"),
+        "prior-structure-mixed": (
+            "flop flop_notreks dagma dagma_notreks"),
         "main": ("flop flop-nt-edge-mask flop-nt-post flop_notreks "
                  "dagma dagma-nt-edge-mask dagma-nt-post dagma_notreks "
                  "var_sortnregress r2_sortnregress"),

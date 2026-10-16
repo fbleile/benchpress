@@ -90,6 +90,17 @@ REGISTRY = {
         ("flop", "flop_notreks"),
         graph_replicates=5,
         knowledge_strategies=("random", "bipartite-max-capacity", "chromatic-greedy")),
+    "prior-structure-mixed": ExperimentSpec(
+        "prior-structure-mixed",
+        "mixed prior-structure comparison: d=50 DAGMA and d=100 FLOP",
+        ((50, "er", 4), (50, "ws", 4), (100, "er", 8), (100, "ws", 8)),
+        (500,), (0.0, .5), 3,
+        ("flop", "flop_notreks", "dagma", "dagma_notreks"),
+        graph_replicates=5,
+        excluded_methods_by_dimension=(
+            (50, ("flop", "flop_notreks")),
+            (100, ("dagma", "dagma_notreks"))),
+        knowledge_strategies=("random", "bipartite-max-capacity", "chromatic-greedy")),
     "causalassembly": ExperimentSpec(
         "causalassembly", "causalAssembly nonlinear n=500 benchmark", (),
         (500,), (.25, 1.0), 1,

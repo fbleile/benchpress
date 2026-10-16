@@ -93,6 +93,15 @@ def _methods_for_job(spec, d, q):
     prior subset.
     """
     methods = spec.methods_for(d)
+    if spec.name == "prior-structure-mixed":
+        if d == 50:
+            methods = tuple(m for m in methods if m in {"dagma", "dagma_notreks"})
+        elif d == 100:
+            methods = tuple(m for m in methods if m in {"flop", "flop_notreks"})
+        else:
+            methods = ()
+        vanilla = {"flop", "dagma"}
+        return tuple(m for m in methods if (m in vanilla) == (q == 0.0))
     if spec.name.startswith("prior-structure"):
         vanilla = {"flop", "dagma"}
         return tuple(m for m in methods if (m in vanilla) == (q == 0.0))
