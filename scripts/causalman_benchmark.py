@@ -135,7 +135,9 @@ def _candidate(method, x, pairs, seed, args, cached_vanilla=None):
         candidate, diag = order_parent_postselection_from_candidate(x, cached_vanilla[0], pairs)
         diag = {**diag, "candidate_graph": np.asarray(cached_vanilla[0], dtype=np.uint8)}
         return candidate, diag, time.perf_counter() - started
-    return method_run(method, x, pairs, seed, args.attempts,
+    attempts = (args.flop_attempts if method.startswith("flop")
+                else args.dagma_attempts)
+    return method_run(method, x, pairs, seed, attempts,
                       args.flop_sweeps, args.dagma_stages,
                       args.dagma_warm_iter, args.dagma_max_iter,
                       args.trek_weight,
@@ -285,7 +287,10 @@ def run(args):
                                            score_gap / n if np.isfinite(score_gap) else np.nan),
                                        "nonlinear_score_reference_status": score_status,
                                        "candidate_runtime": float(runtime),
-                                       "attempts_requested": args.attempts,
+                                       "attempts_requested": (
+                                           args.flop_attempts
+                                           if method.startswith("flop")
+                                           else args.dagma_attempts),
                                        "metric_exclusion_reason": ("latent_confounding" if pm["projected_bidirected_edges"] else ""),
                                        "SHD_cpdag": np.nan, "SID": np.nan, "AID": np.nan,
                                        "sample_mean_checksum": _hash(mean.tolist()),
@@ -374,7 +379,8 @@ def main():
     p.add_argument("--methods", nargs="+", choices=METHODS, default=list(METHODS))
     p.add_argument("--q-values", nargs="+", type=float, default=[0.0, .25, 1.0])
     p.add_argument("--q25-rounds", type=int, default=5)
-    p.add_argument("--attempts", type=int, default=2)
+    p.add_argument("--flop-attempts", type=int, default=20)
+    p.add_argument("--dagma-attempts", type=int, default=2)
     p.add_argument("--flop-sweeps", type=int, default=16)
     p.add_argument("--dagma-stages", type=int, default=5)
     p.add_argument("--dagma-warm-iter", type=int, default=30000)

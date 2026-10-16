@@ -15,7 +15,8 @@ def main():
     p.add_argument("--variants", nargs="+", default=("causalman_small", "causalman_medium"))
     p.add_argument("--seeds", nargs="+", type=int, default=list(range(1001, 1011)))
     p.add_argument("--n-values", nargs="+", type=int, default=(500, 2000, 5000))
-    p.add_argument("--attempts", type=int, default=2)
+    p.add_argument("--flop-attempts", type=int, default=20)
+    p.add_argument("--dagma-attempts", type=int, default=2)
     args = p.parse_args()
     root, py = args.repo.resolve(), args.python
     env = f"env PYTHONPATH={root} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1"
@@ -36,7 +37,9 @@ def main():
                         f"{env} {root / py} {root}/scripts/causalman_benchmark.py "
                         f"--cache {args.cache} --output {out} --variants {variant} "
                         f"--seeds {seed} --n-values {n} --methods {methods} "
-                        f"--attempts {args.attempts} --flop-sweeps 16 --dagma-stages 5 "
+                        f"--flop-attempts {args.flop_attempts} "
+                        f"--dagma-attempts {args.dagma_attempts} "
+                        f"--flop-sweeps 16 --dagma-stages 5 "
                         f"--dagma-warm-iter 30000 --dagma-max-iter 60000")
                     index += 1
     args.command_file.parent.mkdir(parents=True, exist_ok=True)
