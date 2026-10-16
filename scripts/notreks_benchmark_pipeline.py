@@ -31,6 +31,8 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.syst
     corrupt_knowledge,
     common_ancestor_violations,
     dagma_candidate,
+    flop_nonlinear_admg_candidate,
+    flop_nonlinear_candidate,
     flop_notreks_candidate,
     hybrid_flop_notreks_candidate,
     flop_notreks_postselection_candidate,
@@ -234,7 +236,17 @@ def cells(experiment: str, *, n_override: int | None = None,
 
 def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
                dagma_warm_iter, dagma_max_iter, trek_weight,
-               forbidden_edges=()):
+               forbidden_edges=(), dagma_nonlinear_hidden_dim=10,
+               dagma_nonlinear_score="profiled_log_mse",
+               dagma_nonlinear_student_t_nu=4.0,
+               dagma_nonlinear_lambda1=0.02,
+               flop_nonlinear_hidden_dim=16,
+               flop_nonlinear_epochs=60,
+               flop_nonlinear_score="profiled_log_mse_cv",
+               flop_nonlinear_student_t_nu=4.0,
+               flop_nonlinear_lambda_bic=2.0,
+               flop_nonlinear_max_block_proposals=0,
+               flop_nonlinear_admg=False):
     started = time.perf_counter()
     if name in {"var_sortnregress", "r2_sortnregress"}:
         from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.sortnregress import sortnregress
@@ -248,6 +260,17 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
             X, pairs, seed, attempts, flop_sweeps,
             search_version="flop_like", local_greedy_passes=8,
             forbidden_edges=forbidden_edges)
+    elif name in {"flop-nonlinear", "flop-nonlinear-pstrek",
+                  "flop-nonlinear-admg", "flop-nonlinear-admg-pstrek"}:
+        admg = name.startswith("flop-nonlinear-admg")
+        candidate, diag = (flop_nonlinear_admg_candidate if admg else
+                           flop_nonlinear_candidate)(
+            X, pairs if name.endswith("pstrek") else [], seed, attempts,
+            flop_sweeps, hidden_dim=flop_nonlinear_hidden_dim,
+            epochs=flop_nonlinear_epochs, score=flop_nonlinear_score,
+            student_t_nu=flop_nonlinear_student_t_nu,
+            lambda_bic=flop_nonlinear_lambda_bic,
+            max_block_proposals=flop_nonlinear_max_block_proposals)
     elif name == "flop-nt-local":
         candidate, diag = hybrid_flop_notreks_candidate(
             X, pairs, seed, attempts, flop_sweeps,
@@ -303,7 +326,11 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
                   "dagma-nonlinear-nt-notreks"}:
         candidate, diag = nonlinear_dagma_candidate(
             X, pairs if name.endswith(("pstrek", "nt-notreks")) else [], seed,
-            trek_weight=trek_weight, stages=dagma_stages,
+            trek_weight=trek_weight, hidden_dim=dagma_nonlinear_hidden_dim,
+            score=dagma_nonlinear_score,
+            student_t_nu=dagma_nonlinear_student_t_nu,
+            lambda1=dagma_nonlinear_lambda1,
+            stages=dagma_stages,
             warm_iter=dagma_warm_iter, max_iter=dagma_max_iter,
             forbidden_edges=forbidden_edges)
     elif name in {"dagma-edge-mask", "dagma-nt-edge-mask"}:

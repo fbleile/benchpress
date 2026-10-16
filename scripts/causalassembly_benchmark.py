@@ -27,9 +27,9 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.syst
 
 CORE_METHODS = (
     "flop", "flop-nt-standard", "flop-nt-edge-mask", "flop-nt-post",
-    "flop-nt-notreks",
+    "flop-nt-notreks", "flop-nt-no-oracle",
     "dagma", "dagma-pstrek", "dagma-nt-edge-mask", "dagma-nt-post",
-    "dagma-nt-notreks",
+    "dagma-nt-notreks", "dagma-nt-no-oracle",
     "var_sortnregress", "r2_sortnregress",
     "dagma-nonlinear", "dagma-nonlinear-pstrek",
     "dagma-nonlinear-nt-notreks",
@@ -135,7 +135,8 @@ def run(args) -> None:
     unknown = set(methods) - set(CORE_METHODS)
     if unknown:
         raise ValueError(f"unknown causalAssembly methods: {sorted(unknown)}")
-    estimated_methods = {"flop-nt-notreks", "dagma-nt-notreks",
+    estimated_methods = {"flop-nt-notreks", "flop-nt-no-oracle",
+                         "dagma-nt-notreks", "dagma-nt-no-oracle",
                          "dagma-nonlinear-nt-notreks"}
     if estimated_methods.intersection(methods) and args.mode != "estimated_notreks":
         raise ValueError(
@@ -293,11 +294,22 @@ def run(args) -> None:
     out.mkdir(parents=True, exist_ok=True)
     frame = pd.DataFrame(rows)
     if not frame.empty:
-        frame.groupby(["knowledge_mode", "method"], dropna=False).agg(
-            runs=("method", "size"), SHD_cpdag_mean=("SHD_cpdag", "mean"),
-            SHD_cpdag_std=("SHD_cpdag", "std"), runtime_mean=("candidate_runtime", "mean"),
+        summary = frame.groupby(["knowledge_mode", "method"], dropna=False).agg(
+            runs=("method", "size"),
+            SHD_cpdag_mean=("SHD_cpdag", "mean"),
+            SHD_cpdag_std=("SHD_cpdag", "std"),
+            Ancestor_AID_cpdag_mean=("Ancestor_AID_cpdag", "mean"),
+            Ancestor_AID_cpdag_std=("Ancestor_AID_cpdag", "std"),
+            knowledge_precision_mean=("knowledge_precision", "mean"),
+            knowledge_recall_mean=("knowledge_recall", "mean"),
+            knowledge_f1_mean=("knowledge_f1", "mean"),
+            supplied_pairs_mean=("requested_knowledge_pairs", "mean"),
+            runtime_mean=("candidate_runtime", "mean"),
             failures=("solver_status", lambda s: int((s != "ok").sum()))
-        ).reset_index().to_csv(out / "summary.csv", index=False)
+        ).reset_index()
+        summary.to_csv(out / "summary.csv", index=False)
+        print("\nShort summary (CPDAG SHD, CPDAG Ancestor-AID, NOTREKS pair F1):\n"
+              + summary.to_string(index=False), flush=True)
     (args.output / "manifest.json").write_text(json.dumps({
         "experiment": "causalassembly", "mode": args.mode,
         "seeds": list(seeds), "n": list(sizes), "q": args.q,
