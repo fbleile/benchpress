@@ -200,6 +200,80 @@ def flop_notreks_candidate(X, pairs, seed, attempts, sweeps,
     }
 
 
+def flop_nonlinear_candidate(X, pairs, seed, attempts, sweeps,
+                             *, hidden_dim=16, epochs=60,
+                             score="profiled_log_mse_cv", student_t_nu=4.0,
+                             lambda_bic=2.0, max_block_proposals=0):
+    """Genuine nonlinear FLOP-style search.
+
+    The order search, parent grow/shrink loop, and reinsertion are the same
+    global-greedy FLOP-style implementation.  Only the local parent-set score
+    is changed to a profiled nodewise MLP score.  This function never calls
+    DAGMA or the linear ``flopsearch`` optimizer.
+    """
+    from workflow.rules.structure_learning_algorithms.flop_notreks.global_greedy import (
+        GlobalGreedyConfig, fit_global_greedy_nonlinear_notreks)
+    result = fit_global_greedy_nonlinear_notreks(
+        np.asarray(X, dtype=float), pairs,
+        GlobalGreedyConfig(
+            restarts=max(1, int(attempts)),
+            max_sweeps=max(1, int(sweeps)),
+            lambda_bic=float(lambda_bic), seed=int(seed),
+            nonlinear_hidden_dim=int(hidden_dim), nonlinear_epochs=int(epochs),
+            nonlinear_score=str(score), nonlinear_student_t_nu=float(student_t_nu),
+            max_block_proposals_per_child=int(max_block_proposals)))
+    graph = np.asarray(result.adjacency, dtype=np.uint8)
+    return graph, {
+        "candidate_graph": graph.copy(),
+        "cpdag": convert_flop_cpdag(graph, graph.shape[0]),
+        "optimizer_restarts": int(result.restart + 1),
+        "optimizer_final_bic": float(result.score),
+        "optimizer_final_score": float(result.score),
+        "optimizer_violations": int(result.notreks_violation_count),
+        "score_backend": "standalone_nodewise_mlp",
+        "nonlinear_score": score,
+        "nonlinear_hidden_dim": int(hidden_dim),
+        "nonlinear_score_evaluations": int(result.local_score_cache_misses),
+        "accepted_edge_moves": int(result.accepted_edge_moves),
+        "accepted_reinsertions": int(result.accepted_reinsertions),
+        "feasibility_rejections": int(result.feasibility_rejections),
+        "inner_backend": result.inner_backend,
+    }
+
+
+def flop_nonlinear_admg_candidate(X, pairs, seed, attempts, sweeps, *,
+                                  hidden_dim=16, epochs=60,
+                                  score="profiled_log_mse_cv",
+                                  student_t_nu=4.0, lambda_bic=2.0,
+                                  max_block_proposals=0):
+    """Nonlinear FLOP directed skeleton plus ADMG residual covariance stage."""
+    from workflow.rules.structure_learning_algorithms.flop_notreks.nonlinear_admg import (
+        joint_admg_refine)
+    directed, diagnostics = flop_nonlinear_candidate(
+        X, pairs, seed, attempts, sweeps, hidden_dim=hidden_dim,
+        epochs=epochs, score=score, student_t_nu=student_t_nu,
+        lambda_bic=lambda_bic, max_block_proposals=max_block_proposals)
+    def directed_score(graph):
+        from workflow.rules.structure_learning_algorithms.flop_notreks.global_greedy import (
+            score_nonlinear_dag)
+        return score_nonlinear_dag(
+            np.asarray(X, dtype=float), graph, seed=seed,
+            hidden_dim=hidden_dim, epochs=epochs, score=score,
+            student_t_nu=student_t_nu, lambda_bic=lambda_bic)
+
+    directed, bidirected, residuals, admg_diag = joint_admg_refine(
+        np.asarray(X, dtype=float), directed, pairs,
+        directed_score=directed_score, hidden_dim=hidden_dim,
+        epochs=epochs, seed=seed, max_passes=1, max_proposals=16,
+        admg_weight=1.0)
+    diagnostics = {**diagnostics, **admg_diag,
+                   "bidirected_graph": bidirected.copy(),
+                   "residuals": residuals,
+                   "admg_method": "covariance_residual_likelihood",
+                   "admg_notreks_semantics": "forbid_supplied_endpoint_pairs"}
+    return directed, diagnostics
+
+
 def flop_notreks_local_adaptive_candidate(
         X, pairs, seed, attempts, sweeps, *, lambda_bic=2.0,
         local_greedy_passes=8):
@@ -960,8 +1034,11 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
         initialization_edge_probability=initialization_edge_probability,
         proximal_l1=proximal_l1,
         dagma_postselection_policy=postselection_policy,
-        mu_schedule=(tuple(mu_schedule) if mu_schedule is not None else (1.0, .3, .1, .01, .001)),
-        s=(tuple(s_schedule) if s_schedule is not None else (1.1, 1.0, .9, .8, .7)),
+        # None selects the upstream DagmaLinear continuation defaults from
+        # ProductionConfig; custom schedules remain available to diagnostics.
+        mu_schedule=(tuple(mu_schedule) if mu_schedule is not None else None),
+        s=(tuple(s_schedule) if s_schedule is not None
+           else (1.0, 0.9, 0.8, 0.7, 0.6)),
         record_trajectory=record_trajectory,
         edge_mask=(dagma_mask(X.shape[1], pairs, extra_forbidden_edges)
                    if direct_mask or extra_forbidden_edges else None),

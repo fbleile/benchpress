@@ -75,7 +75,8 @@ class ProductionConfig:
     T: int = 5
     mu_init: float = 1.0
     mu_factor: float = 0.1
-    s: tuple[float, ...] = (1.1, 1.0, 0.9, 0.8, 0.7)
+    # Match upstream DagmaLinear.fit defaults.
+    s: tuple[float, ...] = (1.0, 0.9, 0.8, 0.7, 0.6)
     warm_iter: int = 30000
     max_iter: int = 60000
     lr: float = 0.0003
@@ -92,7 +93,9 @@ class ProductionConfig:
     constraint_regime: str | None = None
     edge_mask: np.ndarray | None = None
     dagma_postselection_policy: str = "feasible_parent_shrink"
-    mu_schedule: tuple[float, ...] | None = (1.0, 0.3, 0.1, 0.01, 0.001)
+    # None means geometric continuation with mu_init=1 and mu_factor=.1,
+    # exactly as upstream DagmaLinear.fit.
+    mu_schedule: tuple[float, ...] | None = None
 
 
 @dataclass

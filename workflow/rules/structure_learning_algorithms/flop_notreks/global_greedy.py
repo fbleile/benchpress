@@ -9,6 +9,7 @@ retaining the same graph-level acceptance objective and deterministic ties.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from time import perf_counter
 from typing import Sequence
 
@@ -37,6 +38,21 @@ class GlobalGreedyConfig:
     # it for every Python outer-loop proposal would repeatedly allocate Rust
     # score state and is not yet a safe d=50 path.
     inner_backend: str = "python"
+    score_backend: str = "gaussian"
+    nonlinear_hidden_dim: int = 16
+    nonlinear_epochs: int = 60
+    nonlinear_learning_rate: float = 0.01
+    nonlinear_score: str = "profiled_log_mse_cv"
+    nonlinear_student_t_nu: float = 4.0
+    nonlinear_validation_fraction: float = 0.2
+    # A neural parent-set score must charge its actual parameter count.  The
+    # old 0.05 default materially under-penalized parent additions and caused
+    # dense nonlinear FLOP outputs on CausalMan.
+    nonlinear_complexity_scale: float = 1.0
+    # Disabled by default: the current in-sample profiled MLP score can make
+    # joint proposals look better while harming recovery.  Keep the feature
+    # available for controlled diagnostics only.
+    max_block_proposals_per_child: int = 0
 
 
 @dataclass
@@ -108,6 +124,113 @@ class _LocalGaussianBIC:
             for child in range(graph.shape[0])))
 
 
+class _LocalNonlinearScore:
+    """Standalone nodewise MLP score for the FLOP order search.
+
+    This is not DAGMA: there is no global weight matrix, acyclicity penalty,
+    continuation schedule, or DAGMA optimizer in this scorer.
+    """
+
+    def __init__(self, data: np.ndarray, config: GlobalGreedyConfig):
+        try:
+            import torch
+            from torch import nn
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("nonlinear FLOP requires PyTorch") from exc
+        self.torch, self.nn = torch, nn
+        self.data = np.asarray(data, dtype=np.float64)
+        self.data = self.data - self.data.mean(axis=0, keepdims=True)
+        scale = self.data.std(axis=0, keepdims=True)
+        self.data /= np.where(scale > 1e-12, scale, 1.0)
+        self.n = len(self.data)
+        self.penalty = float(config.lambda_bic) * np.log(self.n)
+        self.hidden_dim = int(config.nonlinear_hidden_dim)
+        self.epochs = int(config.nonlinear_epochs)
+        self.learning_rate = float(config.nonlinear_learning_rate)
+        self.score_kind = str(config.nonlinear_score)
+        self.student_t_nu = float(config.nonlinear_student_t_nu)
+        self.validation_fraction = float(config.nonlinear_validation_fraction)
+        self.complexity_scale = float(config.nonlinear_complexity_scale)
+        self.seed = int(config.seed)
+        rng = np.random.default_rng(self.seed + 424242)
+        order = rng.permutation(self.n)
+        split = int(round(self.n * (1.0 - self.validation_fraction)))
+        self.train_idx = np.sort(order[:split])
+        self.valid_idx = np.sort(order[split:])
+        self.cache: dict[tuple[int, tuple[int, ...]], float] = {}
+        self.state_cache = {}
+        self.cache_misses = 0
+
+    def _fit(self, child: int, parents: tuple[int, ...]) -> float:
+        torch, nn = self.torch, self.nn
+        use_cv = self.score_kind.endswith("_cv")
+        base_kind = self.score_kind[:-3] if use_cv else self.score_kind
+        train = self.train_idx if use_cv else np.arange(self.n)
+        valid = self.valid_idx if use_cv else train
+        y_train = torch.tensor(self.data[train, child:child + 1], dtype=torch.float32)
+        y_valid = torch.tensor(self.data[valid, child:child + 1], dtype=torch.float32)
+        if not parents:
+            residual = y_valid - y_train.mean()
+        else:
+            x_train = torch.tensor(self.data[np.ix_(train, parents)], dtype=torch.float32)
+            x_valid = torch.tensor(self.data[np.ix_(valid, parents)], dtype=torch.float32)
+            torch.manual_seed(self.seed + 1009 * (child + 1) + sum(9176 * (p + 1) for p in parents))
+            model = nn.Sequential(nn.Linear(len(parents), self.hidden_dim),
+                                  nn.Tanh(), nn.Linear(self.hidden_dim, 1)).float()
+            # Warm-start from the largest previously fitted parent subset.
+            subsets = [key for key in self.state_cache
+                       if key[0] == child and set(key[1]).issubset(parents)]
+            if subsets:
+                source = max(subsets, key=lambda key: len(key[1]))
+                old = self.state_cache[source]
+                with torch.no_grad():
+                    model[0].weight.zero_()
+                    for old_pos, parent in enumerate(source[1]):
+                        model[0].weight[:, parents.index(parent)] = old[
+                            "0.weight"][:, old_pos]
+                    model[0].bias.copy_(old["0.bias"])
+                    model[2].weight.copy_(old["2.weight"])
+                    model[2].bias.copy_(old["2.bias"])
+            optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate)
+            for _ in range(self.epochs):
+                optimizer.zero_grad(set_to_none=True)
+                loss = torch.mean((model(x_train) - y_train) ** 2)
+                loss.backward()
+                optimizer.step()
+            with torch.no_grad():
+                residual = y_valid - model(x_valid)
+                self.state_cache[(child, parents)] = {
+                    key: value.detach().clone()
+                    for key, value in model.state_dict().items()}
+        variance = torch.clamp(torch.mean(residual ** 2), min=1e-8)
+        if base_kind == "profiled_log_mse":
+            # The likelihood is evaluated on `valid` for CV and on `train`
+            # otherwise.  Using self.n here inflated the CV fit term and made
+            # the effective complexity penalty inconsistent with the data
+            # actually scored.
+            fit = len(valid) * float(torch.log(variance))
+        elif base_kind == "student_t":
+            nu = self.student_t_nu
+            fit = len(valid) * float(torch.log(variance)) + len(valid) * float(
+                torch.mean((nu + 1.0) * torch.log1p(
+                    residual ** 2 / (nu * variance))))
+        else:
+            raise ValueError("unknown nonlinear FLOP score: " + self.score_kind)
+        parameter_count = self.hidden_dim * (len(parents) + 1) + self.hidden_dim + 1
+        return fit + self.complexity_scale * parameter_count * self.penalty
+
+    def score(self, child: int, parents: Sequence[int]) -> float:
+        key = (int(child), tuple(sorted(map(int, parents))))
+        if key not in self.cache:
+            self.cache[key] = self._fit(*key)
+            self.cache_misses += 1
+        return self.cache[key]
+
+    def graph_score(self, graph: np.ndarray) -> float:
+        return float(sum(self.score(child, np.flatnonzero(graph[:, child]))
+                         for child in range(graph.shape[0])))
+
+
 def _transitive_reach(graph: np.ndarray) -> np.ndarray:
     reach = np.asarray(graph, dtype=bool).copy()
     np.fill_diagonal(reach, True)
@@ -175,9 +298,14 @@ def fit_global_greedy_notreks(
     constraints = CompositeFeasibility((
         DagConstraint(), NoTreksConstraint(no_trek_pairs)))
     scorer = GaussianBICGraphScore(data, lambda_bic=config.lambda_bic)
-    local_scorer = _LocalGaussianBIC(data, config.lambda_bic)
+    if config.score_backend == "gaussian":
+        local_scorer = _LocalGaussianBIC(data, config.lambda_bic)
+    elif config.score_backend == "nonlinear":
+        local_scorer = _LocalNonlinearScore(data, config)
+    else:
+        raise ValueError("unknown FLOP score backend: " + config.score_backend)
     rust_inner = None
-    if config.inner_backend in {"auto", "rust"}:
+    if config.score_backend == "gaussian" and config.inner_backend in {"auto", "rust"}:
         try:
             import flopsearch  # type: ignore
             rust_inner = getattr(flopsearch, "global_greedy_inner", None)
@@ -254,6 +382,33 @@ def fit_global_greedy_notreks(
                     candidate = (value, proposal.tobytes(), proposal)
                     if candidate[1] < best[1]:
                         best = candidate
+            # Nonlinear effects can require two parents jointly.  Try a
+            # bounded, deterministic set of two-edge additions after the
+            # ordinary FLOP grow/shrink proposals.  The final graph, rather
+            # than either intermediate edge, is checked for NOTREKS validity.
+            if config.score_backend == "nonlinear" and config.max_block_proposals_per_child > 0:
+                for child in range(d):
+                    absent = [i for i, j in edges
+                              if j == child and not bool(current[i, child])]
+                    for left, right in list(combinations(absent, 2))[
+                            :config.max_block_proposals_per_child]:
+                        proposal = current.copy()
+                        proposal[left, child] = 1
+                        proposal[right, child] = 1
+                        if not constraints.is_feasible(proposal):
+                            feasibility_rejections += 1
+                            continue
+                        old_parents = parents_by_child[child]
+                        new_parents = np.concatenate((old_parents, [left, right]))
+                        value = (current_score
+                                 - local_scorer.score(child, old_parents)
+                                 + local_scorer.score(child, new_parents))
+                        score_evaluations += 1
+                        candidate = (value, proposal.tobytes(), proposal)
+                        if value < best[0] - 1e-12 or (
+                                abs(value - best[0]) <= 1e-12 and
+                                candidate[1] < best[1]):
+                            best = candidate
             if best[2] is None or best[0] >= current_score - 1e-10:
                 return current, current_score
             current, current_score = best[2], best[0]
@@ -307,7 +462,7 @@ def fit_global_greedy_notreks(
     summary = constraints.violation_summary(winner[3])
     if not summary["feasible"]:
         raise RuntimeError("global greedy returned an infeasible graph")
-    exact_score = scorer.score_graph(winner[3])
+    exact_score = local_scorer.graph_score(winner[3])
     if not np.isclose(exact_score, winner[0], rtol=1e-10, atol=1e-8):
         raise RuntimeError("incremental and graph-level Gaussian BIC disagree")
     return GlobalGreedyResult(
@@ -321,5 +476,40 @@ def fit_global_greedy_notreks(
         accepted_reinsertions=accepted_reinsertions,
         termination_reason=winner[5],
         notreks_violation_count=int(summary["notreks_violation_count"]),
-        inner_backend="rust" if rust_inner is not None else "python",
+        inner_backend=("rust" if rust_inner is not None else
+                       ("python-nonlinear" if config.score_backend == "nonlinear"
+                        else "python")),
     )
+
+
+def fit_global_greedy_nonlinear_notreks(
+    X: np.ndarray,
+    no_trek_pairs: Sequence[tuple[int, int]],
+    config: GlobalGreedyConfig = GlobalGreedyConfig(),
+) -> GlobalGreedyResult:
+    """Genuine nonlinear FLOP-style search with unchanged outer mechanics."""
+    if config.score_backend != "gaussian":
+        return fit_global_greedy_notreks(X, no_trek_pairs, config)
+    nonlinear_config = GlobalGreedyConfig(
+        **{**config.__dict__, "score_backend": "nonlinear",
+           "inner_backend": "python"})
+    return fit_global_greedy_notreks(X, no_trek_pairs, nonlinear_config)
+
+
+def score_nonlinear_dag(
+    X: np.ndarray, graph: np.ndarray, *, seed: int = 1729,
+    hidden_dim: int = 16, epochs: int = 60,
+    score: str = "profiled_log_mse_cv", student_t_nu: float = 4.0,
+    lambda_bic: float = 2.0) -> float:
+    """Score a fixed DAG with exactly the nonlinear FLOP local score.
+
+    This is intended for score suitability audits: compare the score of the
+    generating DAG with the scores of linear/nonlinear FLOP outputs without
+    using truth in optimization or stopping decisions.
+    """
+    config = GlobalGreedyConfig(
+        score_backend="nonlinear", seed=seed, nonlinear_hidden_dim=hidden_dim,
+        nonlinear_epochs=epochs, nonlinear_score=score,
+        nonlinear_student_t_nu=student_t_nu, lambda_bic=lambda_bic)
+    scorer = _LocalNonlinearScore(np.asarray(X, dtype=float), config)
+    return scorer.graph_score(np.asarray(graph, dtype=np.uint8))
