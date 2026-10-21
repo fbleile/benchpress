@@ -382,10 +382,22 @@ def run(args):
                             )
                         for strategy in strategies:
                           for round_id in range(round_start, round_stop):
+                            print(
+                                f"START knowledge-selection experiment={spec.name} "
+                                f"graph={graph_id} n={n} q={q} strategy={strategy} "
+                                f"round={round_id} available_pairs={len(all_pairs)}",
+                                flush=True,
+                            )
                             knowledge_seed = derive_seed("knowledge", graph_id, n,
                                                          q, strategy, round_id,
                                                          master=args.master_seed)
                             pairs = select_pairs(all_pairs, q, knowledge_seed, strategy)
+                            print(
+                                f"DONE knowledge-selection experiment={spec.name} "
+                                f"graph={graph_id} n={n} q={q} strategy={strategy} "
+                                f"round={round_id} selected_pairs={len(pairs)}",
+                                flush=True,
+                            )
                             methods_for_job = _methods_for_job(spec, d, q)
                             if args.methods:
                                 methods_for_job = tuple(
