@@ -63,7 +63,7 @@ REGISTRY = {
         (100, 500, 2000), (0.0, .25, 1.0), 5,
         MAIN_METHODS,
         excluded_methods_by_dimension=MAIN_EXCLUSIONS,
-        knowledge_strategies=("random", "bipartite-max-capacity", "chromatic-greedy")),
+        knowledge_strategies=("random",)),
     "main-misspec-linear-nongaussian": ExperimentSpec(
         "main-misspec-linear-nongaussian",
         "main-sized linear SCM with non-Gaussian Laplace innovations",
