@@ -338,6 +338,10 @@ def run(args):
                     data_seed = derive_seed("data", seed_namespace, d, family,
                                            density, replicate, n,
                                            master=args.master_seed)
+                    print(
+                        f"START data experiment={spec.name} graph={graph_id} n={n}",
+                        flush=True,
+                    )
                     data_model = {
                         "synthetic_linear_gaussian": "linear_gaussian",
                         "synthetic_linear_nongaussian": "linear_nongaussian",
@@ -356,8 +360,17 @@ def run(args):
                     np.savez_compressed(out / "data" / f"{data_id}.npz", X=x,
                                         truth=truth, weights=weights, data_seed=data_seed,
                                         data_model=data_model)
+                    print(
+                        f"DONE data experiment={spec.name} graph={graph_id} n={n}",
+                        flush=True,
+                    )
                     cache = {}
                     for q in _selected_q_values(spec, args):
+                        print(
+                            f"START knowledge experiment={spec.name} graph={graph_id} "
+                            f"n={n} q={q}",
+                            flush=True,
+                        )
                         rounds = _knowledge_round_count(spec, q, args)
                         strategies = _selected_knowledge_strategies(spec, q, args)
                         round_start = min(args.knowledge_round_start, rounds)
