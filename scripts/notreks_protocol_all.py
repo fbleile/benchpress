@@ -413,6 +413,12 @@ def run(args):
                                 methods_to_run.append(method)
                                 key = (data_id, method)
                                 base_method = "flop" if method.startswith("flop") else "dagma"
+                                print(
+                                    f"START solver experiment={spec.name} graph={graph_id} "
+                                    f"n={n} q={q} strategy={strategy} round={round_id} "
+                                    f"method={method}",
+                                    flush=True,
+                                )
                                 if method in {"flop-nt-post", "dagma-nt-post"} and (data_id, base_method) in cache:
                                     base_candidate, base_diag, base_runtime = cache[(data_id, base_method)]
                                     started_post = time.perf_counter()
@@ -436,6 +442,12 @@ def run(args):
                                 try:
                                     result = future.result()
                                     results[method] = result
+                                    print(
+                                        f"DONE solver experiment={spec.name} graph={graph_id} "
+                                        f"n={n} q={q} strategy={strategy} round={round_id} "
+                                        f"method={method}",
+                                        flush=True,
+                                    )
                                     if method in {"flop", "dagma"}:
                                         cache[(data_id, method)] = result
                                 except Exception as exc:  # preserve the rest of the run
@@ -468,11 +480,24 @@ def run(args):
                                           f"{method} FAILED: {result!r}", flush=True)
                                 else:
                                     candidate, diag, runtime = result
+                                    metrics_started = time.perf_counter()
+                                    print(
+                                        f"START metrics experiment={spec.name} graph={graph_id} "
+                                        f"n={n} q={q} strategy={strategy} round={round_id} "
+                                        f"method={method}",
+                                        flush=True,
+                                    )
                                     row = metrics(x, truth, pairs, method,
                                                   diag["candidate_graph"], candidate, diag["cpdag"],
                                                   runtime, _attempts_for(spec, method, args),
                                                   diag.get("optimizer_restarts",
                                                            _attempts_for(spec, method, args)))
+                                    print(
+                                        f"DONE metrics experiment={spec.name} graph={graph_id} "
+                                        f"n={n} q={q} strategy={strategy} round={round_id} "
+                                        f"method={method} elapsed={time.perf_counter() - metrics_started:.3f}s",
+                                        flush=True,
+                                    )
                                     row.update({"protocol_version": "20260917-v2",
                                                 "experiment_id": spec.name,
                                                 "graph_id": graph_id, "data_id": data_id,
