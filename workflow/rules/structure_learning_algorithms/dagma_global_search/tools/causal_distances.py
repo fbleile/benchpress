@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import networkx as nx
 import numpy as np
+import shutil
 import subprocess
+import sys
 import tempfile
 from functools import lru_cache
 from pathlib import Path
@@ -99,9 +101,103 @@ def _encode_cpdag(a: np.ndarray) -> np.ndarray:
     return out
 
 
+def _dag_to_cpdag_python(dag: np.ndarray) -> np.ndarray:
+    """Convert a DAG to its CPDAG using v-structures and Meek R1--R3.
+
+    This is the pure-Python counterpart of ``pcalg::dag2cpdag``.  The
+    benchmark's DAG inputs have no background knowledge, so the standard
+    v-structure initialization followed by the three ordinary Meek rules is
+    sufficient; the fourth rule is the background-knowledge extension.
+    Entries are returned in the same binary adjacency convention used by the
+    R path: a directed edge has one nonzero entry and an undirected edge has
+    both entries nonzero.
+    """
+    dag = np.asarray(dag, dtype=np.uint8)
+    d = dag.shape[0]
+    if dag.shape != (d, d):
+        raise ValueError("DAG adjacency must be square")
+    if np.any(np.diag(dag)) or not nx.is_directed_acyclic_graph(
+            nx.from_numpy_array(dag, create_using=nx.DiGraph)):
+        raise ValueError("CPDAG conversion requires a DAG")
+
+    skeleton = (dag != 0) | (dag.T != 0)
+    directed = np.zeros((d, d), dtype=bool)
+    undirected = skeleton.copy()
+
+    def adjacent(i: int, j: int) -> bool:
+        return bool(skeleton[i, j])
+
+    def orient(i: int, j: int) -> bool:
+        if directed[i, j]:
+            return False
+        if directed[j, i]:
+            raise ValueError("inconsistent CPDAG orientation")
+        if not undirected[i, j]:
+            raise ValueError("attempted to orient a non-adjacent pair")
+        undirected[i, j] = undirected[j, i] = False
+        directed[i, j] = True
+        return True
+
+    # Preserve exactly the unshielded colliders of the input DAG.
+    for child in range(d):
+        parents = np.flatnonzero(dag[:, child])
+        for offset, left in enumerate(parents):
+            for right in parents[offset + 1:]:
+                if not adjacent(int(left), int(right)):
+                    orient(int(left), child)
+                    orient(int(right), child)
+
+    changed = True
+    while changed:
+        changed = False
+
+        # R1: a -> b - c and a not adjacent c implies b -> c.
+        for a in range(d):
+            for b in np.flatnonzero(directed[a]):
+                for c in np.flatnonzero(undirected[b]):
+                    c = int(c)
+                    if not adjacent(a, c):
+                        changed |= orient(int(b), c)
+
+        # R2: a - b and a -> c -> b implies a -> b.
+        for a in range(d):
+            for b in np.flatnonzero(undirected[a]):
+                b = int(b)
+                if any(directed[a, c] and directed[c, b]
+                       for c in range(d) if c not in (a, b)):
+                    changed |= orient(a, b)
+
+        # R3: a - b, a - c, a - d, c -> b, d -> b, and c not adjacent d
+        # implies a -> b.
+        for a in range(d):
+            for b in np.flatnonzero(undirected[a]):
+                b = int(b)
+                candidates = [
+                    int(c) for c in np.flatnonzero(undirected[a])
+                    if c != b and directed[int(c), b]
+                ]
+                if any(not adjacent(c, e)
+                       for offset, c in enumerate(candidates)
+                       for e in candidates[offset + 1:]):
+                    changed |= orient(a, b)
+
+    result = directed.astype(np.uint8)
+    result[undirected] = 1
+    return result
+
+
 @lru_cache(maxsize=256)
 def _dag_cpdag_cached(payload: bytes, d: int) -> np.ndarray:
     dag = np.frombuffer(payload, dtype=np.uint8).reshape((d, d))
+    # JobFarm workers invoke the absolute venv Python path.  Resolve the
+    # sibling Rscript first so this remains reliable even if the worker does
+    # not preserve the interactive shell's PATH.
+    rscript = Path(sys.executable).with_name("Rscript")
+    if not rscript.is_file():
+        found = shutil.which("Rscript")
+        rscript = Path(found) if found else None
+    if rscript is None:
+        return _dag_to_cpdag_python(dag)
     # pcalg provides the reference DAG -> CPDAG conversion used elsewhere in
     # this repository for CPDAG SHD.  Cache by truth graph: all methods on a
     # paired instance share the same conversion.
@@ -116,7 +212,7 @@ def _dag_cpdag_cached(payload: bytes, d: int) -> np.ndarray:
             "write.table(dag2cpdag(a)*1, args[2], sep=',', "
             "row.names=FALSE, col.names=FALSE)"
         )
-        subprocess.run(["Rscript", "-e", code, str(dag_path),
+        subprocess.run([str(rscript), "-e", code, str(dag_path),
                          str(cpdag_path)], check=True,
                         capture_output=True, text=True)
         return np.loadtxt(cpdag_path, delimiter=",", dtype=np.int8)

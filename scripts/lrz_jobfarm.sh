@@ -29,24 +29,11 @@ TASKDB="${TASKDB:-$PROJECT_DIR/cluster/notreks_cmd}"
 MAMBA_ENV="${MAMBA_ENV:-$PROJECT_DIR/.venv-lrz}"
 MASTER_SEED="${MASTER_SEED:-20260917}"
 
-module load slurm_setup
-module load jobfarm
-
-# Login-shell activation is not guaranteed to be inherited by Slurm/JobFarm
-# workers.  Recreate it explicitly in the batch shell and export the runtime
-# paths inherited by every command in the command file.
-if command -v micromamba >/dev/null 2>&1; then
-  eval "$(micromamba shell hook --shell bash)"
-  micromamba activate "$MAMBA_ENV"
-else
-  echo "micromamba is not available in the batch environment" >&2
-  exit 127
-fi
+# Use the same environment setup as interactive LRZ sessions.  This also
+# places the bundled Rscript next to the venv Python before JobFarm starts.
+source "$PROJECT_DIR/cluster/lrz_session_setup.sh"
 export PATH="$MAMBA_ENV/bin:$PATH"
 export PYTHONPATH="$PROJECT_DIR${PYTHONPATH:+:$PYTHONPATH}"
-export OMP_NUM_THREADS=1
-export MKL_NUM_THREADS=1
-export OPENBLAS_NUM_THREADS=1
 mkdir -p "$PROJECT_DIR/cluster/slurm_logs"
 cd "$PROJECT_DIR"
 
@@ -62,6 +49,8 @@ env_manifest="$PROJECT_DIR/cluster/slurm_logs/jobfarm.env.${SLURM_JOB_ID:-manual
   echo "master_seed=$MASTER_SEED"
   echo "python=$(command -v python)"
   python --version
+  echo "rscript=$(command -v Rscript || true)"
+  "$MAMBA_ENV/bin/Rscript" --version 2>&1 || true
   git rev-parse HEAD 2>/dev/null || true
   git diff --quiet 2>/dev/null && echo "git_dirty=false" || echo "git_dirty=true"
   sha256sum "$CMD_FILE" 2>/dev/null || true

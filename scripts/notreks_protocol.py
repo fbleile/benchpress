@@ -38,6 +38,14 @@ METHOD_LABELS = {
 }
 
 
+def _rscript_executable() -> str:
+    """Resolve Rscript from the active Python environment or PATH."""
+    sibling = Path(sys.executable).with_name("Rscript")
+    if sibling.is_file():
+        return str(sibling)
+    return "Rscript"
+
+
 def derive_seed(namespace: str, *parts: object, master: int = MASTER_SEED) -> int:
     payload = json.dumps([namespace, master, *parts], separators=(",", ":"),
                          sort_keys=False).encode()
@@ -88,7 +96,7 @@ def make_graph(d: int, family: str, density: int, seed: int) -> np.ndarray:
         )
         try:
             result = subprocess.run(
-                ["Rscript", "--vanilla", "-e", expression,
+                [_rscript_executable(), "--vanilla", "-e", expression,
                  str(int(seed)), str(int(d)), str(int(density))],
                 check=True, capture_output=True, text=True,
                 cwd=REPOSITORY_ROOT,
@@ -181,7 +189,7 @@ def select_pairs(all_pairs, q: float, seed: int, strategy: str = "random"):
         return []
     if q == 1.0:
         return [tuple(p) for p in all_pairs]
-    if strategy == "bipartite-max-capacity":
+    if strategy in {"bipartite", "bipartite-max-capacity"}:
         from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.one_graph_prior_chromatic import (
             _bipartite_max_capacity,
         )
