@@ -351,7 +351,7 @@ def main() -> None:
     p.add_argument("--screen-null-quantile", type=float, default=.10)
     p.add_argument("--screen-effect-margin", type=float, default=.02)
     args = p.parse_args()
-    if args.attempts < 1:
+    if args.attempts is not None and args.attempts < 1:
         p.error("--attempts must be positive")
     run(args)
 
