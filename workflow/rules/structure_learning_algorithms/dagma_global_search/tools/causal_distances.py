@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import networkx as nx
 import numpy as np
+import os
 import shutil
 import subprocess
 import sys
@@ -189,6 +190,13 @@ def _dag_to_cpdag_python(dag: np.ndarray) -> np.ndarray:
 @lru_cache(maxsize=256)
 def _dag_cpdag_cached(payload: bytes, d: int) -> np.ndarray:
     dag = np.frombuffer(payload, dtype=np.uint8).reshape((d, d))
+    backend = os.environ.get("NOTREKS_CPDAG_BACKEND", "r").lower()
+    if backend == "python":
+        return _dag_to_cpdag_python(dag)
+    if backend not in {"r", "auto"}:
+        raise ValueError(
+            "NOTREKS_CPDAG_BACKEND must be 'r', 'auto', or 'python'"
+        )
     # JobFarm workers invoke the absolute venv Python path.  Resolve the
     # sibling Rscript first so this remains reliable even if the worker does
     # not preserve the interactive shell's PATH.
@@ -212,9 +220,27 @@ def _dag_cpdag_cached(payload: bytes, d: int) -> np.ndarray:
             "write.table(dag2cpdag(a)*1, args[2], sep=',', "
             "row.names=FALSE, col.names=FALSE)"
         )
-        subprocess.run([str(rscript), "-e", code, str(dag_path),
-                         str(cpdag_path)], check=True,
-                        capture_output=True, text=True)
+        run_kwargs = {
+            "check": True,
+            "capture_output": True,
+            "text": True,
+        }
+        timeout = os.environ.get("NOTREKS_CPDAG_R_TIMEOUT")
+        if timeout:
+            run_kwargs["timeout"] = float(timeout)
+        try:
+            subprocess.run([str(rscript), "-e", code, str(dag_path),
+                            str(cpdag_path)], **run_kwargs)
+        except subprocess.TimeoutExpired:
+            # Exact pcalg conversion can be pathological for some larger
+            # graphs.  Preserve progress and the benchmark's binary output
+            # convention by falling back to the in-process converter.
+            print(
+                f"CPDAG R conversion timed out after {timeout}s; "
+                "using Python fallback",
+                flush=True,
+            )
+            return _dag_to_cpdag_python(dag)
         return np.loadtxt(cpdag_path, delimiter=",", dtype=np.int8)
 
 
