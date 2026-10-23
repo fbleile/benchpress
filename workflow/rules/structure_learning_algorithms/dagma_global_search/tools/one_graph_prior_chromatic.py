@@ -250,16 +250,30 @@ def _clique_target_knowledge(pairs, fraction: float, seed: int, target: int):
 
 
 def _chromatic_greedy_knowledge(pairs, fraction: float, seed: int):
-    """Fill a fixed pair budget by greedily maximizing exact chromaticity."""
+    """Fill a fixed pair budget with a scalable high-chromatic heuristic.
+
+    Maximal-clique enumeration is practical for the d=20 diagnostic but can
+    be pathological on the d=50/d=100 production graphs.  Use the largest
+    feasible clique only on small graphs; large graphs start directly with
+    the bounded DSATUR-based greedy construction. Exact coloring remains a
+    separate final diagnostic.
+    """
     pairs = sorted(tuple(sorted(map(int, pair))) for pair in pairs)
     budget = int(round(fraction * len(pairs)))
     if budget == 0:
         return []
     graph = nx.Graph()
     graph.add_edges_from(pairs)
-    feasible = [clique for clique in nx.find_cliques(graph)
-                if len(clique) * (len(clique) - 1) // 2 <= budget]
-    clique = max(feasible, key=lambda c: (len(c), tuple(sorted(c)))) if feasible else []
+    if graph.number_of_nodes() <= 24:
+        feasible = [clique for clique in nx.find_cliques(graph)
+                    if len(clique) * (len(clique) - 1) // 2 <= budget]
+        clique = (max(feasible, key=lambda c: (len(c), tuple(sorted(c))))
+                  if feasible else [])
+    else:
+        # Avoid unbounded maximal-clique enumeration on production-sized
+        # prior graphs. The bounded candidate-pool loop below is deterministic
+        # and supplies the same fixed pair budget without this blow-up.
+        clique = []
     selected = set(combinations(sorted(clique), 2))
     remaining = [pair for pair in pairs if pair not in selected]
     rng = np.random.default_rng(seed + 104729)
