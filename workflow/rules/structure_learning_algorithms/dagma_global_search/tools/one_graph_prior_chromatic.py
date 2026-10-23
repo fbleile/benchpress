@@ -277,18 +277,30 @@ def _chromatic_greedy_knowledge(pairs, fraction: float, seed: int):
     selected = set(combinations(sorted(clique), 2))
     remaining = [pair for pair in pairs if pair not in selected]
     rng = np.random.default_rng(seed + 104729)
+
+    def greedy_chromaticity(edge_set):
+        h = nx.Graph()
+        h.add_nodes_from(graph.nodes)
+        h.add_edges_from(edge_set)
+        colouring = nx.coloring.greedy_color(
+            h, strategy="saturation_largest_first")
+        return 1 + max(colouring.values(), default=-1)
+
     while len(selected) < budget:
-        order = rng.permutation(len(remaining))
-        best_pair = None
-        best_score = -1
+        # A bounded candidate pool preserves reproducibility and makes q=.5,
+        # d=50 construction inexpensive.
+        pool_size = min(len(remaining), 4)
+        order = rng.permutation(len(remaining))[:pool_size]
+        scored = []
         for index in order:
             pair = remaining[int(index)]
-            score = chromatic_number(
-                max((max(left, right) for left, right in selected | {pair}), default=-1) + 1,
-                selected | {pair})
-            if score > best_score:
-                best_score = score
-                best_pair = pair
+            edge_set = selected | {pair}
+            score = greedy_chromaticity(edge_set)
+            covered = len({v for edge in edge_set for v in edge})
+            degree_sum = sum(graph.degree(v) for v in pair)
+            scored.append((score, covered, degree_sum, pair))
+        best_score = max(item[:3] for item in scored)
+        best_pair = next(item[3] for item in scored if item[:3] == best_score)
         selected.add(best_pair)
         remaining.remove(best_pair)
     return sorted(selected)
