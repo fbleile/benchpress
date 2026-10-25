@@ -45,16 +45,35 @@ env_manifest="$PROJECT_DIR/cluster/slurm_logs/jobfarm.env.${SLURM_JOB_ID:-manual
   echo "host=$(hostname)"
   echo "job_id=${SLURM_JOB_ID:-unknown}"
   echo "project=$PROJECT_DIR"
+  echo "cmd_file=$CMD_FILE"
+  echo "taskdb=$TASKDB"
   echo "mamba_env=$MAMBA_ENV"
   echo "master_seed=$MASTER_SEED"
   echo "python=$(command -v python)"
   python --version
   echo "rscript=$(command -v Rscript || true)"
   "$MAMBA_ENV/bin/Rscript" --version 2>&1 || true
+  echo "jobfarm=$(command -v jobfarm || true)"
+  jobfarm --version 2>&1 || true
   git rev-parse HEAD 2>/dev/null || true
   git diff --quiet 2>/dev/null && echo "git_dirty=false" || echo "git_dirty=true"
-  sha256sum "$CMD_FILE" 2>/dev/null || true
+  if [[ -r "$CMD_FILE" ]]; then
+    echo "cmd_file_readable=true"
+    sha256sum "$CMD_FILE"
+    echo "command_lines=$(grep -c '^env ' "$CMD_FILE" || true)"
+  else
+    echo "cmd_file_readable=false"
+    echo "cmd_file_error=missing_or_unreadable"
+  fi
 } > "$env_manifest"
+if [[ ! -r "$CMD_FILE" ]]; then
+  echo "Command file is missing or unreadable: $CMD_FILE" >&2
+  exit 2
+fi
+if ! command -v jobfarm >/dev/null 2>&1; then
+  echo "JobFarm command is unavailable after environment setup" >&2
+  exit 127
+fi
 if ! "$MAMBA_ENV/bin/python" "$PROJECT_DIR/scripts/notreks_protocol_all.py" --help \
     > "$env_manifest.protocol_help" 2>&1; then
   echo "Protocol import/CLI preflight failed; see $env_manifest.protocol_help" >&2
@@ -73,9 +92,18 @@ if [[ "${RESET_JOBFARM:-0}" == "1" ]]; then
     echo "Archived previous JobFarm state: $archive_dir"
   fi
 fi
+jobfarm_log="$PROJECT_DIR/cluster/slurm_logs/jobfarm.start.${SLURM_JOB_ID:-manual}.log"
 set +e
-jobfarm start "$CMD_FILE"
-jobfarm_rc=$?
+{
+  echo "jobfarm_start=$(date -Is)"
+  echo "jobfarm_command=$(command -v jobfarm) start $CMD_FILE"
+  jobfarm start "$CMD_FILE"
+  rc=$?
+  echo "jobfarm_exit_code=$rc"
+  echo "jobfarm_end=$(date -Is)"
+  exit "$rc"
+} 2>&1 | tee "$jobfarm_log"
+jobfarm_rc=${PIPESTATUS[0]}
 set -e
 
 # JobFarm can return success even when individual tasks failed.  Do not use
@@ -98,6 +126,7 @@ for result_file in "$result_dir"/[0-9]*; do
 done
 printf 'JobFarm task markers: success=%d failed=%d processed=%d total=%d\n' \
   "$success_count" "$failed_count" "$processed_count" "$total_count"
+echo "JobFarm start log: $jobfarm_log"
 if (( failed_count > 0 || processed_count < total_count )); then
   echo "JobFarm reported failed or incomplete tasks; marking Slurm job failed." >&2
   exit 1
