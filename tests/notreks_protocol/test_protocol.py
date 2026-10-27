@@ -8,6 +8,8 @@ from scripts.notreks_protocol import (
     make_graph,
     select_pairs,
     source_ancestor_classes,
+    target_k_partite_pairs,
+    target_k_values,
 )
 from scripts.notreks_protocol_registry import REGISTRY
 from scripts.lrz_make_jobfarm_cmds import main as make_jobfarm_commands
@@ -62,8 +64,19 @@ def test_large_flop_prior_sweep_is_explicitly_sized():
     assert spec.methods == ("flop", "flop_notreks")
     assert spec.q_values == (0.0, .25)
     assert spec.graph_replicates == 100
-    assert spec.q25_rounds == 5
-    assert spec.knowledge_strategies == ("source-ancestor",)
+    assert spec.q25_rounds == 10
+    assert spec.knowledge_strategies == ("target-k",)
+
+
+def test_target_k_prior_is_exact_and_bounded():
+    truth = make_graph(20, "er", 2, 1234)
+    pairs = graph_pairs(truth)
+    values = target_k_values(pairs, 20, .25, 1234)
+    assert values == tuple(range(2, max(values, default=1) + 1))
+    if values:
+        selected = target_k_partite_pairs(pairs, 20, .25, 4321, values[0])
+        assert len(selected) == max(1, round(.25 * len(pairs)))
+        assert set(selected) <= set(pairs)
 
 
 def test_ws_graph_generation_does_not_depend_on_current_working_directory(tmp_path, monkeypatch):

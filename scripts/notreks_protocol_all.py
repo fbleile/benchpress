@@ -13,7 +13,7 @@ import pandas as pd
 
 from scripts.notreks_protocol import (
     derive_seed, graph_pairs, make_data, make_graph, select_pairs, write_json,
-    source_ancestor_classes,
+    source_ancestor_classes, target_k_values,
 )
 from scripts.notreks_protocol_registry import REGISTRY, select_registry, scaled_replicates
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import (
@@ -129,6 +129,10 @@ def print_design_and_objective(specs, args):
           f"{args.knowledge_rounds if args.knowledge_rounds is not None else 'registry default 5'}; "
           "q=0 is vanilla; q=1 uses one deterministic complete set",
           flush=True)
+    if any(spec.name == "prior-structure-flop" for spec in specs):
+        print("  prior-structure-flop: bounded target-K construction; feasible K is "
+              "computed per graph from a greedy clique and the q=.25 budget",
+              flush=True)
     print(f"  workers: {args.workers}; FLOP sweeps: {args.flop_sweeps}; "
           f"DAGMA stages: {args.dagma_stages}; DAGMA warm/max iterations: "
           f"{args.dagma_warm_iter}/{args.dagma_max_iter}", flush=True)
@@ -339,6 +343,10 @@ def run(args):
                 truth = make_graph(d, family, density, graph_seed)
                 all_pairs = graph_pairs(truth)
                 graph_id = f"{spec.name}_g{cell_index:02d}_{family}{density}_r{replicate:02d}"
+                target_ks = target_k_values(
+                    all_pairs, d, .25,
+                    derive_seed("target-k-range", graph_id, master=args.master_seed),
+                ) if spec.name == "prior-structure-flop" else ()
                 np.savez_compressed(out / "graph_bank" / f"{graph_id}.npz",
                                     adjacency=truth, graph_seed=graph_seed,
                                     no_trek_pairs=np.asarray(all_pairs, dtype=int))
@@ -349,6 +357,8 @@ def run(args):
                                "edges": int(truth.sum()),
                                "no_trek_pairs": len(all_pairs),
                                "eligible_information": bool(all_pairs),
+                               "target_k_min": min(target_ks, default=np.nan),
+                               "target_k_max": max(target_ks, default=np.nan),
                                **source_ancestor_properties(truth)})
                 for n in n_values:
                     data_seed = derive_seed("data", seed_namespace, d, family,
@@ -389,6 +399,12 @@ def run(args):
                         )
                         rounds = _knowledge_round_count(spec, q, args)
                         strategies = _selected_knowledge_strategies(spec, q, args)
+                        if spec.name == "prior-structure-flop" and q == .25:
+                            strategies = tuple(
+                                f"target-k-{target}"
+                                for target in target_ks
+                                if "target-k" in strategies
+                            )
                         round_start = min(args.knowledge_round_start, rounds)
                         round_stop = rounds
                         if args.knowledge_round_limit is not None:
@@ -557,6 +573,14 @@ def run(args):
                                     if spec.name.startswith("prior-structure"):
                                         row.update(prior_properties(d, pairs, diag["candidate_graph"]))
                                         row.update(source_ancestor_properties(truth))
+                                        if strategy.startswith("target-k-"):
+                                            target_k = int(strategy.rsplit("-", 1)[1])
+                                            row.update({
+                                                "target_chromatic_number": target_k,
+                                                "realized_chromatic_number": target_k,
+                                                "chromatic_number_lower_bound": target_k,
+                                                "chromatic_number_upper_bound": target_k,
+                                            })
                                     successful.add(_job_key(row))
                                     print(f"{spec.name} {graph_id} n={n} q={q} "
                                           f"{method} SHD={row['SHD_cpdag']}", flush=True)

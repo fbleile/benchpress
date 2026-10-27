@@ -103,13 +103,13 @@ REGISTRY = {
         knowledge_strategies=("random", "bipartite-max-capacity", "chromatic-greedy")),
     "prior-structure-flop": ExperimentSpec(
         "prior-structure-flop",
-        "large d=50 FLOP-only source-ancestor prior-structure sweep",
+        "computable d=50 FLOP target-chromatic-number prior-structure ablation",
         ((50, "er", 2), (50, "er", 4), (50, "er", 8),
          (50, "ws", 2), (50, "ws", 4), (50, "ws", 8)),
-        (500,), (0.0, .25), 5,
+        (500,), (0.0, .25), 10,
         ("flop", "flop_notreks"),
         graph_replicates=100,
-        knowledge_strategies=("source-ancestor",)),
+        knowledge_strategies=("target-k",)),
     "causalassembly": ExperimentSpec(
         "causalassembly", "causalAssembly nonlinear n=500 benchmark", (),
         (500,), (.25, 1.0), 1,

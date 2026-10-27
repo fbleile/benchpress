@@ -10,10 +10,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import platform
 import subprocess
 import sys
 import time
+from itertools import combinations
 from io import StringIO
 from datetime import datetime, timezone
 from pathlib import Path
@@ -114,6 +116,86 @@ def source_ancestor_pairs(all_pairs, truth: np.ndarray, q: float, seed: int):
                 ordered.append(buckets[key].pop())
     count = max(1, int(round(q * len(ordered))))
     return ordered[:count]
+
+
+def _bounded_greedy_clique(all_pairs, d: int, seed: int, restarts: int = 96):
+    """Find a large clique with a strictly bounded randomized greedy search."""
+    adjacency = [set() for _ in range(d)]
+    for left, right in all_pairs:
+        left, right = int(left), int(right)
+        adjacency[left].add(right)
+        adjacency[right].add(left)
+    rng = np.random.default_rng(seed)
+    best = []
+    for _ in range(max(1, restarts)):
+        candidates = set(range(d))
+        clique = []
+        while candidates:
+            scores = np.asarray([
+                len(adjacency[v] & candidates) + rng.random() * 1e-6
+                for v in candidates
+            ])
+            vertex = list(candidates)[int(np.argmax(scores))]
+            clique.append(vertex)
+            candidates &= adjacency[vertex]
+        if len(clique) > len(best) or (len(clique) == len(best) and tuple(sorted(clique)) < tuple(sorted(best))):
+            best = clique
+    return tuple(sorted(best))
+
+
+def target_k_values(all_pairs, d: int, q: float, seed: int):
+    """Return feasible K values for the bounded target-K construction.
+
+    The upper limit is a greedy-clique lower bound and the fixed pair budget;
+    no exact maximum-clique or exact chromatic-number search is attempted.
+    """
+    budget = max(1, int(round(q * len(all_pairs))))
+    clique = _bounded_greedy_clique(all_pairs, d, seed)
+    budget_k = int((1 + math.sqrt(1 + 8 * budget)) // 2)
+    return tuple(range(2, min(len(clique), budget_k) + 1))
+
+
+def target_k_partite_pairs(all_pairs, d: int, q: float, seed: int, target: int):
+    """Construct a fixed-budget prior with realized chromatic number exactly K.
+
+    A bounded randomized K-partition supplies the upper bound chi <= K; a
+    planted K-clique from the valid no-trek graph supplies chi >= K.
+    """
+    if target < 2:
+        raise ValueError("target chromatic number must be at least two")
+    pairs = [tuple(map(int, pair)) for pair in all_pairs]
+    budget = max(1, int(round(q * len(pairs))))
+    required = target * (target - 1) // 2
+    if budget < required:
+        raise ValueError(f"target K={target} needs {required} pairs, budget is {budget}")
+    clique = _bounded_greedy_clique(pairs, d, seed, restarts=128)
+    if len(clique) < target:
+        raise ValueError(f"no bounded K-clique found for target K={target}")
+    planted = tuple(clique[:target])
+    rng = np.random.default_rng(seed + 104729)
+    best_crossing = []
+    vertices = list(range(d))
+    for _ in range(128):
+        colours = {vertex: index for index, vertex in enumerate(planted)}
+        remaining = [v for v in vertices if v not in colours]
+        rng.shuffle(remaining)
+        for index, vertex in enumerate(remaining):
+            colours[vertex] = int(rng.integers(target))
+        crossing = [pair for pair in pairs if colours[pair[0]] != colours[pair[1]]]
+        if len(crossing) > len(best_crossing):
+            best_crossing = crossing
+        if len(crossing) >= budget:
+            break
+    if len(best_crossing) < budget:
+        raise ValueError(
+            f"target K={target} has only {len(best_crossing)} crossing pairs; "
+            f"budget is {budget}")
+    selected = set(tuple(sorted(pair)) for pair in combinations(planted, 2))
+    remaining = [pair for pair in best_crossing if tuple(sorted(pair)) not in selected]
+    order = rng.permutation(len(remaining))
+    selected.update(tuple(sorted(remaining[int(index)]))
+                    for index in order[:budget - len(selected)])
+    return sorted(selected)
 
 
 def make_graph(d: int, family: str, density: int, seed: int) -> np.ndarray:
@@ -248,6 +330,14 @@ def select_pairs(all_pairs, q: float, seed: int, strategy: str = "random",
         if truth is None:
             raise ValueError("source-ancestor selection requires the truth DAG")
         return source_ancestor_pairs(all_pairs, truth, q, seed)
+    if strategy.startswith("target-k-"):
+        if truth is None:
+            raise ValueError("target-K selection requires the truth DAG")
+        try:
+            target = int(strategy.rsplit("-", 1)[1])
+        except ValueError as exc:
+            raise ValueError(f"invalid target-K strategy: {strategy}") from exc
+        return target_k_partite_pairs(all_pairs, truth.shape[0], q, seed, target)
     if strategy in {"bipartite", "bipartite-max-capacity"}:
         from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.one_graph_prior_chromatic import (
             _bipartite_max_capacity,
