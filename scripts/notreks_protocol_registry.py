@@ -101,6 +101,15 @@ REGISTRY = {
             (50, ("flop", "flop_notreks")),
             (100, ("dagma", "dagma_notreks"))),
         knowledge_strategies=("random", "bipartite-max-capacity", "chromatic-greedy")),
+    "prior-structure-flop": ExperimentSpec(
+        "prior-structure-flop",
+        "large d=50 FLOP-only source-ancestor prior-structure sweep",
+        ((50, "er", 2), (50, "er", 4), (50, "er", 8),
+         (50, "ws", 2), (50, "ws", 4), (50, "ws", 8)),
+        (500,), (0.0, .25), 5,
+        ("flop", "flop_notreks"),
+        graph_replicates=100,
+        knowledge_strategies=("source-ancestor",)),
     "causalassembly": ExperimentSpec(
         "causalassembly", "causalAssembly nonlinear n=500 benchmark", (),
         (500,), (.25, 1.0), 1,

@@ -7,6 +7,7 @@ from scripts.notreks_protocol import (
     make_data,
     make_graph,
     select_pairs,
+    source_ancestor_classes,
 )
 from scripts.notreks_protocol_registry import REGISTRY
 from scripts.lrz_make_jobfarm_cmds import main as make_jobfarm_commands
@@ -40,6 +41,29 @@ def test_knowledge_rounds_are_reproducible_and_bounded():
     assert set(selected) <= set(pairs)
     assert select_pairs(pairs, .25, 99) == selected
     assert select_pairs(pairs, 1.0, 99) == pairs
+
+
+def test_source_ancestor_prior_uses_overlapping_source_classes():
+    truth = np.zeros((6, 6), dtype=np.uint8)
+    truth[0, 2] = truth[1, 2] = truth[2, 3] = truth[4, 5] = 1
+    classes, node_sources = source_ancestor_classes(truth)
+    assert classes[0] == (0, 2, 3)
+    assert classes[1] == (1, 2, 3)
+    assert node_sources[2] == (0, 1)
+
+    pairs = graph_pairs(truth)
+    selected = select_pairs(pairs, .25, 99, "source-ancestor", truth=truth)
+    assert len(selected) == max(1, round(.25 * len(pairs)))
+    assert set(selected) <= set(pairs)
+
+
+def test_large_flop_prior_sweep_is_explicitly_sized():
+    spec = REGISTRY["prior-structure-flop"]
+    assert spec.methods == ("flop", "flop_notreks")
+    assert spec.q_values == (0.0, .25)
+    assert spec.graph_replicates == 100
+    assert spec.q25_rounds == 5
+    assert spec.knowledge_strategies == ("source-ancestor",)
 
 
 def test_ws_graph_generation_does_not_depend_on_current_working_directory(tmp_path, monkeypatch):

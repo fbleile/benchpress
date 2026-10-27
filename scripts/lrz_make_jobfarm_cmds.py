@@ -85,6 +85,7 @@ def main() -> None:
     env = f"env PYTHONPATH={root} OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1"
 
     synthetic = {
+        "prior-structure-flop": "flop flop_notreks",
         "prior-structure-d50": (
             "flop flop_notreks dagma dagma_notreks"),
         "prior-structure-d100": (

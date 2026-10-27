@@ -13,6 +13,7 @@ import pandas as pd
 
 from scripts.notreks_protocol import (
     derive_seed, graph_pairs, make_data, make_graph, select_pairs, write_json,
+    source_ancestor_classes,
 )
 from scripts.notreks_protocol_registry import REGISTRY, select_registry, scaled_replicates
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import (
@@ -268,6 +269,20 @@ def prior_properties(d, pairs, candidate=None):
             "trek_error_alignment": alignment}
 
 
+def source_ancestor_properties(truth):
+    """Graph-level diagnostics for the source-ancestor colour construction."""
+    classes, node_sources = source_ancestor_classes(truth)
+    memberships = [sources for sources in node_sources.values() if sources]
+    covered = {node for nodes in classes.values() for node in nodes}
+    return {
+        "source_count": len(classes),
+        "source_class_count": len(classes),
+        "source_class_coverage": len(covered) / max(1, truth.shape[0]),
+        "source_ancestor_membership_mean": float(np.mean([len(s) for s in memberships])) if memberships else 0.0,
+        "source_ancestor_membership_max": max((len(s) for s in memberships), default=0),
+    }
+
+
 def run(args):
     specs = select_registry(args.experiments, args.fraction)
     executable = [s for s in specs if s.derives_from is None
@@ -333,7 +348,8 @@ def run(args):
                                "seed_attempt": seed_attempt,
                                "edges": int(truth.sum()),
                                "no_trek_pairs": len(all_pairs),
-                               "eligible_information": bool(all_pairs)})
+                               "eligible_information": bool(all_pairs),
+                               **source_ancestor_properties(truth)})
                 for n in n_values:
                     data_seed = derive_seed("data", seed_namespace, d, family,
                                            density, replicate, n,
@@ -391,7 +407,8 @@ def run(args):
                             knowledge_seed = derive_seed("knowledge", graph_id, n,
                                                          q, strategy, round_id,
                                                          master=args.master_seed)
-                            pairs = select_pairs(all_pairs, q, knowledge_seed, strategy)
+                            pairs = select_pairs(all_pairs, q, knowledge_seed, strategy,
+                                                 truth=truth)
                             print(
                                 f"DONE knowledge-selection experiment={spec.name} "
                                 f"graph={graph_id} n={n} q={q} strategy={strategy} "
@@ -539,6 +556,7 @@ def run(args):
                                                 "discovery_score": "profiled_unequal_variance_gaussian"})
                                     if spec.name.startswith("prior-structure"):
                                         row.update(prior_properties(d, pairs, diag["candidate_graph"]))
+                                        row.update(source_ancestor_properties(truth))
                                     successful.add(_job_key(row))
                                     print(f"{spec.name} {graph_id} n={n} q={q} "
                                           f"{method} SHD={row['SHD_cpdag']}", flush=True)

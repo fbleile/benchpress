@@ -62,6 +62,60 @@ def graph_pairs(truth: np.ndarray) -> list[tuple[int, int]]:
             if not np.any(ancestors[i] & ancestors[j])]
 
 
+def source_ancestor_classes(truth: np.ndarray):
+    """Return overlapping source-root colour classes for a DAG.
+
+    Every node is appended to every class whose source is an ancestor of that
+    node.  A multi-root descendant can therefore belong to several classes;
+    this is intentional and avoids imposing an arbitrary single-root colour.
+    """
+    truth = np.asarray(truth, dtype=bool)
+    reach = truth.copy()
+    np.fill_diagonal(reach, True)
+    for k in range(truth.shape[0]):
+        reach |= reach[:, [k]] & reach[[k], :]
+    sources = np.flatnonzero(~truth.any(axis=0))
+    classes = {
+        int(source): tuple(np.flatnonzero(reach[source]).astype(int).tolist())
+        for source in sources
+    }
+    node_sources = {
+        int(node): tuple(int(source) for source in sources if reach[source, node])
+        for node in range(truth.shape[0])
+    }
+    return classes, node_sources
+
+
+def source_ancestor_pairs(all_pairs, truth: np.ndarray, q: float, seed: int):
+    """Select a fixed q-fraction of NOTREKS pairs by source classes.
+
+    The ordering cycles through endpoint source-class signatures, providing
+    broad source-class coverage before filling the requested pair budget.
+    """
+    if not 0.0 < q <= 1.0:
+        raise ValueError("source-ancestor selection requires 0 < q <= 1")
+    pairs = [tuple(map(int, pair)) for pair in all_pairs]
+    if not pairs:
+        return []
+    _, node_sources = source_ancestor_classes(truth)
+    buckets = {}
+    for left, right in pairs:
+        a, b = node_sources[left], node_sources[right]
+        key = (a, b) if a <= b else (b, a)
+        buckets.setdefault(key, []).append((left, right))
+    rng = np.random.default_rng(seed + 104729)
+    for values in buckets.values():
+        rng.shuffle(values)
+    keys = sorted(buckets, key=lambda key: (len(key[0]), key, len(buckets[key])))
+    ordered = []
+    while any(buckets.values()):
+        for key in keys:
+            if buckets[key]:
+                ordered.append(buckets[key].pop())
+    count = max(1, int(round(q * len(ordered))))
+    return ordered[:count]
+
+
 def make_graph(d: int, family: str, density: int, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     order = rng.permutation(d)
@@ -177,7 +231,8 @@ def _topological_order(graph: np.ndarray) -> list[int]:
     return result
 
 
-def select_pairs(all_pairs, q: float, seed: int, strategy: str = "random"):
+def select_pairs(all_pairs, q: float, seed: int, strategy: str = "random",
+                 truth: np.ndarray | None = None):
     """Select a fixed-size prior, optionally preserving graph structure.
 
     The three structural strategies are shared with the earlier chromatic
@@ -189,6 +244,10 @@ def select_pairs(all_pairs, q: float, seed: int, strategy: str = "random"):
         return []
     if q == 1.0:
         return [tuple(p) for p in all_pairs]
+    if strategy == "source-ancestor":
+        if truth is None:
+            raise ValueError("source-ancestor selection requires the truth DAG")
+        return source_ancestor_pairs(all_pairs, truth, q, seed)
     if strategy in {"bipartite", "bipartite-max-capacity"}:
         from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.one_graph_prior_chromatic import (
             _bipartite_max_capacity,
