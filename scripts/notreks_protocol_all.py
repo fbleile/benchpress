@@ -455,7 +455,7 @@ def run(args):
                         )
                         rounds = _knowledge_round_count(spec, q, args)
                         strategies = _selected_knowledge_strategies(spec, q, args)
-                        if spec.name == "prior-structure-flop" and q == .25:
+                        if spec.name in {"prior-structure-flop", "prior-structure-chrom"} and q == .25:
                             strategies = tuple(
                                 f"target-k-{target}"
                                 for target in target_ks
