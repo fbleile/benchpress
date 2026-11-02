@@ -110,6 +110,19 @@ REGISTRY = {
         ("flop", "flop_notreks"),
         graph_replicates=100,
         knowledge_strategies=("target-k",)),
+    "prior-structure-chrom": ExperimentSpec(
+        "prior-structure-chrom",
+        "fixed-size, bounded chromatic prior ablation for ER4/WS4",
+        ((50, "er", 4), (50, "ws", 4),
+         (100, "er", 4), (100, "ws", 4)),
+        (500,), (0.0, 0.25), 50,
+        ("flop", "flop_notreks", "dagma", "dagma_notreks"),
+        graph_replicates=100,
+        attempts_by_family=(("flop", 1), ("dagma", 1)),
+        excluded_methods_by_dimension=(
+            (50, ("flop", "flop_notreks")),
+            (100, ("dagma", "dagma_notreks"))),
+        knowledge_strategies=("target-k",)),
     "causalassembly": ExperimentSpec(
         "causalassembly", "causalAssembly nonlinear n=500 benchmark", (),
         (500,), (.25, 1.0), 1,

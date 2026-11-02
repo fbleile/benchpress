@@ -13,7 +13,8 @@ import pandas as pd
 
 from scripts.notreks_protocol import (
     derive_seed, graph_pairs, make_data, make_graph, select_pairs, write_json,
-    source_ancestor_classes, target_k_values,
+    source_ancestor_classes, target_k_values, bounded_target_k_pair_pool,
+    canonical_pair_set_hash,
 )
 from scripts.notreks_protocol_registry import REGISTRY, select_registry, scaled_replicates
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.systematic_notreks_d20_benchmark import (
@@ -86,6 +87,14 @@ def _attempts_for(spec, method, args):
     return int(args.attempts) if args.attempts is not None else spec.attempts_for(method)
 
 
+def _prior_chrom_budget(d, args):
+    if d == 50:
+        return args.prior_chrom_pairs_d50
+    if d == 100:
+        return args.prior_chrom_pairs_d100
+    raise ValueError(f"prior-structure-chrom has no fixed budget for d={d}")
+
+
 def _methods_for_job(spec, d, q):
     """Return methods that are meaningful for this knowledge level.
 
@@ -133,6 +142,10 @@ def print_design_and_objective(specs, args):
         print("  prior-structure-flop: bounded target-K construction; feasible K is "
               "computed per graph from a greedy clique and the q=.25 budget",
               flush=True)
+    if any(spec.name == "prior-structure-chrom" for spec in specs):
+        print("  prior-structure-chrom: fixed pair budgets; bounded unique target-K "
+              f"sets; up to {args.prior_chrom_sets_per_k} sets per K; "
+              f"K capped at {args.prior_chrom_k_max}; attempts=1", flush=True)
     print(f"  workers: {args.workers}; FLOP sweeps: {args.flop_sweeps}; "
           f"DAGMA stages: {args.dagma_stages}; DAGMA warm/max iterations: "
           f"{args.dagma_warm_iter}/{args.dagma_max_iter}", flush=True)
@@ -314,7 +327,7 @@ def run(args):
     else:
         rows = []
     successful = {_job_key(row) for row in rows if _valid_success(row)}
-    ledger, audits = [], []
+    ledger, audits, set_audits = [], [], []
     pool = ThreadPoolExecutor(max_workers=args.workers)
     for spec in executable:
         seed_namespace = spec.seed_namespace or spec.name
@@ -347,6 +360,41 @@ def run(args):
                     all_pairs, d, .25,
                     derive_seed("target-k-range", graph_id, master=args.master_seed),
                 ) if spec.name == "prior-structure-flop" else ()
+                chrom_pools = {}
+                if spec.name == "prior-structure-chrom":
+                    fixed_budget = _prior_chrom_budget(d, args)
+                    feasible = target_k_values(
+                        all_pairs, d, .25,
+                        derive_seed("prior-chrom-feasible-k", graph_id,
+                                    fixed_budget, master=args.master_seed),
+                    )
+                    target_ks = tuple(k for k in feasible
+                                      if k <= args.prior_chrom_k_max)
+                    seen_hashes = set()
+                    for target in target_ks:
+                        generated_pool, pool_status = bounded_target_k_pair_pool(
+                            all_pairs, d, fixed_budget, target,
+                            derive_seed("prior-chrom-pool", graph_id, target,
+                                        master=args.master_seed),
+                            args.prior_chrom_sets_per_k,
+                            max_attempts=args.prior_chrom_set_attempts)
+                        unique_pool = []
+                        for item in generated_pool:
+                            if item[1] not in seen_hashes:
+                                seen_hashes.add(item[1])
+                                unique_pool.append(item)
+                        pool_status["available_after_graph_dedup"] = len(unique_pool)
+                        if len(unique_pool) < args.prior_chrom_sets_per_k:
+                            pool_status["status"] = "partial"
+                        chrom_pools[target] = unique_pool
+                        set_audits.append({
+                            "experiment": spec.name, "graph_id": graph_id,
+                            "d": d, "family": family, "density": density,
+                            "replicate": replicate, "target_k": target,
+                            "fixed_pairs": fixed_budget,
+                            "requested_sets": args.prior_chrom_sets_per_k,
+                            **pool_status,
+                        })
                 np.savez_compressed(out / "graph_bank" / f"{graph_id}.npz",
                                     adjacency=truth, graph_seed=graph_seed,
                                     no_trek_pairs=np.asarray(all_pairs, dtype=int))
@@ -359,7 +407,15 @@ def run(args):
                                "eligible_information": bool(all_pairs),
                                "target_k_min": min(target_ks, default=np.nan),
                                "target_k_max": max(target_ks, default=np.nan),
+                               "fixed_pair_budget": (_prior_chrom_budget(d, args)
+                                                     if spec.name == "prior-structure-chrom"
+                                                     else np.nan),
                                **source_ancestor_properties(truth)})
+                # Persist the bounded-pool audit before the potentially long
+                # solver phase.  This keeps the realized K range and any
+                # partial/unavailable pools inspectable after a timeout.
+                if set_audits:
+                    pd.DataFrame(set_audits).to_csv(out / "set_audit.csv", index=False)
                 for n in n_values:
                     data_seed = derive_seed("data", seed_namespace, d, family,
                                            density, replicate, n,
@@ -423,12 +479,29 @@ def run(args):
                             knowledge_seed = derive_seed("knowledge", graph_id, n,
                                                          q, strategy, round_id,
                                                          master=args.master_seed)
-                            pairs = select_pairs(all_pairs, q, knowledge_seed, strategy,
-                                                 truth=truth)
+                            availability = "available"
+                            pair_hash = None
+                            generation_attempt = None
+                            if spec.name == "prior-structure-chrom" and q == .25:
+                                target = int(strategy.rsplit("-", 1)[1])
+                                chrom_pool = chrom_pools.get(target, ())
+                                if round_id >= len(chrom_pool):
+                                    pairs = []
+                                    availability = "unavailable"
+                                else:
+                                    pairs, pair_hash, generation_attempt = chrom_pool[round_id]
+                                    knowledge_seed = derive_seed(
+                                        "prior-chrom-set", graph_id, target,
+                                        round_id, pair_hash,
+                                        master=args.master_seed)
+                            else:
+                                pairs = select_pairs(all_pairs, q, knowledge_seed,
+                                                     strategy, truth=truth)
                             print(
                                 f"DONE knowledge-selection experiment={spec.name} "
                                 f"graph={graph_id} n={n} q={q} strategy={strategy} "
-                                f"round={round_id} selected_pairs={len(pairs)}",
+                                f"round={round_id} selected_pairs={len(pairs)} "
+                                f"status={availability}",
                                 flush=True,
                             )
                             methods_for_job = _methods_for_job(spec, d, q)
@@ -442,7 +515,18 @@ def run(args):
                                 "data_id": data_id, "q": q, "round": round_id,
                                 "knowledge_strategy": strategy,
                                 "knowledge_seed": knowledge_seed,
+                                "fixed_pair_budget": (_prior_chrom_budget(d, args)
+                                                       if spec.name == "prior-structure-chrom"
+                                                       else None),
+                                "target_chromatic_number": (
+                                    int(strategy.rsplit("-", 1)[1])
+                                    if strategy.startswith("target-k-") else None),
+                                "pair_set_hash": pair_hash,
+                                "generation_attempt": generation_attempt,
+                                "availability": availability,
                                 "pairs": [list(p) for p in pairs]})
+                            if availability != "available":
+                                continue
                             expected = {
                                 (spec.name, data_id, float(q), round_id, strategy, method)
                                 for method in methods_for_job
@@ -576,10 +660,14 @@ def run(args):
                                         if strategy.startswith("target-k-"):
                                             target_k = int(strategy.rsplit("-", 1)[1])
                                             row.update({
-                                                "target_chromatic_number": target_k,
-                                                "realized_chromatic_number": target_k,
-                                                "chromatic_number_lower_bound": target_k,
-                                                "chromatic_number_upper_bound": target_k,
+                                                # The target-K construction is a
+                                                # certificate: the planted
+                                                # K-clique gives chi >= K and
+                                                # the K-colouring gives chi <= K.
+                                                # Store K once in solver rows;
+                                                # detailed provenance remains in
+                                                # the knowledge JSON/set audit.
+                                                "chromatic_number": target_k,
                                             })
                                     successful.add(_job_key(row))
                                     print(f"{spec.name} {graph_id} n={n} q={q} "
@@ -608,6 +696,8 @@ def run(args):
     frame.to_csv(out / "raw" / "results.csv", index=False)
     pd.DataFrame(ledger).to_csv(out / "seed_ledger.csv", index=False)
     pd.DataFrame(audits).to_csv(out / "graph_audit.csv", index=False)
+    if set_audits:
+        pd.DataFrame(set_audits).to_csv(out / "set_audit.csv", index=False)
     if frame.empty:
         summary = pd.DataFrame(columns=[
             "experiment_id", "method", "runs", "SHD_cpdag_mean",
@@ -644,6 +734,11 @@ def run(args):
         "replicate_start": args.replicate_start,
         "replicate_limit": args.replicate_limit,
         "knowledge_rounds_override": args.knowledge_rounds,
+        "prior_chrom_sets_per_k": args.prior_chrom_sets_per_k,
+        "prior_chrom_k_max": args.prior_chrom_k_max,
+        "prior_chrom_set_attempts": args.prior_chrom_set_attempts,
+        "prior_chrom_pairs_d50": args.prior_chrom_pairs_d50,
+        "prior_chrom_pairs_d100": args.prior_chrom_pairs_d100,
         "elapsed_seconds": time.time() - started})
     print("\nSummary:\n" + summary.to_string(index=False))
     print(f"Artifacts: {out}")
@@ -672,6 +767,16 @@ def main():
                    help="zero-based q=.25 knowledge-round offset")
     p.add_argument("--knowledge-round-limit", type=int, default=None,
                    help="number of q=.25 knowledge rounds to process")
+    p.add_argument("--prior-chrom-sets-per-k", type=int, default=50,
+                   help="unique fixed-size prior sets requested per target K")
+    p.add_argument("--prior-chrom-k-max", type=int, default=20,
+                   help="maximum target K; graph-specific feasible K remains the cap")
+    p.add_argument("--prior-chrom-set-attempts", type=int, default=1000,
+                   help="hard construction-attempt cap per graph and target K")
+    p.add_argument("--prior-chrom-pairs-d50", type=int, default=138,
+                   help="fixed NOTREKS pairs for prior-structure-chrom d=50")
+    p.add_argument("--prior-chrom-pairs-d100", type=int, default=695,
+                   help="fixed NOTREKS pairs for prior-structure-chrom d=100")
     p.add_argument("--cell-limit", type=int, default=None,
                    help="run only the first registered graph cells for a bounded smoke")
     p.add_argument("--cell-start", type=int, default=0,
@@ -721,6 +826,14 @@ def main():
         p.error("--knowledge-round-start must be nonnegative")
     if args.knowledge_round_limit is not None and args.knowledge_round_limit < 1:
         p.error("--knowledge-round-limit must be at least 1")
+    if args.prior_chrom_sets_per_k < 1:
+        p.error("--prior-chrom-sets-per-k must be at least 1")
+    if args.prior_chrom_k_max < 2:
+        p.error("--prior-chrom-k-max must be at least 2")
+    if args.prior_chrom_set_attempts < 1:
+        p.error("--prior-chrom-set-attempts must be at least 1")
+    if args.prior_chrom_pairs_d50 < 1 or args.prior_chrom_pairs_d100 < 1:
+        p.error("fixed prior-structure-chrom pair budgets must be positive")
     specs = select_registry(args.experiments, args.fraction)
     print_design_and_objective(specs, args)
     run(args)

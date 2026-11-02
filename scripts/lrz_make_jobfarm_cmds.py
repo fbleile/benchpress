@@ -57,6 +57,9 @@ def main() -> None:
                    help="explicit protocol master seed")
     p.add_argument("--n-values", nargs="+", type=int, default=None)
     p.add_argument("--knowledge-rounds", type=int, default=None)
+    p.add_argument("--prior-chrom-sets-per-k", type=int, default=None)
+    p.add_argument("--prior-chrom-k-max", type=int, default=None)
+    p.add_argument("--prior-chrom-set-attempts", type=int, default=None)
     p.add_argument("--no-resume", action="store_true",
                    help="add --no-resume so existing job CSVs are recomputed")
     args = p.parse_args()
@@ -86,6 +89,7 @@ def main() -> None:
 
     synthetic = {
         "prior-structure-flop": "flop flop_notreks",
+        "prior-structure-chrom": "flop flop_notreks dagma dagma_notreks",
         "prior-structure-d50": (
             "flop flop_notreks dagma dagma_notreks"),
         "prior-structure-d100": (
@@ -223,6 +227,13 @@ def main() -> None:
                                 optional += f" --knowledge-round-start {round_id} --knowledge-round-limit 1"
                             if args.knowledge_rounds is not None:
                                 optional += f" --knowledge-rounds {args.knowledge_rounds}"
+                            if experiment == "prior-structure-chrom":
+                                if args.prior_chrom_sets_per_k is not None:
+                                    optional += f" --prior-chrom-sets-per-k {args.prior_chrom_sets_per_k}"
+                                if args.prior_chrom_k_max is not None:
+                                    optional += f" --prior-chrom-k-max {args.prior_chrom_k_max}"
+                                if args.prior_chrom_set_attempts is not None:
+                                    optional += f" --prior-chrom-set-attempts {args.prior_chrom_set_attempts}"
                             attempts = f" --attempts {args.attempts}" if args.attempts is not None else ""
                             lines.append(
                                 f"{env} {py} {root}/scripts/notreks_protocol_all.py "

@@ -155,7 +155,8 @@ def target_k_values(all_pairs, d: int, q: float, seed: int):
     return tuple(range(2, min(len(clique), budget_k) + 1))
 
 
-def target_k_partite_pairs(all_pairs, d: int, q: float, seed: int, target: int):
+def target_k_partite_pairs(all_pairs, d: int, q: float, seed: int, target: int,
+                           budget: int | None = None):
     """Construct a fixed-budget prior with realized chromatic number exactly K.
 
     A bounded randomized K-partition supplies the upper bound chi <= K; a
@@ -164,7 +165,9 @@ def target_k_partite_pairs(all_pairs, d: int, q: float, seed: int, target: int):
     if target < 2:
         raise ValueError("target chromatic number must be at least two")
     pairs = [tuple(map(int, pair)) for pair in all_pairs]
-    budget = max(1, int(round(q * len(pairs))))
+    budget = max(1, int(round(q * len(pairs)))) if budget is None else int(budget)
+    if budget < 1:
+        raise ValueError("fixed pair budget must be positive")
     required = target * (target - 1) // 2
     if budget < required:
         raise ValueError(f"target K={target} needs {required} pairs, budget is {budget}")
@@ -196,6 +199,42 @@ def target_k_partite_pairs(all_pairs, d: int, q: float, seed: int, target: int):
     selected.update(tuple(sorted(remaining[int(index)]))
                     for index in order[:budget - len(selected)])
     return sorted(selected)
+
+
+def canonical_pair_set_hash(pairs) -> str:
+    """Stable identity for a NOTREKS set, independent of input ordering."""
+    canonical = sorted({tuple(sorted(map(int, pair))) for pair in pairs})
+    payload = json.dumps(canonical, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def bounded_target_k_pair_pool(all_pairs, d: int, budget: int, target: int,
+                               seed: int, requested: int,
+                               max_attempts: int = 1000):
+    """Generate a bounded pool of unique fixed-size target-K priors.
+
+    The function never retries indefinitely.  It returns the available pool
+    and a status explaining whether the requested count was attainable.
+    """
+    pool, hashes = [], set()
+    attempts = 0
+    while len(pool) < requested and attempts < max_attempts:
+        candidate_seed = derive_seed("target-k-set", seed, target, attempts)
+        try:
+            pairs = target_k_partite_pairs(all_pairs, d, 0.25,
+                                           candidate_seed, target, budget=budget)
+        except ValueError:
+            attempts += 1
+            continue
+        pair_hash = canonical_pair_set_hash(pairs)
+        if pair_hash not in hashes:
+            hashes.add(pair_hash)
+            pool.append((pairs, pair_hash, attempts))
+        attempts += 1
+    status = "complete" if len(pool) == requested else "partial"
+    return pool, {"status": status, "requested": requested,
+                  "available": len(pool), "attempts": attempts,
+                  "max_attempts": max_attempts}
 
 
 def make_graph(d: int, family: str, density: int, seed: int) -> np.ndarray:
