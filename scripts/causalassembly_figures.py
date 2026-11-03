@@ -86,9 +86,9 @@ def make_figures(df: pd.DataFrame, out: Path) -> None:
                 if level == "vanilla":
                     face, marker = "white", "o"
                 elif level == "1.0":
-                    face, marker = with_alpha(colour, .88), "D"
+                    face, marker = with_alpha(colour, .88), "o"
                 else:
-                    face, marker = light_fill(colour), "D"
+                    face, marker = light_fill(colour), "o"
                 y = getattr(r, metric + "_mean")
                 ysd = getattr(r, metric + "_sd")
                 ax.errorbar(r.runtime_mean, y,
@@ -119,12 +119,12 @@ def make_figures(df: pd.DataFrame, out: Path) -> None:
         ]
         if condition == "notreks":
             knowledge_handles.extend([
-                Line2D([], [], color="#555555", marker="D", mfc=light_fill("#555555"), ls="None", label="$q=0.25$"),
-                Line2D([], [], color="#555555", marker="D", mfc=with_alpha("#555555", .88), ls="None", label="$q=1.0$"),
+                Line2D([], [], color="#555555", marker="o", mfc=light_fill("#555555"), ls="None", label="$q=0.25$"),
+                Line2D([], [], color="#555555", marker="o", mfc=with_alpha("#555555", .88), ls="None", label="$q=1.0$"),
             ])
         else:
             knowledge_handles.extend([
-                Line2D([], [], color="#555555", marker="D", mfc=light_fill("#555555"), ls="None", label="estimated"),
+                Line2D([], [], color="#555555", marker="o", mfc=light_fill("#555555"), ls="None", label="estimated"),
                 Line2D([], [], **blank, label=""),
             ])
         sample_handles = [
