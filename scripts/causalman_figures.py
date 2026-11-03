@@ -94,28 +94,32 @@ def make_figure(input_csv: Path, output: Path, metric: str = "projected_skeleton
         ax.set_ylabel(ylabel)
         ax.grid(axis="y", alpha=.18)
         ax.spines[["top", "right"]].set_visible(False)
-    # One shared legend box.  Each column is a semantic group: method,
-    # knowledge level, and sample size.
+    # Match the other Pareto figures: put a padded, three-column legend in
+    # the upper-left of the first subplot.  The columns are method, knowledge
+    # level, and sample size.
     blank = dict(color="none", marker="None", linestyle="None")
-    handles = [
-        Line2D([], [], **blank, label="Method"),
+    method_handles = [
         Line2D([], [], color=FLOP, marker="o", ls="None", label="FLOP"),
         Line2D([], [], color=DAGMA, marker="o", ls="None", label="DAGMA"),
         Line2D([], [], **blank, label=""),
-        Line2D([], [], **blank, label="Knowledge"),
+    ]
+    knowledge_handles = [
         Line2D([], [], color="#555555", marker="o", mfc="none", ls="None", label="vanilla"),
-        Line2D([], [], color="#555555", marker="o", mfc=light_fill("#555555"), ls="None", label="$q=0.25$ NOTREKS"),
-        Line2D([], [], color="#555555", marker="o", mfc=with_alpha("#555555", .88), ls="None", label="$q=1.0$ NOTREKS"),
-        Line2D([], [], **blank, label="Sample size"),
+        Line2D([], [], color="#555555", marker="o", mfc=light_fill("#555555"), ls="None", label="$q=0.25$"),
+        Line2D([], [], color="#555555", marker="o", mfc=with_alpha("#555555", .88), ls="None", label="$q=1.0$"),
+    ]
+    sample_handles = [
         Line2D([], [], color="#555555", marker="o", ls="None", label="$n=500$"),
         Line2D([], [], color="#555555", marker="s", ls="None", label="$n=5000$"),
         Line2D([], [], **blank, label=""),
     ]
-    fig.legend(handles=handles, ncols=3, fontsize=6.5, loc="upper center",
-               bbox_to_anchor=(.5, .995), frameon=True, facecolor="white",
-               framealpha=.9, columnspacing=1.5, handletextpad=.35,
-               borderpad=.45)
-    fig.subplots_adjust(wspace=.32, bottom=.18, top=.82)
+    axes[0].legend(handles=method_handles + knowledge_handles + sample_handles,
+                   ncols=3, fontsize=6.4, loc="upper left",
+                   bbox_to_anchor=(.01, .985), frameon=True,
+                   facecolor="white", edgecolor=".75", framealpha=.9,
+                   columnspacing=.75, handletextpad=.25, borderpad=.35,
+                   labelspacing=.25)
+    fig.subplots_adjust(wspace=.32, bottom=.18, top=.96)
     # Use the shared PNG-only production figure writer.
     save(fig, output / (filename or "figure_causalman_paired_pareto_small_medium"))
     plt.close(fig)
