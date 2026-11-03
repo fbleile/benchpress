@@ -1,8 +1,9 @@
 """Resume-safe CausalMan benchmark with projection-aware evaluation.
 
 The official CausalMan graph may induce bidirected edges after latent
-projection.  In that case causal DAG distances are deliberately left missing;
-the projected directed-skeleton numbers below are descriptive only.
+projection.  In that case causal DAG distances are deliberately left missing.
+We report marginal-adjacency agreement, directed-skeleton agreement, and
+directed ancestor agreement as descriptive diagnostics for the ADMG target.
 """
 from __future__ import annotations
 
@@ -88,12 +89,76 @@ def _projection_metrics(candidate, graph, nodes):
     fn = int(((ts != 0) & (es == 0)).sum() // 2)
     return {
         "projected_skeleton_shd": fp + fn,
+        # This is deliberately not called CPDAG SHD: the CausalMan truth is
+        # an ADMG with latent-confounding bidirected edges.
+        "projected_directed_skeleton_shd": fp + fn,
         "projected_skeleton_precision": tp / max(1, tp + fp),
         "projected_skeleton_recall": tp / max(1, tp + fn),
         "projected_skeleton_f1": 2 * tp / max(1, 2 * tp + fp + fn),
         "projected_directed_edges": int(truth.sum()),
         "projected_bidirected_edges": len(graph.get("projected", {}).get("bidirected", [])),
     }
+
+
+def _projected_marginal_adjacency(graph, nodes):
+    """Return observed adjacency in the latent projection, ignoring edge type.
+
+    Directed and bidirected projection edges both imply marginal association
+    between the retained variables.  The result is therefore an undirected
+    adjacency target for comparison with the skeleton of a DAG estimate.
+    """
+    truth = _skeleton(_projected_directed_adjacency(graph, nodes))
+    index = {str(v): i for i, v in enumerate(nodes)}
+    for a, b in graph.get("projected", {}).get("bidirected", []):
+        if a in index and b in index:
+            truth[index[a], index[b]] = 1
+            truth[index[b], index[a]] = 1
+    np.fill_diagonal(truth, 0)
+    return truth
+
+
+def _marginal_adjacency_metrics(candidate, graph, nodes):
+    """Compare an estimated DAG skeleton with directed+bidirected truth."""
+    truth = _projected_marginal_adjacency(graph, nodes)
+    estimate = _skeleton(np.asarray(candidate, dtype=np.uint8))
+    d = len(nodes)
+    if estimate.shape != truth.shape:
+        estimate = estimate[:d, :d]
+    tri = np.triu(np.ones_like(truth, dtype=bool), 1)
+    tp = int(np.sum(truth.astype(bool) & estimate.astype(bool) & tri))
+    fp = int(np.sum(~truth.astype(bool) & estimate.astype(bool) & tri))
+    fn = int(np.sum(truth.astype(bool) & ~estimate.astype(bool) & tri))
+    return {
+        "projected_marginal_adjacency_shd": fp + fn,
+        "projected_marginal_adjacency_precision": tp / max(1, tp + fp),
+        "projected_marginal_adjacency_recall": tp / max(1, tp + fn),
+        "projected_marginal_adjacency_f1": 2 * tp / max(1, 2 * tp + fp + fn),
+        "projected_marginal_adjacencies": int(truth[tri].sum()),
+    }
+
+
+def _projected_ancestor_disagreement(candidate, graph, nodes):
+    """Count directed ancestor disagreements in the latent projection.
+
+    This is an AID-like structural diagnostic, not CPDAG Ancestor-AID: the
+    projected CausalMan truth is an ADMG and has no well-defined CPDAG truth.
+    We therefore compare reachability in the directed projection only.
+    """
+    truth = _projected_directed_adjacency(graph, nodes)
+    estimate = np.asarray(candidate, dtype=bool)
+    d = len(nodes)
+    if estimate.shape != (d, d):
+        estimate = estimate[:d, :d]
+
+    def reachability(adjacency):
+        reach = np.asarray(adjacency, dtype=bool).copy()
+        np.fill_diagonal(reach, False)
+        for k in range(reach.shape[0]):
+            reach |= reach[:, [k]] & reach[[k], :]
+        np.fill_diagonal(reach, False)
+        return reach
+
+    return int(np.count_nonzero(reachability(truth) != reachability(estimate)))
 
 
 def _projected_directed_adjacency(graph, nodes):
@@ -245,6 +310,9 @@ def run(args):
                                 if method in {"flop", "dagma"}:
                                     cache_vanilla[(n, method)] = (candidate, diag, runtime)
                                 pm = _projection_metrics(candidate, graph, nodes)
+                                mm = _marginal_adjacency_metrics(candidate, graph, nodes)
+                                projected_aid_like = _projected_ancestor_disagreement(
+                                    candidate, graph, nodes)
                                 candidate_score = np.nan
                                 score_status = "not_computed"
                                 score_gap = np.nan
@@ -272,6 +340,7 @@ def run(args):
                                        "knowledge_violations": _violations(candidate, pairs, nodes),
                                        "oracle_no_trek_violations": _violations(candidate, oracle, nodes),
                                        "candidate_edges": int(np.asarray(candidate).sum()),
+                                       **mm,
                                        **bm,
                                        "mixed_graph_score": diag.get("admg_score", np.nan),
                                        "admg_bidirected_edges": diag.get(
@@ -292,6 +361,7 @@ def run(args):
                                            if method.startswith("flop")
                                            else args.dagma_attempts),
                                        "metric_exclusion_reason": ("latent_confounding" if pm["projected_bidirected_edges"] else ""),
+                                       "projected_ancestor_disagreement": projected_aid_like,
                                        "SHD_cpdag": np.nan, "SID": np.nan, "AID": np.nan,
                                        "sample_mean_checksum": _hash(mean.tolist()),
                                        "sample_scale_checksum": _hash(scale.tolist()),
@@ -312,7 +382,13 @@ def run(args):
     # Keep the result schema rectangular even when every row in a small smoke
     # is failed/ineligible or a method does not expose a particular diagnostic.
     # This also makes resumable mixed-method runs safe to aggregate.
-    for column in ("projected_skeleton_shd", "projected_skeleton_f1",
+    for column in ("projected_marginal_adjacency_shd",
+                   "projected_marginal_adjacency_precision",
+                   "projected_marginal_adjacency_recall",
+                   "projected_marginal_adjacency_f1",
+                   "projected_marginal_adjacencies",
+                   "projected_skeleton_shd", "projected_directed_skeleton_shd",
+                   "projected_ancestor_disagreement", "projected_skeleton_f1",
                    "oracle_no_trek_violations", "candidate_runtime",
                    "nonlinear_score", "projected_directed_reference_score",
                    "nonlinear_score_gap_to_reference", "bidirected_edges",
@@ -330,7 +406,17 @@ def run(args):
             runs=("method", "size"), successes=("solver_status", lambda s: int((s == "ok").sum())),
             failures=("solver_status", lambda s: int((s == "failed").sum())),
             ineligible=("solver_status", lambda s: int((s == "ineligible").sum())),
+            projected_marginal_adjacency_shd=(
+                "projected_marginal_adjacency_shd", "mean"),
+            projected_marginal_adjacency_precision=(
+                "projected_marginal_adjacency_precision", "mean"),
+            projected_marginal_adjacency_recall=(
+                "projected_marginal_adjacency_recall", "mean"),
+            projected_marginal_adjacency_f1=(
+                "projected_marginal_adjacency_f1", "mean"),
             projected_skeleton_shd=("projected_skeleton_shd", "mean"),
+            projected_directed_skeleton_shd=("projected_directed_skeleton_shd", "mean"),
+            projected_ancestor_disagreement=("projected_ancestor_disagreement", "mean"),
             projected_skeleton_f1=("projected_skeleton_f1", "mean"),
             oracle_no_trek_violations=("oracle_no_trek_violations", "mean"),
             nonlinear_score=("nonlinear_score", "mean"),
@@ -360,8 +446,9 @@ def run(args):
                   f"Ineligible rows: {int((frame.solver_status == 'ineligible').sum())}",
                   "", "Causal DAG distances are intentionally missing for "
                   "latent-confounded projected cells (`latent_confounding`).",
-                  "Projected directed-skeleton metrics are descriptive agreement, "
-                  "not causal ground truth.", ""]
+                  "Marginal-adjacency, directed-skeleton, and directed-ancestor "
+                  "metrics are descriptive agreement with an ADMG projection, "
+                  "not CPDAG/DAG causal ground truth.", ""]
         (analysis / "report.md").write_text("\n".join(report))
     (output / "manifest.json").write_text(json.dumps({"variants": args.variants,
         "seeds": args.seeds, "n_values": args.n_values, "methods": methods,

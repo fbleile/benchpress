@@ -22,9 +22,34 @@ The selected feature set is fixed before solver execution from finite,
 nonconstant, genuinely continuous observable sensors.  Each prefix is
 standardized independently with `ddof=0`.  The full DAG is retained for
 ancestor/no-trek checks; the observed graph is a latent projection with
-directed and bidirected edges.  If bidirected edges are present, CPDAG SHD,
-SID and AID are missing with reason `latent_confounding`; projected directed
-skeleton agreement is descriptive only.
+directed and bidirected edges.
+
+Because the estimators produce DAG-like adjacency matrices rather than ADMGs,
+we do not interpret a directed estimate between two confounded observed
+variables as proof of a directed causal relation.  Such an edge can instead
+be the estimator's best available representation of their marginal
+dependence.
+
+We therefore report three descriptive diagnostics.  Projected
+marginal-adjacency SHD compares the estimated DAG skeleton with the union of
+directed and bidirected adjacencies in the latent projection; it asks whether
+the observed dependence neighbourhood is recovered, while ignoring edge type
+and direction.  Projected directed-skeleton SHD compares the estimated
+skeleton only with the directed part of the projection; it is a stricter
+diagnostic of the directed observed component.  Projected ancestor disagreement
+compares directed reachability in the estimate with directed reachability in
+that same directed component.  Bidirected edges and paths involving them are
+excluded from the latter two diagnostics because they encode latent
+confounding, not directed observed-variable ancestry.
+
+None of these quantities is CPDAG SHD, SID, or CPDAG Ancestor-AID.  The
+marginal-adjacency diagnostic is the fairest structural comparison when an
+estimator has no bidirected-edge output, whereas the directed-skeleton and
+ancestor diagnostics retain causal-direction information at the cost of
+ignoring latent-confounding structure.  Smaller values indicate fewer
+adjacency or reachability disagreements, but all three metrics should be
+interpreted as descriptive agreement with the ADMG projection rather than as
+complete causal recovery.
 
 ## Commands
 
@@ -65,9 +90,25 @@ PYTHONPATH=. .venv-local-smoke/bin/python scripts/causalman_figures.py \
   --output results/causalman_full/analysis/figures
 ```
 
-This writes `figure_causalman_paired_pareto_small_medium.pdf` (and PNG), the
-plot-data CSV and the descriptive metric label.  It does not modify the
-original Figure 1 artifacts.
+This writes PNG figures for projected marginal-adjacency SHD, projected
+directed-skeleton SHD, and projected ancestor disagreement, together with
+their plot-data CSVs.  It does not modify the original Figure 1 artifacts.
+
+A suitable caption is:
+
+~~~latex
+\caption{CausalMan Small and Medium benchmarks.  The plotted diagnostics are
+descriptive comparisons with the latent projection of the observed graph.
+Projected marginal-adjacency SHD evaluates the estimated skeleton against the
+union of directed and bidirected projection adjacencies, thereby measuring
+recovery of observed marginal dependence without assigning causal meaning to
+an estimated edge.  Projected directed-skeleton SHD evaluates only the
+directed component, and projected ancestor disagreement compares directed
+reachability in that component.  Bidirected edges are excluded from the latter
+two diagnostics because they represent latent confounding rather than
+directed observed-variable ancestry.  Lower values are better; none of these
+metrics is CPDAG SHD or CPDAG Ancestor-AID.}
+~~~
 
 If preparation reports that `causalman` is unavailable, stop: install the
 official pinned upstream package/assets and rerun preparation.  No replacement
