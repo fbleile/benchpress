@@ -105,33 +105,42 @@ def make_figures(df: pd.DataFrame, out: Path) -> None:
             ax.set_ylabel(label)
             ax.grid(axis="y", alpha=.18)
             ax.spines[["top", "right"]].set_visible(False)
+        # Keep the legend in the same three-column layout as the synthetic
+        # aggregate Pareto figure.  Each column is padded to three entries so
+        # Matplotlib does not stagger the headings/markers vertically.
         blank = dict(color="none", marker="None", linestyle="None")
-        handles = [
-            Line2D([], [], **blank, label="Method"),
+        method_handles = [
             Line2D([], [], color=FLOP, marker="o", ls="None", label="FLOP"),
             Line2D([], [], color=DAGMA, marker="o", ls="None", label="DAGMA"),
             Line2D([], [], **blank, label=""),
-            Line2D([], [], **blank, label="Knowledge"),
+        ]
+        knowledge_handles = [
             Line2D([], [], color="#555555", marker="o", mfc="none", ls="None", label="vanilla"),
         ]
         if condition == "notreks":
-            handles.extend([
-                Line2D([], [], color="#555555", marker="D", mfc=light_fill("#555555"), ls="None", label="$q=0.25$ NOTREKS"),
-                Line2D([], [], color="#555555", marker="D", mfc=with_alpha("#555555", .88), ls="None", label="$q=1.0$ NOTREKS"),
+            knowledge_handles.extend([
+                Line2D([], [], color="#555555", marker="D", mfc=light_fill("#555555"), ls="None", label="$q=0.25$"),
+                Line2D([], [], color="#555555", marker="D", mfc=with_alpha("#555555", .88), ls="None", label="$q=1.0$"),
             ])
         else:
-            handles.append(Line2D([], [], color="#555555", marker="D", mfc=light_fill("#555555"), ls="None", label="estimated NOTREKS"))
-        handles.extend([
-            Line2D([], [], **blank, label="Sample size"),
+            knowledge_handles.extend([
+                Line2D([], [], color="#555555", marker="D", mfc=light_fill("#555555"), ls="None", label="estimated"),
+                Line2D([], [], **blank, label=""),
+            ])
+        sample_handles = [
             Line2D([], [], color="#555555", marker="o", ls="None", label="$n=500$"),
-        ])
-        fig.legend(handles=handles, ncols=3, fontsize=6.5, loc="upper center",
-                   bbox_to_anchor=(.5, .995), frameon=True, facecolor="white",
-                   framealpha=.9, columnspacing=1.5, handletextpad=.35,
-                   borderpad=.45)
+            Line2D([], [], **blank, label=""),
+            Line2D([], [], **blank, label=""),
+        ]
+        legend_handles = method_handles + knowledge_handles + sample_handles
+        axes[0].legend(handles=legend_handles, ncol=3, loc="upper left",
+                       bbox_to_anchor=(.01, .985), frameon=True,
+                       facecolor="white", edgecolor=".75", framealpha=.9,
+                       fontsize=6.4, columnspacing=.75, handletextpad=.25,
+                       borderpad=.35, labelspacing=.25)
         fig.text(.99, .012, f"CausalAssembly; {condition_label}; n=500; d=98",
                  ha="right", fontsize=6, color=".3")
-        fig.subplots_adjust(wspace=.32, bottom=.18, top=.82)
+        fig.subplots_adjust(wspace=.32, bottom=.18, top=.96)
         save(fig, out / f"figure_causalassembly_paired_pareto_{suffix}")
         plt.close(fig)
 
