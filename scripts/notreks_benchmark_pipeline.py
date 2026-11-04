@@ -359,6 +359,30 @@ def method_run(name, X, pairs, seed, attempts, flop_sweeps, dagma_stages,
     return candidate, diag, elapsed
 
 
+def method_run_with_restart_records(name, X, pairs, seed, attempts,
+                                    flop_sweeps, dagma_stages,
+                                    dagma_warm_iter, dagma_max_iter,
+                                    trek_weight):
+    """Run FLOP restarts as explicit one-restart calls and retain each graph."""
+    if name not in {"flop", "flop_notreks"}:
+        raise ValueError("restart logging is currently implemented for FLOP only")
+    records = []
+    for restart in range(int(attempts)):
+        solver_name = "flop" if name == "flop" else "flop-nt-standard"
+        candidate, diag, runtime = method_run(
+            solver_name, X, pairs, int(seed) + restart, 1, flop_sweeps,
+            dagma_stages, dagma_warm_iter, dagma_max_iter, trek_weight)
+        records.append({"restart_index": restart, "candidate": candidate,
+                        "diag": diag, "runtime": runtime,
+                        "restart_bic": float(diag.get("optimizer_final_bic", np.nan))})
+    best = min(records, key=lambda r: (r["restart_bic"], r["restart_index"]))
+    selected = dict(best["diag"])
+    selected["restart_records"] = records
+    selected["best_restart_index"] = best["restart_index"]
+    selected["optimizer_restarts"] = len(records)
+    return best["candidate"], selected, float(sum(r["runtime"] for r in records))
+
+
 def postselect_cached_flop(X, pairs, cached):
     """Run only NOTREKS post-selection on a cached vanilla FLOP result."""
     base_candidate, base_diag, base_runtime = cached

@@ -213,7 +213,25 @@ def _checkpoint(rows, path):
     temporary.replace(path)
 
 
+def _checkpoint_restart_rows(rows, path):
+    frame = pd.DataFrame(rows)
+    if not frame.empty:
+        frame = frame.drop_duplicates(
+            ["experiment_id", "data_id", "knowledge_fraction",
+             "knowledge_round", "knowledge_strategy", "method",
+             "restart_index"], keep="last")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    frame.to_csv(temporary, index=False)
+    temporary.replace(path)
+
+
 def dispatch(name, x, pairs, seed, args, attempts):
+    if args.log_restarts and name in {"flop", "flop_notreks"}:
+        from scripts.notreks_benchmark_pipeline import method_run_with_restart_records
+        return method_run_with_restart_records(
+            name, x, pairs, seed, attempts, args.flop_sweeps,
+            args.dagma_stages, args.dagma_warm_iter, args.dagma_max_iter,
+            args.trek_weight)
     if name in {"var_sortnregress", "r2_sortnregress"}:
         # These baselines are implemented in the benchmark toolchain, but
         # are not part of the legacy method_run dispatcher.  Wire them here
@@ -316,6 +334,10 @@ def run(args):
         (out / part).mkdir(parents=True, exist_ok=True)
     started = time.time()
     result_path = out / "raw" / "results.csv"
+    restart_path = out / "raw" / "restart_results.csv"
+    restart_rows = []
+    if restart_path.exists() and restart_path.stat().st_size > 0 and not args.no_resume:
+        restart_rows = pd.read_csv(restart_path).to_dict("records")
     if result_path.exists() and result_path.stat().st_size > 0 and not args.no_resume:
         rows = pd.read_csv(result_path).to_dict("records")
         for row in rows:
@@ -669,6 +691,25 @@ def run(args):
                                                 # the knowledge JSON/set audit.
                                                 "chromatic_number": target_k,
                                             })
+                                    row.update({"restart_index": -1,
+                                                "is_best_restart": True,
+                                                "restart_bic": diag.get("optimizer_final_bic", np.nan)})
+                                    for record in diag.get("restart_records", []):
+                                        restart_row = row.copy()
+                                        restart_row.update(metrics(
+                                            x, truth, pairs, method,
+                                            record["diag"]["candidate_graph"],
+                                            record["candidate"],
+                                            record["diag"]["cpdag"],
+                                            record["runtime"], 1, 1))
+                                        restart_row.update({
+                                            "restart_index": int(record["restart_index"]),
+                                            "is_best_restart": int(record["restart_index"]) == int(diag["best_restart_index"]),
+                                            "restart_bic": record["restart_bic"],
+                                        })
+                                        restart_rows.append(restart_row)
+                                    if diag.get("restart_records"):
+                                        _checkpoint_restart_rows(restart_rows, restart_path)
                                     successful.add(_job_key(row))
                                     print(f"{spec.name} {graph_id} n={n} q={q} "
                                           f"{method} SHD={row['SHD_cpdag']}", flush=True)
@@ -788,6 +829,8 @@ def main():
     p.add_argument("--attempts", "--restarts", dest="attempts", type=int,
                    default=None,
                    help="override registry solver restarts for every method")
+    p.add_argument("--log-restarts", action="store_true",
+                   help="record every FLOP restart in raw/restart_results.csv")
     p.add_argument("--flop-sweeps", type=int, default=16)
     p.add_argument("--dagma-stages", type=int, default=5)
     p.add_argument("--dagma-warm-iter", type=int, default=3000)
