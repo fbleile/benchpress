@@ -47,6 +47,8 @@ def main() -> None:
                    help="also add Sachs and causalAssembly commands")
     p.add_argument("--attempts", type=int, default=None,
                    help="override registry attempts; omit for FLOP=20/DAGMA=2")
+    p.add_argument("--log-restarts", action="store_true",
+                   help="record every FLOP restart in raw/restart_results.csv")
     p.add_argument("--flop-sweeps", type=int, default=16)
     p.add_argument("--dagma-stages", type=int, default=5)
     p.add_argument("--dagma-warm-iter", type=int, default=30000)
@@ -60,6 +62,10 @@ def main() -> None:
     p.add_argument("--prior-chrom-sets-per-k", type=int, default=None)
     p.add_argument("--prior-chrom-k-max", type=int, default=None)
     p.add_argument("--prior-chrom-set-attempts", type=int, default=None)
+    p.add_argument("--prior-k-start", type=int, default=2)
+    p.add_argument("--prior-k-end", type=int, default=20)
+    p.add_argument("--prior-k-block-size", type=int, default=3,
+                   help="target-K block size for prior-structure-flopd100")
     p.add_argument("--no-resume", action="store_true",
                    help="add --no-resume so existing job CSVs are recomputed")
     args = p.parse_args()
@@ -77,6 +83,10 @@ def main() -> None:
         p.error("--cell-indices must be nonnegative")
     if args.attempts is not None and args.attempts < 1:
         p.error("--attempts must be at least 1")
+    if args.prior_k_start < 2 or args.prior_k_end < args.prior_k_start:
+        p.error("prior K bounds must satisfy 2 <= start <= end")
+    if args.prior_k_block_size < 1:
+        p.error("--prior-k-block-size must be at least 1")
     root = args.repo.resolve()
     # Preserve the environment wrapper path.  Resolving a venv symlink can
     # turn .venv-local-smoke/bin/python into the base interpreter path.
@@ -89,6 +99,7 @@ def main() -> None:
 
     synthetic = {
         "prior-structure-flop": "flop flop_notreks",
+        "prior-structure-flopd100": "flop_notreks",
         "prior-structure-chrom": "flop flop_notreks dagma dagma_notreks",
         "prior-structure-d50": (
             "flop flop_notreks dagma dagma_notreks"),
@@ -203,11 +214,22 @@ def main() -> None:
                             for strategy in strategies:
                                 for round_id in range(rounds):
                                     prior_shards.append((q, strategy, round_id))
+                    k_shards = [(None, None)]
+                    if experiment == "prior-structure-flopd100":
+                        k_shards = [
+                            (start, min(start + args.prior_k_block_size - 1,
+                                        args.prior_k_end))
+                            for start in range(args.prior_k_start,
+                                               args.prior_k_end + 1,
+                                               args.prior_k_block_size)]
                     for n_value in n_shards:
-                        for q_value, strategy, round_id in prior_shards:
+                        for k_start, k_end in k_shards:
+                          for q_value, strategy, round_id in prior_shards:
                             job_label = f"job_{experiment}_{task_index:05d}_c{cell_start:02d}_r{replicate_start:02d}"
                             if n_value is not None:
                                 job_label += f"_n{n_value}"
+                            if k_start is not None:
+                                job_label += f"_k{k_start}-{k_end}"
                             if q_value is not None:
                                 job_label += f"_q{q_value:g}_{strategy}_k{round_id:02d}"
                             # Keep the public result layout stable: experiment
@@ -234,13 +256,17 @@ def main() -> None:
                                     optional += f" --prior-chrom-k-max {args.prior_chrom_k_max}"
                                 if args.prior_chrom_set_attempts is not None:
                                     optional += f" --prior-chrom-set-attempts {args.prior_chrom_set_attempts}"
+                            if experiment == "prior-structure-flopd100":
+                                optional += (f" --prior-k-start {k_start}"
+                                             f" --prior-k-end {k_end}")
                             attempts = f" --attempts {args.attempts}" if args.attempts is not None else ""
+                            log_restarts = " --log-restarts" if args.log_restarts else ""
                             lines.append(
                                 f"{env} {py} {root}/scripts/notreks_protocol_all.py "
                                 f"--experiments {experiment} --fraction {args.fraction:g} "
                                 f"--master-seed {args.master_seed} "
                                 f"--cell-start {cell_start} --cell-limit {cell_limit} "
-                                f"--methods {method_args} --workers 1{attempts} "
+                                f"--methods {method_args} --workers 1{attempts}{log_restarts} "
                                 f"--flop-sweeps {args.flop_sweeps} --dagma-stages {args.dagma_stages} "
                                 f"--dagma-warm-iter {args.dagma_warm_iter} "
                                 f"--dagma-max-iter {args.dagma_max_iter} "

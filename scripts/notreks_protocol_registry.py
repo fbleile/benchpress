@@ -110,6 +110,13 @@ REGISTRY = {
         ("flop", "flop_notreks"),
         graph_replicates=100,
         knowledge_strategies=("target-k",)),
+    "prior-structure-flopd100": ExperimentSpec(
+        "prior-structure-flopd100",
+        "d=100 ER4 FLOP-only target-chromatic-number prior-structure ablation",
+        ((100, "er", 4),), (500,), (0.0, .25), 25,
+        ("flop_notreks",),
+        graph_replicates=50,
+        knowledge_strategies=("target-k",)),
     "prior-structure-chrom": ExperimentSpec(
         "prior-structure-chrom",
         "fixed-size, bounded chromatic prior ablation for ER4/WS4",

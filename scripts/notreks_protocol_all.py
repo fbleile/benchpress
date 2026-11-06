@@ -138,7 +138,8 @@ def print_design_and_objective(specs, args):
           f"{args.knowledge_rounds if args.knowledge_rounds is not None else 'registry default 5'}; "
           "q=0 is vanilla; q=1 uses one deterministic complete set",
           flush=True)
-    if any(spec.name == "prior-structure-flop" for spec in specs):
+    if any(spec.name in {"prior-structure-flop", "prior-structure-flopd100"}
+           for spec in specs):
         print("  prior-structure-flop: bounded target-K construction; feasible K is "
               "computed per graph from a greedy clique and the q=.25 budget",
               flush=True)
@@ -381,7 +382,10 @@ def run(args):
                 target_ks = target_k_values(
                     all_pairs, d, .25,
                     derive_seed("target-k-range", graph_id, master=args.master_seed),
-                ) if spec.name == "prior-structure-flop" else ()
+                ) if spec.name in {"prior-structure-flop", "prior-structure-flopd100"} else ()
+                if spec.name == "prior-structure-flopd100":
+                    target_ks = tuple(k for k in target_ks
+                                      if args.prior_k_start <= k <= args.prior_k_end)
                 chrom_pools = {}
                 if spec.name == "prior-structure-chrom":
                     fixed_budget = _prior_chrom_budget(d, args)
@@ -831,6 +835,10 @@ def main():
                    help="override registry solver restarts for every method")
     p.add_argument("--log-restarts", action="store_true",
                    help="record every FLOP restart in raw/restart_results.csv")
+    p.add_argument("--prior-k-start", type=int, default=2,
+                   help="lower target-K bound for target-chromatic experiments")
+    p.add_argument("--prior-k-end", type=int, default=20,
+                   help="upper target-K bound for target-chromatic experiments")
     p.add_argument("--flop-sweeps", type=int, default=16)
     p.add_argument("--dagma-stages", type=int, default=5)
     p.add_argument("--dagma-warm-iter", type=int, default=3000)
@@ -863,6 +871,8 @@ def main():
         p.error("--cell-indices must be nonnegative")
     if args.knowledge_rounds is not None and args.knowledge_rounds < 1:
         p.error("--knowledge-rounds must be at least 1")
+    if args.prior_k_start < 2 or args.prior_k_end < args.prior_k_start:
+        p.error("prior K bounds must satisfy 2 <= start <= end")
     if args.q_values is not None and any(not 0.0 <= q <= 1.0 for q in args.q_values):
         p.error("--q-values must lie between 0 and 1")
     if args.knowledge_round_start < 0:
