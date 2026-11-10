@@ -1,0 +1,1 @@
+Paired ablation tests computed by scripts/test_paired_ablations.py. Graph-level differences average the five q=.25 prior draws and the three sample sizes; the one-sided alternative is NOTREKS minus baseline < 0. Holm correction is applied within method.

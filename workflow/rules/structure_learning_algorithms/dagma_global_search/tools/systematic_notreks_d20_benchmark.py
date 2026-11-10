@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -48,6 +50,7 @@ from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.adap
 )
 from workflow.rules.structure_learning_algorithms.dagma_global_search.tools.causal_distances import (
     cpdag_aid,
+    dag_to_cpdag,
     dag_ancestor_aid,
     dag_parent_aid,
     dag_sid,
@@ -1123,6 +1126,29 @@ def dagma_candidate(X, pairs, use_notreks, direct_mask, seed, attempts,
 
 
 def cpdag_shd(truth, estimate):
+    # The production LRZ environment provides Rscript/pcalg.  Local smoke
+    # environments do not necessarily contain R, so use the same in-process
+    # DAG-to-CPDAG conversion and compare CPDAG edge marks directly there.
+    # This keeps local protocol runs reproducible instead of failing before
+    # the first metrics row is written.
+    rscript = shutil.which("Rscript")
+    if rscript is None or os.environ.get("NOTREKS_CPDAG_BACKEND", "r").lower() == "python":
+        true_cpdag = dag_to_cpdag(np.asarray(truth, dtype=np.uint8))
+        estimated = np.asarray(estimate, dtype=np.uint8)
+        if estimated.shape != true_cpdag.shape:
+            raise ValueError("CPDAG matrices must have the same shape")
+        distance = 0
+        for i in range(estimated.shape[0]):
+            for j in range(i + 1, estimated.shape[1]):
+                true_edge = bool(true_cpdag[i, j] or true_cpdag[j, i])
+                estimated_edge = bool(estimated[i, j] or estimated[j, i])
+                if true_edge != estimated_edge:
+                    distance += 1
+                elif true_edge:
+                    true_mark = (int(true_cpdag[i, j]), int(true_cpdag[j, i]))
+                    estimated_mark = (int(estimated[i, j]), int(estimated[j, i]))
+                    distance += int(true_mark != estimated_mark)
+        return float(distance)
     with tempfile.TemporaryDirectory(prefix="notreks_cpdag_eval_") as tmp:
         tmp = Path(tmp)
         true_path = tmp / "true.csv"
@@ -1131,7 +1157,7 @@ def cpdag_shd(truth, estimate):
         pd.DataFrame(truth.astype(int)).to_csv(true_path, index=False)
         pd.DataFrame(estimate.astype(int)).to_csv(estimate_path, index=False)
         subprocess.run(
-            ["Rscript", str(R_EVAL), "--adjmat_true", str(true_path),
+            [rscript, str(R_EVAL), "--adjmat_true", str(true_path),
              "--adjmat_est", str(estimate_path), "--filename",
              str(output_path)], check=True, capture_output=True, text=True)
         return float(pd.read_csv(output_path).iloc[0]["SHD_cpdag"])
