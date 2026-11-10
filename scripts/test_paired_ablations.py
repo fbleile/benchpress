@@ -40,7 +40,7 @@ def holm(values: pd.Series) -> pd.Series:
 def compute(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.copy()
     frame["knowledge_fraction"] = pd.to_numeric(frame["knowledge_fraction"], errors="coerce")
-    frame = frame[frame["knowledge_fraction"].isin([0.0, 0.25])]
+    frame = frame[frame["knowledge_fraction"].isin([0.0, 0.25]) & frame["n"].eq(500)]
     records = []
     for method_name, spec in METHODS.items():
         d = spec["dimension"]
@@ -83,9 +83,9 @@ def make_tex(result: pd.DataFrame) -> str:
     lines = [
         r"\begin{table*}[t]", r"\centering", r"\scriptsize", r"\setlength{\tabcolsep}{2.5pt}",
         r"\renewcommand{\arraystretch}{0.82}",
-        r"\begin{tabular}{lllrccc|ccc}", r"\toprule",
-        r"Arm & $n$ & $k$ & Metric & \multicolumn{3}{c|}{FLOP $d=100$} & \multicolumn{3}{c}{DAGMA $d=50$}\\",
-        r" & & & & V & E & P & V & E & P\\", r"\midrule",
+        r"\begin{tabular}{llrccc|ccc}", r"\toprule",
+        r"Graph & $k$ & Metric & \multicolumn{3}{c|}{FLOP $d=100$} & \multicolumn{3}{c}{DAGMA $d=50$}\\",
+        r" & & & V & E & P & V & E & P\\", r"\midrule",
     ]
     for family in ["er", "ws"]:
         for density in [2, 4, 8]:
@@ -94,14 +94,21 @@ def make_tex(result: pd.DataFrame) -> str:
                 for method in ["flop", "dagma"]:
                     for baseline in ["V", "E", "P"]:
                         star = lookup.get((family, density, metric, method, baseline), "")
-                        cells.append(r"$^{\ast}$" if star == "black" else (r"$\textcolor{red}{^{\ast}}$" if star == "red" else "--"))
-                family_label = "Well-specified ER" if family == "er" else "Well-specified WS"
-                lines.append(f"{family_label} & $100,500,2000$ & {density} & {label} & " + " & ".join(cells) + r"\\")
+                        row = result[(result["graph_family"] == family) & result["graph_density"].eq(density) & (result["metric"] == metric) & (result["method"] == method) & (result["baseline"] == baseline)]
+                        if row.empty:
+                            cells.append("--")
+                        else:
+                            value = float(row.iloc[0]["mean_delta"])
+                            suffix = r"^{\ast}" if star == "black" else (r"^{\ast}" if star == "red" else "")
+                            color = r"\textcolor{red}{" if star == "red" else ""
+                            end = "}" if star == "red" else ""
+                            cells.append(f"${value:.2f}{color}{suffix}{end}$")
+                lines.append(f"{family.upper()} & {density} & {label} & " + " & ".join(cells) + r"\\")
             lines.append(r"\addlinespace")
     lines[-1] = lines[-1].replace(r"\addlinespace", r"\bottomrule")
     lines += [
         r"\end{tabular}",
-        r"\caption{Paired ablation tests for the $q=0.25$ NOTREKS integration. A black $^{\ast}$ indicates a significant improvement over the named baseline and a red $^{\ast}$ a significant deterioration; dashes are non-significant. V, E, and P denote vanilla, edge masking, and post-selection. For each graph family and density, graph-level CPDAG-SHD and Ancestor-AID differences are averaged over $n\in\{100,500,2000\}$ before the one-sided paired Wilcoxon test. Holm correction is applied across all baseline, graph-density, and metric tests within each method.}",
+        r"\caption{Paired ablation tests at $n=500$ for the $q=0.25$ NOTREKS integration. Entries are mean graph-level differences $\Delta=\mathrm{NOTREKS}-\mathrm{baseline}$; negative values favor NOTREKS. A black $^{\ast}$ indicates a significant improvement over the named baseline and a red $^{\ast}$ a significant deterioration; unmarked entries are non-significant. V, E, and P denote vanilla, edge masking, and post-selection. Holm correction is applied across all baseline, graph-density, and metric tests within each method.}",
         r"\label{tab:paired_ablation_tests}", r"\end{table*}", "",
     ]
     return "\n".join(lines)
