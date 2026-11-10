@@ -57,15 +57,17 @@ def compute(frame: pd.DataFrame) -> pd.DataFrame:
                 for metric in METRICS:
                     values = (group[f"{metric}_notreks"] - group[f"{metric}_baseline"]).to_numpy(dtype=float)
                     values = values[np.isfinite(values)]
+                    mean_delta = float(values.mean()) if len(values) else np.nan
                     if len(values) == 0 or np.allclose(values, 0.0):
                         statistic, p_value = 0.0, 1.0
                     else:
-                        result = wilcoxon(values, alternative="less", zero_method="wilcox", method="auto")
+                        alternative = "less" if mean_delta < 0 else "greater"
+                        result = wilcoxon(values, alternative=alternative, zero_method="wilcox", method="auto")
                         statistic, p_value = float(result.statistic), float(result.pvalue)
                     records.append({
                         "method": method_name, "graph_family": family, "graph_density": int(density),
                         "metric": metric, "baseline": label, "N": len(values),
-                        "mean_delta": float(values.mean()) if len(values) else np.nan,
+                        "mean_delta": mean_delta,
                         "wilcoxon_statistic": statistic, "p_value": p_value,
                     })
     result = pd.DataFrame(records)
@@ -125,8 +127,10 @@ def main() -> None:
     result.to_csv(args.output / "test_results.csv", index=False)
     (args.output / "README.md").write_text(
         "Paired ablation tests computed by scripts/test_paired_ablations.py. "
-        "Graph-level differences average the five q=.25 prior draws and the three sample sizes; "
-        "the one-sided alternative is NOTREKS minus baseline < 0. Holm correction is applied within method.\n"
+        "The analysis uses only n=500 and averages the five q=.25 prior draws within each graph. "
+        "For each cell, the one-sided Wilcoxon alternative follows the observed mean direction: "
+        "NOTREKS minus baseline < 0 for an improvement and > 0 for a deterioration. "
+        "Holm correction is applied within method.\n"
     )
     args.tex_output.write_text(make_tex(result))
     print(result.to_string(index=False))
