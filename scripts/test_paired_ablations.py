@@ -61,8 +61,7 @@ def compute(frame: pd.DataFrame) -> pd.DataFrame:
                     if len(values) == 0 or np.allclose(values, 0.0):
                         statistic, p_value = 0.0, 1.0
                     else:
-                        alternative = "less" if mean_delta < 0 else "greater"
-                        result = wilcoxon(values, alternative=alternative, zero_method="wilcox", method="auto")
+                        result = wilcoxon(values, alternative="two-sided", zero_method="wilcox", method="auto")
                         statistic, p_value = float(result.statistic), float(result.pvalue)
                     records.append({
                         "method": method_name, "graph_family": family, "graph_density": int(density),
@@ -85,6 +84,7 @@ def make_tex(result: pd.DataFrame) -> str:
     lines = [
         r"\begin{table*}[t]", r"\centering", r"\scriptsize", r"\setlength{\tabcolsep}{2.5pt}",
         r"\renewcommand{\arraystretch}{0.82}",
+        r"\floatconts{tab:paired_ablation_tests}{\caption{Paired ablation tests at $n=500$ for the $q=0.25$ NOTREKS integration. Entries are mean graph-level differences $\Delta=\mathrm{NOTREKS}-\mathrm{baseline}$; negative values favor NOTREKS. A black $^{\ast}$ indicates a significant improvement over the named baseline and a red $^{\ast}$ a significant deterioration under a two-sided Wilcoxon signed-rank test; unmarked entries are non-significant. V, E, and P denote vanilla, edge masking, and post-selection. Holm correction is applied across all baseline, graph-density, and metric tests within each method.}}{%",
         r"\begin{tabular}{llrccc|ccc}", r"\toprule",
         r"Graph & $k$ & Metric & \multicolumn{3}{c|}{FLOP $d=100$} & \multicolumn{3}{c}{DAGMA $d=50$}\\",
         r" & & & V & E & P & V & E & P\\", r"\midrule",
@@ -109,9 +109,7 @@ def make_tex(result: pd.DataFrame) -> str:
             lines.append(r"\addlinespace")
     lines[-1] = lines[-1].replace(r"\addlinespace", r"\bottomrule")
     lines += [
-        r"\end{tabular}",
-        r"\caption{Paired ablation tests at $n=500$ for the $q=0.25$ NOTREKS integration. Entries are mean graph-level differences $\Delta=\mathrm{NOTREKS}-\mathrm{baseline}$; negative values favor NOTREKS. A black $^{\ast}$ indicates a significant improvement over the named baseline and a red $^{\ast}$ a significant deterioration; unmarked entries are non-significant. V, E, and P denote vanilla, edge masking, and post-selection. Holm correction is applied across all baseline, graph-density, and metric tests within each method.}",
-        r"\label{tab:paired_ablation_tests}", r"\end{table*}", "",
+        r"\end{tabular}}", r"\end{table*}", "",
     ]
     return "\n".join(lines)
 
@@ -128,8 +126,8 @@ def main() -> None:
     (args.output / "README.md").write_text(
         "Paired ablation tests computed by scripts/test_paired_ablations.py. "
         "The analysis uses only n=500 and averages the five q=.25 prior draws within each graph. "
-        "For each cell, the one-sided Wilcoxon alternative follows the observed mean direction: "
-        "NOTREKS minus baseline < 0 for an improvement and > 0 for a deterioration. "
+        "For each cell, a two-sided Wilcoxon signed-rank test is used. "
+        "The sign of NOTREKS minus baseline determines whether a significant result is marked as an improvement or deterioration. "
         "Holm correction is applied within method.\n"
     )
     args.tex_output.write_text(make_tex(result))
